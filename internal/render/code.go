@@ -57,10 +57,34 @@ func (r *codeRenderer) Render(ctx RenderContext) string {
 		width = ctx.Capabilities.Cols
 	}
 
+	active, hasActive := activeMatch(ctx.Search)
+	// In mono mode (`--no-color` / NO_COLOR=1 / TERM=dumb), the match
+	// overlay must not emit ANSI — even via lipgloss styles applied
+	// post-chroma — or the rendered output becomes a contract
+	// violation (Copilot review PR#9 round-3 #1). When mono is active
+	// we still mark matched lines but as raw text without colouring.
+	mono := ctx.Theme.Mono || ctx.Capabilities.ColorDepth == term.ColorMono
 	for _, l := range lines {
 		prefix := ""
 		if r.deps.LineNumbers {
 			prefix = fmt.Sprintf("%*d  ", gutter, l.Number)
+		}
+		// Lines with search matches use the dedicated overlay path so
+		// the highlight wraps tightly around the match span. The
+		// documented limitation: matched lines lose chroma syntax
+		// colour; the caret/active match is still visible.
+		lineMatches := matchesForLine(ctx.Search, l.Number)
+		if len(lineMatches) > 0 {
+			b.WriteString(prefix)
+			if mono {
+				// Mono mode: bypass lipgloss styling — emit the raw
+				// match line verbatim so no ANSI leaks.
+				b.WriteString(l.Raw)
+			} else {
+				b.WriteString(applyMatchHighlights(l.Raw, lineMatches, active, hasActive, ctx.Theme.SearchHit, ctx.Theme.SearchActive))
+			}
+			b.WriteByte('\n')
+			continue
 		}
 		if !r.deps.WordWrap || width <= 0 || lineExceedsWidth(l.Raw, len(prefix), width) {
 			if r.deps.WordWrap && width > 0 {

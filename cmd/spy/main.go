@@ -145,18 +145,21 @@ func run(args []string) int {
 
 	// 5. Build the UI model.
 	theme := render.ResolveTheme(cfg.Theme, caps, cfg.NoColor)
-	keyMap := keys.Default()
-	if cfg.VimMode {
-		// US2 (T055) supplies the actual additive bindings; the
-		// foundational keymap is identical to default.
-		keyMap = keys.Default()
-	}
+	// Build the *base* keymap first: defaults + any user [keys]
+	// overrides. Vim is layered on top of that base so a runtime
+	// `:set novim` can restore the base without losing the user's
+	// overrides (Copilot review PR#9 round-3 #5).
+	baseKeyMap := keys.Default()
 	if len(cfg.Keys) > 0 {
-		mergedKM, kerrs := keys.ApplyOverrides(keyMap, cfg.Keys)
+		mergedKM, kerrs := keys.ApplyOverrides(baseKeyMap, cfg.Keys)
 		for _, e := range kerrs {
 			fmt.Fprintf(os.Stderr, "spy: %v\n", e)
 		}
-		keyMap = mergedKM
+		baseKeyMap = mergedKM
+	}
+	keyMap := baseKeyMap
+	if cfg.VimMode {
+		keyMap = keys.WithVim(baseKeyMap)
 	}
 
 	// Construct the per-session highlighter. nil for KindText / KindBinary
@@ -171,6 +174,7 @@ func run(args []string) int {
 		Config:       cfg,
 		Theme:        theme,
 		KeyMap:       keyMap,
+		BaseKeyMap:   baseKeyMap,
 		Highlighter:  highlighter,
 		Cancel:       cancel,
 	})

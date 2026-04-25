@@ -20,6 +20,7 @@ import (
 	"github.com/knitli/spy/internal/keys"
 	"github.com/knitli/spy/internal/loader"
 	"github.com/knitli/spy/internal/render"
+	"github.com/knitli/spy/internal/search"
 	"github.com/knitli/spy/internal/source"
 	"github.com/knitli/spy/internal/term"
 )
@@ -33,6 +34,15 @@ type ModelOptions struct {
 	Config       *config.Config
 	Theme        render.Theme
 	KeyMap       keys.KeyMap
+
+	// BaseKeyMap is the non-vim keymap (defaults + user [keys]
+	// overrides). The Model retains this so a runtime `:set novim`
+	// can restore it verbatim and `:set vim` can layer
+	// [keys.WithVim] on top without losing user overrides (Copilot
+	// review PR#9 round-3 #5). When zero/nil, NewModel uses KeyMap as
+	// the base — matches pre-existing call sites that don't toggle
+	// vim mode at runtime.
+	BaseKeyMap keys.KeyMap
 
 	// Highlighter is the per-session syntax highlighter. nil disables
 	// highlighting (used by the foundational text path and tests).
@@ -54,6 +64,7 @@ type Model struct {
 	cfg         *config.Config
 	theme       render.Theme
 	keyMap      keys.KeyMap
+	baseKeyMap  keys.KeyMap // non-vim base; preserved for :set novim
 	cancel      context.CancelFunc
 	highlighter *highlight.Highlighter
 	renderer    render.Renderer
@@ -86,6 +97,20 @@ type Model struct {
 	// the footer (e.g. "highlighting disabled"). Empty when no
 	// advisory is active.
 	statusAdvisory string
+
+	// search holds the current search engine state. Inactive when
+	// search.Query == "". US2 (T056).
+	search search.State
+	// commandLine is the live `:` / `/` / `?` prompt state machine.
+	commandLine CommandLineState
+	// vimPendingG carries the "first g" of a vim "gg" sequence. The
+	// next key resolves it: another `g` fires ActionGoToTop, anything
+	// else cancels and falls through to the regular dispatch path.
+	vimPendingG bool
+	// vim mirrors cfg.VimMode at construction; runtime `:set vim` /
+	// `:set novim` toggles flip this so the UI's prompt-mode + nav
+	// dispatch picks up the new keymap and `gg` sequencing.
+	vim bool
 }
 
 // NewModel constructs the viewer's Bubble Tea model. The first frame
@@ -110,6 +135,10 @@ func NewModel(opts ModelOptions) Model {
 		WordWrap:     opts.Config != nil && opts.Config.WordWrap,
 		Language:     lang,
 	}
+	baseKM := opts.BaseKeyMap
+	if baseKM == nil {
+		baseKM = opts.KeyMap
+	}
 	m := Model{
 		source:      opts.Source,
 		stream:      opts.Stream,
@@ -117,11 +146,14 @@ func NewModel(opts ModelOptions) Model {
 		cfg:         opts.Config,
 		theme:       opts.Theme,
 		keyMap:      opts.KeyMap,
+		baseKeyMap:  baseKM,
 		cancel:      opts.Cancel,
 		highlighter: opts.Highlighter,
 		renderer:    render.ForKind(kind, deps),
 		streaming:   true,
 		status:      render.StatusStreaming,
+		commandLine: CommandLineState{HistoryCursor: -1},
+		vim:         opts.Config != nil && opts.Config.VimMode,
 	}
 	if opts.Stream != nil && opts.Stream.First.EOF {
 		m.streaming = false
@@ -170,6 +202,19 @@ type reloadMsg struct{}
 type reloadResultMsg struct {
 	stream *loader.Stream
 	cancel context.CancelFunc
+	err    error
+}
+
+// openResultMsg carries the outcome of an in-flight `:open <path>`
+// command. On success the model swaps in the new source and stream;
+// the rest of the session state (cfg / caps / highlighter / theme /
+// keymap) survives unchanged on the receiving Model so we don't need
+// to round-trip it through the message. On failure the prior session
+// is retained and the error is surfaced via statusAdvisory.
+type openResultMsg struct {
+	stream *loader.Stream
+	cancel context.CancelFunc
+	src    source.Source
 	err    error
 }
 

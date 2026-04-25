@@ -281,8 +281,13 @@ Subset of bindings (full list in [contracts/keys.md](./contracts/keys.md)):
 | `Active` | `bool` | True while `:` / `/` / `?` prompt is open. |
 | `Prefix` | `rune` | One of `:`, `/`, `?`. |
 | `Buffer` | `string` | Current input. |
-| `History` | `[]string` | Per-session, oldest-first. |
-| `HistoryCursor` | `int` | -1 = current input; ≥0 = from history. |
+| `HistoryColon` | `[]string` | `:` prompt history, oldest-first; deduped against the previous entry. |
+| `HistorySlash` | `[]string` | `/` and `?` prompt history (search prompts share one ring), oldest-first; deduped against the previous entry. |
+| `HistoryCursor` | `int` | -1 = current input; ≥0 = from history (indexes into the slice for the active prefix). |
+
+The two history slices stay separate so `↑` from a `:` prompt never
+surfaces a recent `/` search, and vice versa. The canonical Go type
+lives in `internal/ui/command.go`.
 
 ---
 

@@ -6,6 +6,9 @@ package ui
 
 import (
 	"context"
+	"fmt"
+	"strconv"
+	"strings"
 
 	"github.com/charmbracelet/bubbles/key"
 	"github.com/charmbracelet/bubbles/viewport"
@@ -16,6 +19,7 @@ import (
 	"github.com/knitli/spy/internal/keys"
 	"github.com/knitli/spy/internal/loader"
 	"github.com/knitli/spy/internal/render"
+	"github.com/knitli/spy/internal/search"
 	"github.com/knitli/spy/internal/source"
 )
 
@@ -60,6 +64,65 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.onReload()
 	case reloadResultMsg:
 		return m.onReloadResult(msg)
+	case openResultMsg:
+		return m.onOpenResult(msg)
+	}
+	return m, nil
+}
+
+// onOpenResult swaps in the new source after a `:open <path>` command.
+// On failure the prior session is retained and the error surfaces via
+// statusAdvisory. On success the new stream becomes the active one and
+// the renderer is rebuilt with the new source's kind / language.
+func (m Model) onOpenResult(msg openResultMsg) (tea.Model, tea.Cmd) {
+	if msg.err != nil {
+		m.statusAdvisory = fmt.Sprintf("open: %v", msg.err)
+		return m, nil
+	}
+	// Swap in the new source/stream/renderer. Clear the advisory and
+	// last-error state so messages from the prior session ("search
+	// wrapped", a previous reload error, etc.) don't bleed into the
+	// new file's footer (Copilot review PR#9 round-2 #4).
+	m.source = msg.src
+	m.stream = msg.stream
+	m.cancel = msg.cancel
+	m.search = search.State{}
+	m.statusAdvisory = ""
+	m.lastError = nil
+	m.viewport.GotoTop()
+	kind := source.KindUnknown
+	lang := ""
+	if m.source != nil {
+		kind = m.source.Kind()
+		lang = m.source.Metadata().Language
+	}
+	if m.highlighter != nil && lang != "" {
+		m.highlighter.SetLang(lang)
+	}
+	deps := render.Dependencies{
+		Theme:        m.theme,
+		Capabilities: m.caps,
+		Highlighter:  m.highlighter,
+		LineNumbers:  m.cfg != nil && m.cfg.LineNumbers,
+		WordWrap:     m.cfg != nil && m.cfg.WordWrap,
+		Language:     lang,
+	}
+	m.renderer = render.ForKind(kind, deps)
+	m.streaming = true
+	m.status = render.StatusStreaming
+	if m.stream != nil && m.stream.First.EOF {
+		m.streaming = false
+		m.status = render.StatusIdle
+	}
+	if m.highlighter != nil && m.stream != nil && kind == source.KindCode {
+		highlightLines(m.highlighter, lang, m.stream.First.Lines)
+		if m.stream.Buffer != nil {
+			m.stream.Buffer.SetTokens(m.stream.First.Lines)
+		}
+	}
+	m.viewport.SetContent(m.renderer.Render(m.renderContext()))
+	if m.streaming {
+		return m, waitForChunk(m.stream)
 	}
 	return m, nil
 }
@@ -96,9 +159,25 @@ func (m Model) onResize(msg tea.WindowSizeMsg) (tea.Model, tea.Cmd) {
 }
 
 // onKey runs the active keymap and translates the matched [Action]
-// into a tea.Cmd. Phase 3 adds ActionReload on top of the foundational
-// scroll/quit actions; the rest are added in their story phases.
+// into a tea.Cmd. The prompt state machine takes precedence: when a `:`
+// / `/` / `?` prompt is open, every key is captured by the prompt
+// editor until Enter (submit) or Esc (cancel) closes it.
 func (m Model) onKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	if m.commandLine.Active {
+		return m.onPromptKey(msg)
+	}
+	// Vim "gg" sequence: a previous `g` is pending. Another `g`
+	// resolves to ActionGoToTop; anything else cancels and falls
+	// through to the regular dispatch path so the second key isn't
+	// dropped.
+	if m.vimPendingG {
+		m.vimPendingG = false
+		if msg.String() == "g" {
+			m.viewport.GotoTop()
+			return m, nil
+		}
+		// fall-through: the second key is dispatched normally below.
+	}
 	if matchAction(m.keyMap, keys.ActionQuit, msg) {
 		if m.cancel != nil {
 			m.cancel()
@@ -107,6 +186,34 @@ func (m Model) onKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	}
 	if matchAction(m.keyMap, keys.ActionReload, msg) {
 		return m, func() tea.Msg { return reloadMsg{} }
+	}
+	if matchAction(m.keyMap, keys.ActionSearchForward, msg) {
+		m.openPrompt('/')
+		return m, nil
+	}
+	if matchAction(m.keyMap, keys.ActionSearchBackward, msg) {
+		m.openPrompt('?')
+		return m, nil
+	}
+	if matchAction(m.keyMap, keys.ActionCommandOpen, msg) {
+		m.openPrompt(':')
+		return m, nil
+	}
+	if matchAction(m.keyMap, keys.ActionNextMatch, msg) {
+		m.advanceMatch(+1)
+		return m, nil
+	}
+	if matchAction(m.keyMap, keys.ActionPrevMatch, msg) {
+		m.advanceMatch(-1)
+		return m, nil
+	}
+	// Vim `gg` first-press detection: the keymap binds `g` to
+	// ActionGoToTop (alongside Home), so we need to catch the literal
+	// `g` press and arm the pending flag rather than firing the action
+	// immediately.
+	if m.vim && msg.String() == "g" {
+		m.vimPendingG = true
+		return m, nil
 	}
 	if matchAction(m.keyMap, keys.ActionScrollUp, msg) {
 		m.viewport.LineUp(1)
@@ -140,7 +247,442 @@ func (m Model) onKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.viewport.GotoBottom()
 		return m, nil
 	}
+	if matchAction(m.keyMap, keys.ActionBeginningOfLine, msg) {
+		m.viewport.SetXOffset(0)
+		return m, nil
+	}
+	if matchAction(m.keyMap, keys.ActionEndOfLine, msg) {
+		// Best-effort end-of-line: jump to a very large horizontal
+		// offset and let the viewport clamp it to the furthest valid
+		// position for the currently visible content.
+		m.viewport.SetXOffset(int(^uint(0) >> 1))
+		return m, nil
+	}
 	return m, nil
+}
+
+// openPrompt enters command-line mode with the supplied prefix. The
+// foundational nav keys are suppressed until the prompt closes via
+// Enter or Esc.
+func (m *Model) openPrompt(prefix rune) {
+	m.commandLine.Active = true
+	m.commandLine.Prefix = prefix
+	m.commandLine.Buffer = ""
+	m.commandLine.HistoryCursor = -1
+}
+
+// onPromptKey edits the active command-line buffer. Enter submits, Esc
+// cancels, Up/Down recall history, Backspace deletes a rune, and any
+// runeable key gets appended to the buffer.
+func (m Model) onPromptKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.Type {
+	case tea.KeyEnter:
+		return m.submitPrompt()
+	case tea.KeyEsc, tea.KeyCtrlC:
+		m.commandLine.reset()
+		return m, nil
+	case tea.KeyBackspace, tea.KeyCtrlH:
+		if m.commandLine.Buffer != "" {
+			r := []rune(m.commandLine.Buffer)
+			m.commandLine.Buffer = string(r[:len(r)-1])
+		}
+		return m, nil
+	case tea.KeyUp:
+		m.recallHistory(-1)
+		return m, nil
+	case tea.KeyDown:
+		m.recallHistory(+1)
+		return m, nil
+	case tea.KeyRunes:
+		m.commandLine.Buffer += string(msg.Runes)
+		return m, nil
+	case tea.KeySpace:
+		m.commandLine.Buffer += " "
+		return m, nil
+	}
+	return m, nil
+}
+
+// recallHistory steps through the active prefix's submission history.
+// `direction == -1` walks toward older entries, `+1` toward newer.
+// When the cursor reaches the end (newer than the newest), history
+// navigation exits, HistoryCursor is reset to -1, and the buffer is
+// cleared. (Storing the pre-recall buffer to restore on exit is a
+// future polish — not implemented today.)
+func (m *Model) recallHistory(direction int) {
+	hist := m.commandLine.historyFor(m.commandLine.Prefix)
+	if len(hist) == 0 {
+		return
+	}
+	cur := m.commandLine.HistoryCursor
+	if direction < 0 {
+		if cur < 0 {
+			cur = len(hist) - 1
+		} else if cur > 0 {
+			cur--
+		}
+	} else {
+		if cur < 0 {
+			return // already at "live" buffer
+		}
+		cur++
+		if cur >= len(hist) {
+			m.commandLine.HistoryCursor = -1
+			m.commandLine.Buffer = ""
+			return
+		}
+	}
+	m.commandLine.HistoryCursor = cur
+	m.commandLine.Buffer = hist[cur]
+}
+
+// submitPrompt closes the prompt and dispatches by prefix.
+func (m Model) submitPrompt() (tea.Model, tea.Cmd) {
+	prefix := m.commandLine.Prefix
+	buf := m.commandLine.Buffer
+	m.commandLine.pushHistory(prefix, buf)
+	m.commandLine.reset()
+	switch prefix {
+	case '/':
+		return m.runSearch(buf, search.DirForward)
+	case '?':
+		return m.runSearch(buf, search.DirBackward)
+	case ':':
+		return m.runCommand(buf)
+	}
+	return m, nil
+}
+
+// runSearch compiles the matcher and runs a synchronous full scan
+// against the resident buffer. A full async background scan with
+// progress is a future polish (the Pending flag on search.State); the
+// MVP scope is small enough to scan in-line.
+//
+// The prompt buffer can carry vim-style prefix toggles per
+// contracts/keys.md ("Search" section): `\v` forces regex, `\V`
+// forces literal, `\c` forces case-insensitive, and `\C` forces
+// case-sensitive. Prefixes apply in the order typed and override the
+// cfg defaults; the cleaned query is stored on SearchState.Query so
+// the renderer's highlight overlay matches what the user actually
+// searched for.
+func (m Model) runSearch(query string, dir search.Direction) (tea.Model, tea.Cmd) {
+	if query == "" || m.stream == nil || m.stream.Buffer == nil {
+		return m, nil
+	}
+	regex := false
+	caseMode := search.CaseSmart
+	if m.cfg != nil {
+		regex = m.cfg.RegexDefault
+		caseMode = caseModeFromConfig(m.cfg.CaseMode, caseMode)
+	}
+	cleaned, regex, caseMode := stripSearchPrefixes(query, regex, caseMode)
+	if cleaned == "" {
+		// All-prefix queries (e.g. typed `\c` then immediately Enter)
+		// don't have anything to match — surface a soft advisory rather
+		// than producing an empty Match list.
+		m.statusAdvisory = "search: empty query after prefix toggles"
+		return m, nil
+	}
+	matcher, err := search.Compile(cleaned, regex, caseMode)
+	if err != nil {
+		m.statusAdvisory = fmt.Sprintf("invalid pattern: %v", err)
+		return m, nil
+	}
+	from := int64(1)
+	if m.viewport.Height > 0 && m.renderer != nil {
+		from = m.renderer.RowToLine(m.renderContext(), m.viewport.YOffset)
+		if from < 1 {
+			from = 1
+		}
+	}
+	// Synchronous full scan over the resident range. The scan goroutine
+	// wraps once and closes; we collect everything before returning so
+	// the UI can render the highlights on the next frame.
+	ch := search.Scan(context.Background(), m.stream.Buffer, matcher, dir, from)
+	var matches []search.Match
+	// scanWrapAt is the index in `matches` at which the wrap-around
+	// portion starts (-1 when the scan never wrapped). Tracking it lets
+	// us decide whether the *initially selected* match came from the
+	// post-wrap section, which is the only case that warrants a
+	// "search wrapped" advisory on the first jump (Copilot review PR#9
+	// #4 — bare "scan wrapped" is too noisy when the first hit was
+	// found before wrap).
+	scanWrapAt := -1
+	for hit := range ch {
+		if hit.Line == search.SentinelWrapped {
+			scanWrapAt = len(matches)
+			continue
+		}
+		matches = append(matches, hit)
+	}
+	m.search = search.State{
+		Query:        cleaned,
+		Direction:    dir,
+		Regex:        regex,
+		CaseMode:     caseMode,
+		Matches:      matches,
+		CurrentMatch: -1,
+		Wrapped:      false,
+	}
+	if len(matches) == 0 {
+		m.statusAdvisory = fmt.Sprintf("no match for %q", cleaned)
+		m.viewport.SetContent(m.renderer.Render(m.renderContext()))
+		return m, nil
+	}
+	// search.Scan emits matches in *traversal* order for the requested
+	// direction, so index 0 is always the first hit the user encounters
+	// from `from`. Selecting index 0 for both directions keeps the
+	// initial jump intuitive (Copilot review PR#9 #5).
+	m.search.CurrentMatch = 0
+	// Only flag "wrapped" on this first jump if the selected match
+	// actually came from the wrap-around section of the scan.
+	if scanWrapAt == 0 {
+		m.search.Wrapped = true
+		m.statusAdvisory = "search wrapped"
+	}
+	m.jumpToMatch(m.search.CurrentMatch)
+	m.viewport.SetContent(m.renderer.Render(m.renderContext()))
+	return m, nil
+}
+
+// stripSearchPrefixes peels vim-style prefix toggles from the start of
+// `query` and returns the cleaned query alongside the resulting
+// (regex, caseMode) pair. Recognised prefixes (per contracts/keys.md):
+//
+//	\v   force regex
+//	\V   force literal
+//	\c   force case-insensitive
+//	\C   force case-sensitive
+//
+// Multiple prefixes may stack (e.g. `\v\C`); they're consumed in the
+// order they appear. Anything past the first non-prefix rune is
+// treated as the literal query.
+func stripSearchPrefixes(query string, regex bool, caseMode search.CaseMode) (string, bool, search.CaseMode) {
+	for {
+		if !strings.HasPrefix(query, `\`) || len(query) < 2 {
+			break
+		}
+		switch query[1] {
+		case 'v':
+			regex = true
+		case 'V':
+			regex = false
+		case 'c':
+			caseMode = search.CaseInsensitive
+		case 'C':
+			caseMode = search.CaseSensitive
+		default:
+			return query, regex, caseMode
+		}
+		query = query[2:]
+	}
+	return query, regex, caseMode
+}
+
+// caseModeFromConfig maps the `case_mode` string in cfg
+// ("smart"|"sensitive"|"insensitive") to the search.CaseMode enum.
+// Unrecognised / empty strings fall back to `fallback` so the caller
+// supplies a sensible default (CaseSmart).
+func caseModeFromConfig(spec string, fallback search.CaseMode) search.CaseMode {
+	switch strings.ToLower(strings.TrimSpace(spec)) {
+	case "smart":
+		return search.CaseSmart
+	case "sensitive":
+		return search.CaseSensitive
+	case "insensitive":
+		return search.CaseInsensitive
+	}
+	return fallback
+}
+
+// advanceMatch cycles through the search results in `delta` direction
+// (+1 for `n`, -1 for `N`). Wraps at the ends and sets the wrapped
+// status message so the user sees the loop.
+func (m *Model) advanceMatch(delta int) {
+	if len(m.search.Matches) == 0 {
+		return
+	}
+	cur := m.search.CurrentMatch + delta
+	if cur < 0 {
+		cur = len(m.search.Matches) - 1
+		m.statusAdvisory = "search wrapped"
+		m.search.Wrapped = true
+	} else if cur >= len(m.search.Matches) {
+		cur = 0
+		m.statusAdvisory = "search wrapped"
+		m.search.Wrapped = true
+	} else {
+		m.search.Wrapped = false
+	}
+	m.search.CurrentMatch = cur
+	m.jumpToMatch(cur)
+	if m.renderer != nil {
+		m.viewport.SetContent(m.renderer.Render(m.renderContext()))
+	}
+}
+
+// jumpToMatch scrolls the viewport so the match's line is at the top.
+func (m *Model) jumpToMatch(idx int) {
+	if idx < 0 || idx >= len(m.search.Matches) {
+		return
+	}
+	line := m.search.Matches[idx].Line
+	m.scrollToLine(line)
+}
+
+// scrollToLine clamps `line` to [1, total] and sets the viewport's
+// YOffset so that line is the first visible row. With wrap on, the
+// row→line mapping is approximate (one source line may span multiple
+// visual rows); the simple `line - 1` mapping is correct for the
+// no-wrap path and visually close enough for wrap.
+func (m *Model) scrollToLine(line int64) {
+	total := int64(0)
+	if m.stream != nil && m.stream.Buffer != nil {
+		total = m.stream.Buffer.Total()
+	}
+	if total <= 0 {
+		return
+	}
+	if line < 1 {
+		line = 1
+	}
+	if line > total {
+		line = total
+	}
+	m.viewport.SetYOffset(int(line - 1))
+}
+
+// runCommand dispatches a `:`-prefixed command. Recognised commands
+// match contracts/keys.md; unknown commands surface a status-bar
+// warning rather than crashing the viewer.
+func (m Model) runCommand(cmd string) (tea.Model, tea.Cmd) {
+	cmd = strings.TrimSpace(cmd)
+	if cmd == "" {
+		return m, nil
+	}
+	// Quit aliases.
+	if cmd == "q" || cmd == "quit" {
+		if m.cancel != nil {
+			m.cancel()
+		}
+		return m, tea.Quit
+	}
+	// :0 / :$ jumps.
+	if cmd == "0" {
+		m.scrollToLine(1)
+		return m, nil
+	}
+	if cmd == "$" {
+		total := int64(0)
+		if m.stream != nil && m.stream.Buffer != nil {
+			total = m.stream.Buffer.Total()
+		}
+		if total > 0 {
+			m.scrollToLine(total)
+		}
+		return m, nil
+	}
+	// Numeric jump.
+	if n, err := strconv.ParseInt(cmd, 10, 64); err == nil {
+		total := int64(0)
+		if m.stream != nil && m.stream.Buffer != nil {
+			total = m.stream.Buffer.Total()
+		}
+		if total > 0 && n > total {
+			m.statusAdvisory = fmt.Sprintf("line %d > total %d", n, total)
+		}
+		m.scrollToLine(n)
+		return m, nil
+	}
+	// :set commands.
+	if strings.HasPrefix(cmd, "set ") {
+		return m.runSetCommand(strings.TrimPrefix(cmd, "set "))
+	}
+	// :open <path>.
+	if strings.HasPrefix(cmd, "open ") {
+		return m.runOpenCommand(strings.TrimSpace(strings.TrimPrefix(cmd, "open ")))
+	}
+	m.statusAdvisory = fmt.Sprintf("unknown command: %q", cmd)
+	return m, nil
+}
+
+// runSetCommand handles `:set vim` / `:set novim` / `:set theme …`
+// per contracts/keys.md.
+func (m Model) runSetCommand(rest string) (tea.Model, tea.Cmd) {
+	rest = strings.TrimSpace(rest)
+	switch rest {
+	case "vim":
+		// Layer vim bindings on the *preserved* non-vim base so any
+		// user `[keys]` overrides survive the toggle (Copilot review
+		// PR#9 round-3 #5).
+		m.vim = true
+		m.keyMap = keys.WithVim(m.baseKeyMap)
+		m.statusAdvisory = "vim mode on"
+		return m, nil
+	case "novim":
+		m.vim = false
+		m.keyMap = m.baseKeyMap
+		m.statusAdvisory = "vim mode off"
+		return m, nil
+	}
+	if strings.HasPrefix(rest, "theme ") {
+		spec := strings.TrimSpace(strings.TrimPrefix(rest, "theme "))
+		newTheme := render.ResolveTheme(spec, m.caps, m.cfg != nil && m.cfg.NoColor)
+		m.theme = newTheme
+		// Rebuild the renderer so the new theme styles take effect on
+		// the next paint.
+		kind := source.KindUnknown
+		lang := ""
+		if m.source != nil {
+			kind = m.source.Kind()
+			lang = m.source.Metadata().Language
+		}
+		deps := render.Dependencies{
+			Theme:        newTheme,
+			Capabilities: m.caps,
+			Highlighter:  m.highlighter,
+			LineNumbers:  m.cfg != nil && m.cfg.LineNumbers,
+			WordWrap:     m.cfg != nil && m.cfg.WordWrap,
+			Language:     lang,
+		}
+		m.renderer = render.ForKind(kind, deps)
+		m.statusAdvisory = fmt.Sprintf("theme: %s", newTheme.Name)
+		if m.renderer != nil {
+			m.viewport.SetContent(m.renderer.Render(m.renderContext()))
+		}
+		return m, nil
+	}
+	m.statusAdvisory = fmt.Sprintf("unknown :set %q", rest)
+	return m, nil
+}
+
+// runOpenCommand replaces the current source with the file at `path`.
+// Reuses the loader/source paths so the new file goes through the same
+// detection / streaming pipeline as the original CLI argument.
+func (m Model) runOpenCommand(path string) (tea.Model, tea.Cmd) {
+	if path == "" {
+		m.statusAdvisory = "open: missing path"
+		return m, nil
+	}
+	src, err := source.FromArgs([]string{path}, nil, "")
+	if err != nil {
+		m.statusAdvisory = fmt.Sprintf("open %s: %v", path, err)
+		return m, nil
+	}
+	if m.cancel != nil {
+		m.cancel()
+		m.cancel = nil
+	}
+	cfg := m.cfg
+	return m, func() tea.Msg {
+		ctx, cancel := context.WithCancel(context.Background())
+		stream, err := loader.Open(ctx, src, loaderConfigFromConfig(cfg))
+		if err != nil {
+			cancel()
+			return openResultMsg{err: err, src: src}
+		}
+		return openResultMsg{stream: stream, cancel: cancel, src: src}
+	}
 }
 
 // onChunk re-renders the viewport on every chunk arrival so streamed
@@ -277,6 +819,7 @@ func (m Model) renderContext() render.RenderContext {
 		Viewport:     m.viewport,
 		Status:       m.status,
 		LastError:    m.lastError,
+		Search:       m.search,
 	}
 	if m.stream != nil {
 		ctx.Buffer = m.stream.Buffer

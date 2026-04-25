@@ -21,7 +21,10 @@ fixture="${here}/fixtures/hello.go"
 binary="${SPY_BIN:-${here}/../../spy}"
 
 if [[ ! -x "${binary}" ]]; then
-    echo "spy binary not found at ${binary}; run 'make build' first" >&2
+    binary="${here}/../../bin/spy"
+fi
+if [[ ! -x "${binary}" ]]; then
+    echo "spy binary not found; run 'make build' first" >&2
     exit 1
 fi
 
