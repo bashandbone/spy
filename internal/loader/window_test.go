@@ -11,6 +11,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/alecthomas/chroma/v2"
+
 	"github.com/knitli/spy/internal/source"
 )
 
@@ -154,3 +156,104 @@ func (n *nonSeekableSource) Reopen() (io.ReadSeeker, error) {
 // test package) avoids a transient import cycle and keeps the assertion
 // alongside its implementation.
 var _ source.LineProvider = (*LineBuffer)(nil)
+
+func TestLineBuffer_SetTokensPropagatesToSlice(t *testing.T) {
+	// SetTokens must update the buffer's stored copies so Slice() picks
+	// up the new Tokens — the contract Copilot flagged in PR#8 #1/#3.
+	buf := NewLineBuffer(0, 0, nil)
+	buf.Append([]source.Line{
+		{Number: 1, Raw: "alpha"},
+		{Number: 2, Raw: "beta"},
+		{Number: 3, Raw: "gamma"},
+	})
+	tagged := []source.Line{
+		{Number: 2, Tokens: []source.Token{{Type: chroma.Keyword, Value: "beta"}}},
+	}
+	buf.SetTokens(tagged)
+	out := buf.Slice(0, 3)
+	if len(out) != 3 {
+		t.Fatalf("Slice(0,3): got %d lines", len(out))
+	}
+	if out[0].Tokens != nil {
+		t.Errorf("line 1 should retain nil Tokens (untouched)")
+	}
+	if len(out[1].Tokens) != 1 || out[1].Tokens[0].Value != "beta" {
+		t.Errorf("line 2 Tokens not updated by SetTokens: %+v", out[1].Tokens)
+	}
+	if out[2].Tokens != nil {
+		t.Errorf("line 3 should retain nil Tokens (untouched)")
+	}
+}
+
+func TestLineBuffer_SetTokensSilentForOutOfRange(t *testing.T) {
+	// Lines whose Number falls outside the resident hot region are
+	// silently skipped (post windowed-mode eviction).
+	buf := NewLineBuffer(0, 0, nil)
+	buf.Append([]source.Line{
+		{Number: 1, Raw: "a"},
+	})
+	// Line 999 is far outside; should not panic, should not modify line 1.
+	buf.SetTokens([]source.Line{
+		{Number: 999, Tokens: []source.Token{{Type: chroma.Keyword, Value: "x"}}},
+	})
+	out := buf.Slice(0, 1)
+	if len(out) != 1 || out[0].Tokens != nil {
+		t.Errorf("out-of-range SetTokens should not affect resident lines: %+v", out)
+	}
+}
+
+func TestLineBuffer_SetTokensEmptyInputIsNoOp(t *testing.T) {
+	buf := NewLineBuffer(0, 0, nil)
+	buf.Append([]source.Line{{Number: 1, Raw: "a"}})
+	buf.SetTokens(nil)
+	buf.SetTokens([]source.Line{})
+	out := buf.Slice(0, 1)
+	if len(out) != 1 || out[0].Tokens != nil {
+		t.Errorf("empty SetTokens should be no-op: %+v", out)
+	}
+}
+
+func TestLineBuffer_SetTokensOnEmptyBufferIsNoOp(t *testing.T) {
+	buf := NewLineBuffer(0, 0, nil)
+	// No Append; buf is empty.
+	buf.SetTokens([]source.Line{
+		{Number: 1, Tokens: []source.Token{{Type: chroma.Keyword, Value: "x"}}},
+	})
+	if buf.Total() != 0 {
+		t.Errorf("empty buffer Total: got %d want 0", buf.Total())
+	}
+}
+
+func TestLineBuffer_SetTokensRespectsWindowedStartLine(t *testing.T) {
+	// Trigger windowed mode: maxResidentBytes very small.
+	buf := NewLineBuffer(8, 2, nil)
+	buf.Append([]source.Line{
+		{Number: 1, Raw: "aaaaa"}, // 5 bytes
+		{Number: 2, Raw: "bbbbb"}, // 10 bytes total → over cap → evict 1
+		{Number: 3, Raw: "ccccc"},
+	})
+	if !buf.Windowed() {
+		t.Skip("buffer did not flip to windowed; skip this scenario")
+	}
+	residentStart := buf.ResidentStartLine()
+	// Trying to SetTokens for an evicted line is silently skipped.
+	if residentStart > 1 {
+		buf.SetTokens([]source.Line{
+			{Number: 1, Tokens: []source.Token{{Type: chroma.Keyword, Value: "evicted"}}},
+		})
+	}
+	// SetTokens for a resident line should still take.
+	residentEnd := residentStart + int64(buf.Total()-residentStart+1)
+	tagged := source.Line{
+		Number: residentEnd - 1,
+		Tokens: []source.Token{{Type: chroma.Keyword, Value: "live"}},
+	}
+	buf.SetTokens([]source.Line{tagged})
+	out := buf.Slice(tagged.Number-1, tagged.Number)
+	if len(out) != 1 {
+		t.Fatalf("Slice for resident tagged line: got %d", len(out))
+	}
+	if len(out[0].Tokens) != 1 || out[0].Tokens[0].Value != "live" {
+		t.Errorf("SetTokens did not propagate to resident line: %+v", out[0].Tokens)
+	}
+}

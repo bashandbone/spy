@@ -75,6 +75,11 @@ type Dependencies struct {
 	// (Ctrl-L / Ctrl-W) take effect on the next tick.
 	LineNumbers bool
 	WordWrap    bool
+
+	// Language is the Chroma lexer name picked at source detection time.
+	// Empty for non-code kinds; populated by `internal/ui` from
+	// [source.Metadata.Language] before constructing the renderer.
+	Language string
 }
 
 // ForKind picks a [Renderer] for the supplied [source.Kind]. Unknown /
@@ -86,9 +91,9 @@ func ForKind(k source.Kind, deps Dependencies) Renderer {
 	case source.KindText:
 		return &textRenderer{deps: deps}
 	case source.KindCode:
-		return &stubRenderer{name: "Code", pending: "US1 (T043)"}
+		return &codeRenderer{deps: deps}
 	case source.KindMarkdown:
-		return &stubRenderer{name: "Markdown", pending: "US1 (T044)"}
+		return newMarkdownRenderer(deps)
 	case source.KindPDF:
 		return &stubRenderer{name: "PDF", pending: "US4 (T081)"}
 	case source.KindImage:
@@ -96,7 +101,7 @@ func ForKind(k source.Kind, deps Dependencies) Renderer {
 	case source.KindBinary:
 		return &binaryRenderer{deps: deps}
 	default:
-		return &stubRenderer{name: "Unknown", pending: "US1 (T045)"}
+		return &textRenderer{deps: deps}
 	}
 }
 

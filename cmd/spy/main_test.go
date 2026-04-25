@@ -10,6 +10,7 @@ import (
 	"runtime"
 	"testing"
 
+	"github.com/knitli/spy/internal/render"
 	"github.com/knitli/spy/internal/source"
 	"github.com/knitli/spy/internal/term"
 )
@@ -207,6 +208,38 @@ func TestApplyGraphicsOverride(t *testing.T) {
 	}
 	if got := applyGraphicsOverride(detected, "garbage"); got != detected {
 		t.Errorf("unknown override: got %v want detected", got)
+	}
+}
+
+func TestNewHighlighter_KnownStyle(t *testing.T) {
+	caps := term.Capabilities{ColorDepth: term.ColorANSI256}
+	theme := render.ThemeDark()
+	h := newHighlighter(theme, caps, 1024)
+	if h == nil {
+		t.Fatal("newHighlighter returned nil")
+	}
+	if h.Style() == nil {
+		t.Errorf("Style() should be non-nil for a known chroma style")
+	}
+	if h.Cap() != 1024 {
+		t.Errorf("Cap: got %d want 1024", h.Cap())
+	}
+}
+
+func TestNewHighlighter_UnknownStyleStillUsable(t *testing.T) {
+	// chroma's styles.Get falls back to a non-nil Fallback style for
+	// any unknown name; newHighlighter must therefore always produce a
+	// usable Highlighter (Style() non-nil) even when --theme is
+	// mistyped (Copilot review PR#7 follow-up).
+	caps := term.Capabilities{ColorDepth: term.ColorANSI256}
+	theme := render.ThemeDark()
+	theme.ChromaStyle = "does-not-exist"
+	h := newHighlighter(theme, caps, 0)
+	if h == nil {
+		t.Fatal("newHighlighter returned nil")
+	}
+	if h.Style() == nil {
+		t.Errorf("Style() should fall back to a real style for unknown name")
 	}
 }
 
