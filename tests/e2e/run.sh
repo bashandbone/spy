@@ -23,12 +23,25 @@ go build -o bin/spy ./cmd/spy
 bash tests/e2e/setup.sh
 
 # Run every NN_*.sh script in lexical order. A script can be skipped by
-# exporting SPY_E2E_SKIP="01_text_review 04_graphics" before invocation.
+# exporting SPY_E2E_SKIP as a whitespace-delimited list of script names
+# (without the .sh suffix), e.g. SPY_E2E_SKIP="01_text_review 04_graphics".
+# Match is whole-token — substrings do not skip unrelated scripts.
+should_skip() {
+  local name="$1"
+  local tok
+  for tok in ${SPY_E2E_SKIP:-}; do
+    if [[ "$tok" == "$name" ]]; then
+      return 0
+    fi
+  done
+  return 1
+}
+
 shopt -s nullglob
 status=0
 for script in tests/e2e/[0-9][0-9]_*.sh; do
   name="$(basename "$script" .sh)"
-  if [[ "${SPY_E2E_SKIP:-}" == *"$name"* ]]; then
+  if should_skip "$name"; then
     echo "skip: $name"
     continue
   fi

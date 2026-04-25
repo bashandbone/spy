@@ -2,15 +2,12 @@
 //
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
-// Package integration provides PTY-driven harnesses for end-to-end tests
+// Package integration provides PTY-driven end-to-end harnesses for tests
 // that exercise capability paths (alt-screen, signal handling, graphics
-// emit, theme probes) which cannot be covered by unit tests alone. The
-// helpers here wrap creos/pty + golang.org/x/term to spawn the spy binary
-// against a controlled pseudo-terminal and capture frames for golden-file
-// comparison.
+// emit, theme probes) which cannot be covered by unit tests alone.
 //
-// This is the skeleton placeholder created by T004; the concrete
-// NewPTYProgram and golden helpers are filled in by Phase 2 tests.
+// Status: skeleton (Phase 1). Phase 2 picks the PTY library, adds it as a
+// dependency, and fills in the concrete spawn / capture / snapshot paths.
 package integration
 
 import (

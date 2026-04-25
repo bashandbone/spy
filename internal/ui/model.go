@@ -36,12 +36,12 @@ type Viewport struct {
 
 func NewModel(filePath string, cfg *config.Config) *Model {
 	m := &Model{
-		filePath:     filePath,
-		config:       cfg,
-		viewport:     Viewport{scrollOffset: 0, lineHeight: 1},
-		showHelp:     false,
+		filePath:       filePath,
+		config:         cfg,
+		viewport:       Viewport{scrollOffset: 0, lineHeight: 1},
+		showHelp:       false,
 		showOpenDialog: false,
-		err:          nil,
+		err:            nil,
 	}
 
 	if filePath != "" {

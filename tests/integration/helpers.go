@@ -5,6 +5,8 @@
 package integration
 
 import (
+	"bytes"
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -41,40 +43,8 @@ func WriteGolden(t *testing.T, name string, b []byte) {
 // for ANSI escape boundaries) is wired in Phase 2 alongside the first
 // golden test (T040).
 func DiffFrames(got, want []byte) string {
-	if len(got) == len(want) {
-		eq := true
-		for i := range got {
-			if got[i] != want[i] {
-				eq = false
-				break
-			}
-		}
-		if eq {
-			return ""
-		}
+	if bytes.Equal(got, want) {
+		return ""
 	}
-	return "frames differ (lengths got=" +
-		itoa(len(got)) + " want=" + itoa(len(want)) + ")"
-}
-
-func itoa(n int) string {
-	if n == 0 {
-		return "0"
-	}
-	neg := n < 0
-	if neg {
-		n = -n
-	}
-	var buf [20]byte
-	i := len(buf)
-	for n > 0 {
-		i--
-		buf[i] = byte('0' + n%10)
-		n /= 10
-	}
-	if neg {
-		i--
-		buf[i] = '-'
-	}
-	return string(buf[i:])
+	return fmt.Sprintf("frames differ (lengths got=%d want=%d)", len(got), len(want))
 }
