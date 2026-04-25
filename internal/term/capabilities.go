@@ -48,12 +48,13 @@ type Capabilities struct {
 
 // Detect probes the current process's terminal. Honours SPY_GRAPHICS,
 // SPY_THEME, NO_COLOR, COLORTERM. The total probe budget is bounded by
-// `ctx`; in Phase 2 there is no slow probe, so cancellation only causes
-// an early return with a default-shaped Capabilities. The OSC 11
-// luminance probe (US3) is what makes the budget load-bearing.
+// `ctx`; cancellation causes an early return with a default-shaped
+// [Capabilities]. The OSC 11 luminance probe is the only currently
+// time-sensitive component (50 ms budget per research R6) and the
+// caller-supplied ctx propagates into it.
 //
-// The function is goroutine-safe: it reads global env once and does not
-// mutate it.
+// The function is goroutine-safe: it reads the global env once and
+// does not mutate it.
 func Detect(ctx context.Context) Capabilities {
 	caps := Capabilities{
 		BackgroundLuminance: math.NaN(),
@@ -83,6 +84,8 @@ func Detect(ctx context.Context) Capabilities {
 
 	caps.ColorDepth = detectColorDepth()
 	caps.Graphics = detectGraphics(caps.InTmux)
+	caps.BackgroundLuminance = detectBackgroundLuminance(
+		ctx, envFromOS{}, caps.IsTTY, probeOSC11Background)
 
 	return caps
 }
