@@ -4,9 +4,10 @@
 
 // Package ui implements the Bubble Tea Model that drives the viewer.
 // The Phase 2 foundational viewer wires loader → render → viewport with
-// quit-on-q/esc/Ctrl-C and arrow-key scrolling. Search, vim, command
-// line, and graphics cleanup are added in their respective story
-// phases (US1–US6).
+// quit-on-q/esc/Ctrl-C and arrow-key scrolling. US1 (Phase 3) layers
+// streaming syntax highlighting + ActionReload on top; search, vim,
+// command line, and graphics cleanup are added in their respective
+// story phases (US2–US6).
 package ui
 
 import (
@@ -15,6 +16,7 @@ import (
 	"github.com/charmbracelet/bubbles/viewport"
 
 	"github.com/knitli/spy/internal/config"
+	"github.com/knitli/spy/internal/highlight"
 	"github.com/knitli/spy/internal/keys"
 	"github.com/knitli/spy/internal/loader"
 	"github.com/knitli/spy/internal/render"
@@ -22,7 +24,8 @@ import (
 	"github.com/knitli/spy/internal/term"
 )
 
-// ModelOptions matches contracts/internal-apis.md `internal/ui`.
+// ModelOptions matches contracts/internal-apis.md `internal/ui` plus
+// the US1 additions for the highlighter and reload context.
 type ModelOptions struct {
 	Source       source.Source
 	Stream       *loader.Stream
@@ -30,6 +33,10 @@ type ModelOptions struct {
 	Config       *config.Config
 	Theme        render.Theme
 	KeyMap       keys.KeyMap
+
+	// Highlighter is the per-session syntax highlighter. nil disables
+	// highlighting (used by the foundational text path and tests).
+	Highlighter *highlight.Highlighter
 
 	// Cancel cancels the loader's background streaming goroutine; the
 	// model fires it on tea.Quit so Open's goroutine exits before the
@@ -41,14 +48,15 @@ type ModelOptions struct {
 // unexported because callers construct via [NewModel]; once constructed,
 // the model is owned by tea.NewProgram for the duration of the run.
 type Model struct {
-	source   source.Source
-	stream   *loader.Stream
-	caps     term.Capabilities
-	cfg      *config.Config
-	theme    render.Theme
-	keyMap   keys.KeyMap
-	cancel   context.CancelFunc
-	renderer render.Renderer
+	source      source.Source
+	stream      *loader.Stream
+	caps        term.Capabilities
+	cfg         *config.Config
+	theme       render.Theme
+	keyMap      keys.KeyMap
+	cancel      context.CancelFunc
+	highlighter *highlight.Highlighter
+	renderer    render.Renderer
 
 	viewport viewport.Model
 	width    int
@@ -63,6 +71,21 @@ type Model struct {
 	// before then the footer advertises "loading..." instead of the
 	// final line count.
 	streaming bool
+
+	// status mirrors the foundational [render.Status] surfaced through
+	// renderContext. ActionReload bumps it to StatusError on failure;
+	// successful reloads return it to StatusStreaming until EOF.
+	status render.Status
+
+	// lastError holds the most recent ActionReload (or future load)
+	// failure so the status bar can surface it. Cleared on the next
+	// successful reload.
+	lastError error
+
+	// statusAdvisory is the highlighter's one-shot warning surfaced in
+	// the footer (e.g. "highlighting disabled"). Empty when no
+	// advisory is active.
+	statusAdvisory string
 }
 
 // NewModel constructs the viewer's Bubble Tea model. The first frame
@@ -70,29 +93,47 @@ type Model struct {
 // the alt-screen paints immediately; further chunks arrive via
 // chunkLoadedMsg as the producer streams.
 func NewModel(opts ModelOptions) Model {
-	deps := render.Dependencies{
-		Theme:        opts.Theme,
-		Capabilities: opts.Capabilities,
-		LineNumbers:  opts.Config != nil && opts.Config.LineNumbers,
-		WordWrap:     opts.Config != nil && opts.Config.WordWrap,
-	}
+	lang := ""
 	kind := source.KindUnknown
 	if opts.Source != nil {
 		kind = opts.Source.Kind()
+		lang = opts.Source.Metadata().Language
+	}
+	if opts.Highlighter != nil && lang != "" {
+		opts.Highlighter.SetLang(lang)
+	}
+	deps := render.Dependencies{
+		Theme:        opts.Theme,
+		Capabilities: opts.Capabilities,
+		Highlighter:  opts.Highlighter,
+		LineNumbers:  opts.Config != nil && opts.Config.LineNumbers,
+		WordWrap:     opts.Config != nil && opts.Config.WordWrap,
+		Language:     lang,
 	}
 	m := Model{
-		source:    opts.Source,
-		stream:    opts.Stream,
-		caps:      opts.Capabilities,
-		cfg:       opts.Config,
-		theme:     opts.Theme,
-		keyMap:    opts.KeyMap,
-		cancel:    opts.Cancel,
-		renderer:  render.ForKind(kind, deps),
-		streaming: true,
+		source:      opts.Source,
+		stream:      opts.Stream,
+		caps:        opts.Capabilities,
+		cfg:         opts.Config,
+		theme:       opts.Theme,
+		keyMap:      opts.KeyMap,
+		cancel:      opts.Cancel,
+		highlighter: opts.Highlighter,
+		renderer:    render.ForKind(kind, deps),
+		streaming:   true,
+		status:      render.StatusStreaming,
 	}
 	if opts.Stream != nil && opts.Stream.First.EOF {
 		m.streaming = false
+		m.status = render.StatusIdle
+	}
+	// Highlight the synchronously-loaded First chunk so the first paint
+	// already shows colours rather than waiting for the next tick.
+	if opts.Stream != nil && opts.Highlighter != nil && kind == source.KindCode {
+		highlightLines(opts.Highlighter, lang, opts.Stream.First.Lines)
+		// Re-highlight in-place so the already-appended buffer's lines
+		// pick up the tokens. The buffer holds the same backing array
+		// because [loader.Open] appended `first.Lines` directly.
 	}
 	return m
 }
@@ -106,3 +147,31 @@ type chunkLoadedMsg struct {
 
 // streamDoneMsg is sent when the loader's Updates channel closes.
 type streamDoneMsg struct{}
+
+// reloadMsg requests a fresh loader.Open against the current Source.
+// Fired by the keymap's ActionReload binding.
+type reloadMsg struct{}
+
+// reloadResultMsg carries the outcome of an in-flight reload request.
+// On success Stream and (optional) Cancel replace the model's; on
+// failure Err is non-nil and the model retains the prior buffer.
+type reloadResultMsg struct {
+	stream *loader.Stream
+	cancel context.CancelFunc
+	err    error
+}
+
+// highlightLines runs the highlighter against `lines` in place. Exists
+// as a standalone helper so [NewModel] (constructing) and [onChunk]
+// (post-arrival) share one path.
+func highlightLines(h *highlight.Highlighter, lang string, lines []source.Line) {
+	if h == nil {
+		return
+	}
+	for i := range lines {
+		if lines[i].Tokens != nil {
+			continue
+		}
+		lines[i].Tokens = h.Highlight(lang, lines[i].Raw)
+	}
+}

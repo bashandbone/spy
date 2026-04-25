@@ -1,0 +1,7 @@
+# SPDX-FileCopyrightText: 2026 Adam Poulemanos
+#
+# SPDX-License-Identifier: MIT OR Apache-2.0
+
+# Golden file directory for integration tests. Files here will be
+# populated when the PTY harness (T104, Phase 9) is in place — see
+# tests/integration/text_review_test.go for the planned shape.

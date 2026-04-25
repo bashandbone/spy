@@ -5,13 +5,18 @@
 package ui
 
 import (
+	"context"
+
 	"github.com/charmbracelet/bubbles/key"
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
 
+	"github.com/knitli/spy/internal/config"
+	"github.com/knitli/spy/internal/highlight"
 	"github.com/knitli/spy/internal/keys"
 	"github.com/knitli/spy/internal/loader"
 	"github.com/knitli/spy/internal/render"
+	"github.com/knitli/spy/internal/source"
 )
 
 // Init sets up the initial command pipeline: subscribe to the loader's
@@ -37,7 +42,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.onChunk(msg)
 	case streamDoneMsg:
 		m.streaming = false
+		if m.status == render.StatusStreaming {
+			m.status = render.StatusIdle
+		}
 		return m, nil
+	case reloadMsg:
+		return m.onReload()
+	case reloadResultMsg:
+		return m.onReloadResult(msg)
 	}
 	return m, nil
 }
@@ -74,15 +86,17 @@ func (m Model) onResize(msg tea.WindowSizeMsg) (tea.Model, tea.Cmd) {
 }
 
 // onKey runs the active keymap and translates the matched [Action]
-// into a tea.Cmd. Only the foundational actions (quit, scroll up/down
-// and pages) are handled here; the rest are added in their story
-// phases.
+// into a tea.Cmd. Phase 3 adds ActionReload on top of the foundational
+// scroll/quit actions; the rest are added in their story phases.
 func (m Model) onKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if matchAction(m.keyMap, keys.ActionQuit, msg) {
 		if m.cancel != nil {
 			m.cancel()
 		}
 		return m, tea.Quit
+	}
+	if matchAction(m.keyMap, keys.ActionReload, msg) {
+		return m, func() tea.Msg { return reloadMsg{} }
 	}
 	if matchAction(m.keyMap, keys.ActionScrollUp, msg) {
 		m.viewport.LineUp(1)
@@ -121,10 +135,75 @@ func (m Model) onKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 // onChunk re-renders the viewport on every chunk arrival so streamed
 // content appears progressively. The buffer is updated by the loader
-// itself; we only need to repaint.
+// itself; the highlighter populates Tokens in-place when the source is
+// KindCode so the next render frame paints with colours.
 func (m Model) onChunk(msg chunkLoadedMsg) (tea.Model, tea.Cmd) {
 	if msg.chunk.EOF {
 		m.streaming = false
+		if m.status == render.StatusStreaming {
+			m.status = render.StatusIdle
+		}
+	}
+	if m.highlighter != nil && m.source != nil && m.source.Kind() == source.KindCode {
+		highlightLines(m.highlighter, m.source.Metadata().Language, msg.chunk.Lines)
+	}
+	m.maybeAdvisoryFromHighlighter()
+	m.viewport.SetContent(m.renderer.Render(m.renderContext()))
+	if m.streaming {
+		return m, waitForChunk(m.stream)
+	}
+	return m, nil
+}
+
+// onReload implements ActionReload. Cancels the in-flight loader,
+// reopens the source, and swaps the buffer atomically on success. On
+// failure the prior buffer is retained and the error surfaces in the
+// status bar via m.lastError + m.status = StatusError.
+func (m Model) onReload() (tea.Model, tea.Cmd) {
+	if m.source == nil {
+		return m, nil
+	}
+	// Cancel the previous loader so its background goroutine exits before
+	// we open a fresh stream against the same source. The new context is
+	// returned via reloadResultMsg so onReloadResult can install it.
+	if m.cancel != nil {
+		m.cancel()
+		m.cancel = nil
+	}
+	src := m.source
+	cfg := m.cfg
+	return m, func() tea.Msg {
+		ctx, cancel := context.WithCancel(context.Background())
+		stream, err := loader.Open(ctx, src, loaderConfigFromConfig(cfg))
+		if err != nil {
+			cancel()
+			return reloadResultMsg{err: err}
+		}
+		return reloadResultMsg{stream: stream, cancel: cancel}
+	}
+}
+
+// onReloadResult installs the new stream when the reload succeeded;
+// otherwise records the error and keeps the prior buffer so the user
+// still sees content.
+func (m Model) onReloadResult(msg reloadResultMsg) (tea.Model, tea.Cmd) {
+	if msg.err != nil {
+		m.status = render.StatusError
+		m.lastError = msg.err
+		m.viewport.SetContent(m.renderer.Render(m.renderContext()))
+		return m, nil
+	}
+	m.stream = msg.stream
+	m.cancel = msg.cancel
+	m.status = render.StatusStreaming
+	m.streaming = true
+	m.lastError = nil
+	if m.stream.First.EOF {
+		m.streaming = false
+		m.status = render.StatusIdle
+	}
+	if m.highlighter != nil && m.source != nil && m.source.Kind() == source.KindCode {
+		highlightLines(m.highlighter, m.source.Metadata().Language, m.stream.First.Lines)
 	}
 	m.viewport.SetContent(m.renderer.Render(m.renderContext()))
 	if m.streaming {
@@ -133,20 +212,55 @@ func (m Model) onChunk(msg chunkLoadedMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+// loaderConfigFromConfig pulls the loader-shaped fields out of the
+// session config so ActionReload's [loader.Open] uses the same tuning
+// the original Open did.
+func loaderConfigFromConfig(cfg *config.Config) loader.Config {
+	if cfg == nil {
+		return loader.Config{}
+	}
+	return loader.Config{
+		MaxResidentBytes: cfg.MaxResidentBytes,
+		WindowSize:       cfg.WindowSize,
+	}
+}
+
+// maybeAdvisoryFromHighlighter drains a single Warning from the
+// highlighter's side channel and stages it as the model's advisory.
+// Phase 3 surfaces the message via m.statusAdvisory; the full
+// auto-clear timer (5 s per contracts/internal-apis.md) lands with the
+// US6 status bar.
+func (m *Model) maybeAdvisoryFromHighlighter() {
+	if m.highlighter == nil {
+		return
+	}
+	select {
+	case w := <-m.highlighter.Warns():
+		switch w.Kind {
+		case highlight.WarnHighlightDisabled:
+			m.statusAdvisory = "highlighting disabled"
+		}
+	default:
+	}
+}
+
 // renderContext bundles the per-frame state the renderer needs.
 func (m Model) renderContext() render.RenderContext {
 	ctx := render.RenderContext{
 		Theme:        m.theme,
 		Capabilities: m.caps,
 		Viewport:     m.viewport,
+		Status:       m.status,
+		LastError:    m.lastError,
 	}
 	if m.stream != nil {
 		ctx.Buffer = m.stream.Buffer
 	}
-	if m.streaming {
+	if m.streaming && m.status == render.StatusIdle {
+		// Defensive: if the model says we're streaming but the status
+		// already idled, prefer the streaming signal so renderers that
+		// use Status for the loading indicator stay honest.
 		ctx.Status = render.StatusStreaming
-	} else {
-		ctx.Status = render.StatusIdle
 	}
 	return ctx
 }

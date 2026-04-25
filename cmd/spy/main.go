@@ -14,8 +14,11 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
+	"github.com/alecthomas/chroma/v2/styles"
+
 	"github.com/knitli/spy/internal/config"
 	"github.com/knitli/spy/internal/graphics"
+	"github.com/knitli/spy/internal/highlight"
 	"github.com/knitli/spy/internal/keys"
 	"github.com/knitli/spy/internal/loader"
 	"github.com/knitli/spy/internal/render"
@@ -156,6 +159,11 @@ func run(args []string) int {
 		keyMap = mergedKM
 	}
 
+	// Construct the per-session highlighter. nil for KindText / KindBinary
+	// is fine — the renderers branch on a nil highlighter and emit raw
+	// content.
+	highlighter := newHighlighter(theme, caps, cfg.HighlightCapBytes)
+
 	model := ui.NewModel(ui.ModelOptions{
 		Source:       src,
 		Stream:       stream,
@@ -163,14 +171,14 @@ func run(args []string) int {
 		Config:       cfg,
 		Theme:        theme,
 		KeyMap:       keyMap,
+		Highlighter:  highlighter,
 		Cancel:       cancel,
 	})
 
-	// tea.WithMouseCellMotion is deferred to US1 (T046) — Phase 2 has no
-	// mouse handlers and enabling tracking sequences without a consumer
-	// can disrupt terminal selection / scrollback (Copilot review PR#7
-	// #19).
-	prog := tea.NewProgram(model, tea.WithAltScreen())
+	// US1 enables MouseCellMotion so future search-prompt UI can react to
+	// click-to-scroll. Bubble Tea handles SIGWINCH internally via its
+	// terminal-renderer goroutine, so no extra option is required.
+	prog := tea.NewProgram(model, tea.WithAltScreen(), tea.WithMouseCellMotion())
 	if _, err := prog.Run(); err != nil {
 		// Cancel the loader so its background goroutine doesn't leak
 		// past the program's error path (Copilot review PR#7 #2).
@@ -196,6 +204,17 @@ func runDegenerate(src source.Source) int {
 		return exitIOError
 	}
 	return exitOK
+}
+
+// newHighlighter resolves the Chroma style named on the active Theme
+// and constructs a [highlight.Highlighter] with the active color depth
+// and HighlightCap. An unknown / missing style name automatically
+// resolves to Chroma's bundled Fallback style (chroma's [styles.Get]
+// guarantees a non-nil result) so a user-mistyped --theme=foobar still
+// produces a working session — Theme.Mono separately disables
+// rendering when --no-color was passed.
+func newHighlighter(theme render.Theme, caps term.Capabilities, capBytes int64) *highlight.Highlighter {
+	return highlight.New(styles.Get(theme.ChromaStyle), caps.ColorDepth, capBytes)
 }
 
 // applyGraphicsOverride layers cfg.Graphics on top of the auto-detected
