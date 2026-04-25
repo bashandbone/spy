@@ -128,25 +128,37 @@ func NewModel(opts ModelOptions) Model {
 		m.status = render.StatusIdle
 	}
 	// Highlight the synchronously-loaded First chunk so the first paint
-	// already shows colours rather than waiting for the next tick.
+	// already shows colours rather than waiting for the next tick. The
+	// loader has already copied the lines into Stream.Buffer (Append
+	// does a struct-copy), so we must *also* push the resulting tokens
+	// back into the buffer via SetTokens — otherwise the renderer
+	// re-lexes on every frame and the byte cap exhausts after a few
+	// repaints (Copilot review PR#8 #1).
 	if opts.Stream != nil && opts.Highlighter != nil && kind == source.KindCode {
 		highlightLines(opts.Highlighter, lang, opts.Stream.First.Lines)
-		// Re-highlight in-place so the already-appended buffer's lines
-		// pick up the tokens. The buffer holds the same backing array
-		// because [loader.Open] appended `first.Lines` directly.
+		if opts.Stream.Buffer != nil {
+			opts.Stream.Buffer.SetTokens(opts.Stream.First.Lines)
+		}
 	}
 	return m
 }
 
 // chunkLoadedMsg announces that the loader produced another chunk. The
 // model's Update routes it through the buffer (already done by the
-// loader internally) and re-renders.
+// loader internally) and re-renders. The originating `*loader.Stream`
+// is carried so the handler can ignore stale chunks from a stream that
+// ActionReload has already swapped out (Copilot review PR#8 #2).
 type chunkLoadedMsg struct {
-	chunk loader.Chunk
+	chunk  loader.Chunk
+	stream *loader.Stream
 }
 
 // streamDoneMsg is sent when the loader's Updates channel closes.
-type streamDoneMsg struct{}
+// Carries the originating Stream so post-reload deliveries from the
+// previous loader don't stomp on the new stream's status.
+type streamDoneMsg struct {
+	stream *loader.Stream
+}
 
 // reloadMsg requests a fresh loader.Open against the current Source.
 // Fired by the keymap's ActionReload binding.

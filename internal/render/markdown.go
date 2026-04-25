@@ -10,6 +10,7 @@ import (
 	"github.com/charmbracelet/glamour"
 
 	"github.com/knitli/spy/internal/source"
+	"github.com/knitli/spy/internal/term"
 )
 
 // markdownRenderer is the [KindMarkdown] renderer: passes the buffer's
@@ -47,7 +48,13 @@ func (r *markdownRenderer) Render(ctx RenderContext) string {
 		return "(empty)\n"
 	}
 
-	if r.deps.Theme.Mono {
+	// Glamour bypass when colour is suppressed: either the user / config
+	// flagged the theme Mono (NO_COLOR=1, --no-color, mono profile) or
+	// the terminal advertises ColorMono (TERM=dumb, no SGR support).
+	// Without this second check Glamour would still emit ANSI escapes
+	// against a terminal that can't render them (Copilot review PR#8
+	// #4).
+	if r.deps.Theme.Mono || r.deps.Capabilities.ColorDepth == term.ColorMono {
 		return r.fallback.Render(ctx)
 	}
 

@@ -39,8 +39,18 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.KeyMsg:
 		return m.onKey(msg)
 	case chunkLoadedMsg:
+		// Drop stale chunks from a stream that ActionReload swapped
+		// out (Copilot review PR#8 #2).
+		if msg.stream != nil && msg.stream != m.stream {
+			return m, nil
+		}
 		return m.onChunk(msg)
 	case streamDoneMsg:
+		if msg.stream != nil && msg.stream != m.stream {
+			// Stale done from an old stream; the new stream is still
+			// alive — ignore.
+			return m, nil
+		}
 		m.streaming = false
 		if m.status == render.StatusStreaming {
 			m.status = render.StatusIdle
@@ -135,8 +145,9 @@ func (m Model) onKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 // onChunk re-renders the viewport on every chunk arrival so streamed
 // content appears progressively. The buffer is updated by the loader
-// itself; the highlighter populates Tokens in-place when the source is
-// KindCode so the next render frame paints with colours.
+// itself; the highlighter populates Tokens, then [LineBuffer.SetTokens]
+// pushes those tokens into the buffer's stored copies so subsequent
+// renders / scrolls don't re-lex (Copilot review PR#8 #3).
 func (m Model) onChunk(msg chunkLoadedMsg) (tea.Model, tea.Cmd) {
 	if msg.chunk.EOF {
 		m.streaming = false
@@ -146,6 +157,9 @@ func (m Model) onChunk(msg chunkLoadedMsg) (tea.Model, tea.Cmd) {
 	}
 	if m.highlighter != nil && m.source != nil && m.source.Kind() == source.KindCode {
 		highlightLines(m.highlighter, m.source.Metadata().Language, msg.chunk.Lines)
+		if m.stream != nil && m.stream.Buffer != nil {
+			m.stream.Buffer.SetTokens(msg.chunk.Lines)
+		}
 	}
 	m.maybeAdvisoryFromHighlighter()
 	m.viewport.SetContent(m.renderer.Render(m.renderContext()))
@@ -204,6 +218,9 @@ func (m Model) onReloadResult(msg reloadResultMsg) (tea.Model, tea.Cmd) {
 	}
 	if m.highlighter != nil && m.source != nil && m.source.Kind() == source.KindCode {
 		highlightLines(m.highlighter, m.source.Metadata().Language, m.stream.First.Lines)
+		if m.stream.Buffer != nil {
+			m.stream.Buffer.SetTokens(m.stream.First.Lines)
+		}
 	}
 	m.viewport.SetContent(m.renderer.Render(m.renderContext()))
 	if m.streaming {
@@ -230,12 +247,20 @@ func loaderConfigFromConfig(cfg *config.Config) loader.Config {
 // Phase 3 surfaces the message via m.statusAdvisory; the full
 // auto-clear timer (5 s per contracts/internal-apis.md) lands with the
 // US6 status bar.
+//
+// The receive checks `ok` so a future change that closes the channel
+// can't repeatedly deliver the zero-value Warning (which would bind to
+// WarnHighlightDisabled and re-stage the advisory every tick) —
+// Copilot review PR#8 #6.
 func (m *Model) maybeAdvisoryFromHighlighter() {
 	if m.highlighter == nil {
 		return
 	}
 	select {
-	case w := <-m.highlighter.Warns():
+	case w, ok := <-m.highlighter.Warns():
+		if !ok {
+			return
+		}
 		switch w.Kind {
 		case highlight.WarnHighlightDisabled:
 			m.statusAdvisory = "highlighting disabled"
@@ -283,14 +308,16 @@ func matchAction(km keys.KeyMap, action keys.Action, msg tea.KeyMsg) bool {
 }
 
 // waitForChunk subscribes to the loader's Updates channel and yields
-// each chunk as a Bubble Tea message. Returns nil when the channel
-// closes so the model stops re-subscribing on streamDoneMsg.
+// each chunk as a Bubble Tea message tagged with the originating
+// stream. The handler in [Model.Update] uses the tag to discard
+// stale messages that arrive after ActionReload swapped the stream
+// pointer (Copilot review PR#8 #2).
 func waitForChunk(s *loader.Stream) tea.Cmd {
 	return func() tea.Msg {
 		c, ok := <-s.Updates
 		if !ok {
-			return streamDoneMsg{}
+			return streamDoneMsg{stream: s}
 		}
-		return chunkLoadedMsg{chunk: c}
+		return chunkLoadedMsg{chunk: c, stream: s}
 	}
 }

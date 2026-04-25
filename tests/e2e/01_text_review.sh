@@ -8,6 +8,11 @@
 # verification ships once the PTY harness (T104) lands; for now the
 # script asserts the documented degenerate-cat behaviour from
 # contracts/cli.md "Stdout (non-TTY)".
+#
+# Uses a temp-file capture (not a pipeline) so spy's exit status is
+# preserved verbatim — a `cmd | cat` substitution would mask it
+# unless `set -o pipefail` is on, and even then `set -e` aborts before
+# `exit_code=$?` is reachable (Copilot review PR#8 #5).
 
 set -eu
 
@@ -25,30 +30,39 @@ if [[ ! -f "${fixture}" ]]; then
     exit 1
 fi
 
-# Capture stdout; with stdout non-TTY the binary cats the file verbatim.
-out="$("${binary}" --no-config "${fixture}" | cat)"
+tmp_out="$(mktemp)"
+trap 'rm -f "${tmp_out}"' EXIT
+
+# Redirecting stdout to a regular file makes stdout non-TTY without a
+# pipeline, so $? reflects spy's exit status directly.
+set +e
+"${binary}" --no-config "${fixture}" >"${tmp_out}"
 exit_code=$?
+set -e
 
 if [[ ${exit_code} -ne 0 ]]; then
     echo "expected exit 0; got ${exit_code}" >&2
+    cat "${tmp_out}" >&2 || true
     exit 1
 fi
 
+out="$(cat "${tmp_out}")"
+
 # Verify the file content is preserved verbatim.
-if ! echo "${out}" | grep -q 'package main'; then
+if ! grep -q 'package main' "${tmp_out}"; then
     echo "expected fixture content 'package main' in degenerate-cat output" >&2
     echo "got: ${out}" >&2
     exit 1
 fi
 
-if ! echo "${out}" | grep -q 'fmt.Println'; then
+if ! grep -q 'fmt.Println' "${tmp_out}"; then
     echo "expected fixture content 'fmt.Println' in degenerate-cat output" >&2
     echo "got: ${out}" >&2
     exit 1
 fi
 
 # Confirm no ANSI escapes leaked into the non-TTY stream.
-if echo "${out}" | grep -q $'\x1b\['; then
+if grep -q $'\x1b\[' "${tmp_out}"; then
     echo "non-TTY output contained ANSI escape sequences" >&2
     exit 1
 fi

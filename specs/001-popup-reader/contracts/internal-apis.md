@@ -191,10 +191,11 @@ func New(theme *chroma.Style, depth term.ColorDepth, capBytes int64) *Highlighte
 // Warns if the new cap is below the current source size.
 func (h *Highlighter) SetCap(bytes int64)
 
-// Warns is a one-shot side channel for user-visible advisories (currently:
-// "highlighting disabled (file > <cap>)"). Closed when the highlighter is
-// done. Consumers (internal/ui) surface entries in the status bar with a
-// 5 s auto-clear. Buffer 1; producer drops on full to avoid backpressure.
+// Warns is a side channel for user-visible advisories (currently:
+// "highlighting disabled (file > <cap>)"). Stays open for the lifetime
+// of the highlighter / session — consumers (internal/ui) surface entries
+// in the status bar with a 5 s auto-clear and drain non-blockingly each
+// Update tick. Buffer 1; producer drops on full to avoid backpressure.
 type Warning struct {
     Kind WarnKind
     Cap  int64

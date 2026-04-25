@@ -131,6 +131,32 @@ func TestKindMarkdown_MonoFallsBackToText(t *testing.T) {
 	}
 }
 
+func TestKindMarkdown_ColorMonoCapsFallBackToText(t *testing.T) {
+	// NO_COLOR / TERM=dumb sets caps.ColorDepth = ColorMono even when
+	// the theme isn't explicitly Mono. Glamour must be bypassed in
+	// that case so we don't emit ANSI to a non-colour terminal
+	// (Copilot review PR#8 #4).
+	deps := newMarkdownDeps(t, false)
+	deps.Capabilities.ColorDepth = term.ColorMono
+	if deps.Theme.Mono {
+		t.Fatalf("test prerequisite: Theme.Mono must be false to isolate the caps gate")
+	}
+	r := ForKind(source.KindMarkdown, deps)
+	src := "# Heading\n\nbody\n"
+	buf := loadMarkdown(t, src)
+	out := r.Render(RenderContext{
+		Buffer:       buf,
+		Theme:        deps.Theme,
+		Capabilities: deps.Capabilities,
+	})
+	if strings.Contains(out, "\x1b[") {
+		t.Errorf("ColorMono caps should suppress ANSI even when Theme.Mono is false; got %q", out)
+	}
+	if !strings.Contains(out, "Heading") {
+		t.Errorf("ColorMono fallback should still emit raw heading text: %q", out)
+	}
+}
+
 func TestKindMarkdown_LineNumbersAddGutter(t *testing.T) {
 	deps := newMarkdownDeps(t, true)
 	r := ForKind(source.KindMarkdown, deps)

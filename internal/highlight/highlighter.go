@@ -120,9 +120,14 @@ func (h *Highlighter) Cap() int64 {
 	return h.cap.Load()
 }
 
-// Warns returns the one-shot side channel for [Warning] advisories. The
+// Warns returns the advisory side channel for [Warning] values. The
 // channel is buffered to 1 and drops further sends when full so the
-// producer never blocks; consumers should drain on every Update tick.
+// producer never blocks. It is intended to remain open for the
+// lifetime of the highlighter / session rather than being closed to
+// signal completion; consumers should drain it non-blockingly on
+// every Update tick (Copilot review PR#8 #6 — earlier docs claimed
+// the channel closed when the highlighter was done, but no path
+// closed it and consumers don't depend on the close signal).
 func (h *Highlighter) Warns() <-chan Warning {
 	return h.warns
 }

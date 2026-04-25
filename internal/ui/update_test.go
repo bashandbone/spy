@@ -357,6 +357,147 @@ func TestUpdate_StreamDoneKeepsStatusError(t *testing.T) {
 	}
 }
 
+func TestNewModel_PreHighlightPushesTokensIntoBuffer(t *testing.T) {
+	// Copilot review PR#8 #1: NewModel must propagate the first-chunk
+	// tokens into the buffer (via SetTokens) so the renderer's
+	// Buffer.Slice() returns lines with Tokens populated, NOT nil.
+	src := &fakeCodeSource{body: "package main\nfunc x() {}\n", lang: "go"}
+	stream, err := loader.Open(context.Background(), src, loader.Config{})
+	if err != nil {
+		t.Fatalf("loader.Open: %v", err)
+	}
+	h := highlight.New(styles.Get("monokai"), term.ColorANSI256, 5*1024*1024)
+	NewModel(ModelOptions{
+		Source:       src,
+		Stream:       stream,
+		Capabilities: term.Capabilities{Cols: 80, Rows: 24, ColorDepth: term.ColorANSI256},
+		Config:       config.Defaults(),
+		Theme:        render.ThemeDark(),
+		KeyMap:       keys.Default(),
+		Highlighter:  h,
+	})
+	resident := stream.Buffer.Slice(0, stream.Buffer.Total())
+	if len(resident) == 0 {
+		t.Fatal("buffer is empty")
+	}
+	for i, l := range resident {
+		if l.Tokens == nil {
+			t.Errorf("buffer line %d (%q) Tokens is nil after NewModel; SetTokens did not propagate",
+				i, l.Raw)
+		}
+	}
+}
+
+func TestUpdate_OnChunkPushesTokensIntoBuffer(t *testing.T) {
+	// Copilot review PR#8 #3: onChunk must propagate freshly-highlighted
+	// tokens into the buffer so subsequent renders / scrolls don't
+	// re-lex (which would burn the highlighter byte cap).
+	src := &fakeCodeSource{
+		body: strings.Repeat("func main() {}\n", 200),
+		lang: "go",
+	}
+	stream, err := loader.Open(context.Background(), src, loader.Config{})
+	if err != nil {
+		t.Fatalf("loader.Open: %v", err)
+	}
+	h := highlight.New(styles.Get("monokai"), term.ColorANSI256, 5*1024*1024)
+	m := NewModel(ModelOptions{
+		Source:       src,
+		Stream:       stream,
+		Capabilities: term.Capabilities{Cols: 80, Rows: 24, ColorDepth: term.ColorANSI256},
+		Config:       config.Defaults(),
+		Theme:        render.ThemeDark(),
+		KeyMap:       keys.Default(),
+		Highlighter:  h,
+	})
+	m, _ = applyResize(m, 80, 24)
+	c, ok := <-stream.Updates
+	if !ok {
+		t.Fatal("expected a continuation chunk")
+	}
+	updated, _ := m.Update(chunkLoadedMsg{chunk: c, stream: stream})
+	mm := updated.(Model)
+	resident := mm.stream.Buffer.Slice(c.StartLine-1, c.StartLine-1+int64(len(c.Lines)))
+	if len(resident) == 0 {
+		t.Fatal("expected continuation lines in resident range")
+	}
+	hadTokens := false
+	for _, l := range resident {
+		if l.Tokens != nil {
+			hadTokens = true
+			break
+		}
+	}
+	if !hadTokens {
+		t.Errorf("onChunk did not propagate highlighter tokens into the buffer")
+	}
+}
+
+func TestUpdate_StaleChunkLoadedMsgIsDropped(t *testing.T) {
+	// Copilot review PR#8 #2: a chunkLoadedMsg whose stream pointer
+	// doesn't match m.stream (e.g. delivered after ActionReload swapped
+	// streams) must be ignored, not routed through onChunk.
+	src := &fakeSource{body: "x\n", kind: source.KindText}
+	stream, err := loader.Open(context.Background(), src, loader.Config{})
+	if err != nil {
+		t.Fatalf("loader.Open: %v", err)
+	}
+	other := &loader.Stream{} // pretend this came from a previous loader
+	m := NewModel(ModelOptions{
+		Source:       src,
+		Stream:       stream,
+		Capabilities: term.Capabilities{Cols: 80, Rows: 24},
+		Config:       config.Defaults(),
+		Theme:        render.ThemeDark(),
+		KeyMap:       keys.Default(),
+	})
+	m, _ = applyResize(m, 80, 24)
+	prevStreaming := m.streaming
+	prevStatus := m.status
+	updated, cmd := m.Update(chunkLoadedMsg{
+		chunk:  loader.Chunk{EOF: true},
+		stream: other,
+	})
+	mm := updated.(Model)
+	if cmd != nil {
+		t.Errorf("stale chunk should not produce a command, got %v", cmd)
+	}
+	if mm.streaming != prevStreaming || mm.status != prevStatus {
+		t.Errorf("stale chunk mutated model state: streaming %v→%v status %v→%v",
+			prevStreaming, mm.streaming, prevStatus, mm.status)
+	}
+}
+
+func TestUpdate_StaleStreamDoneMsgIsDropped(t *testing.T) {
+	// Copilot review PR#8 #2: streamDoneMsg from an old stream must
+	// not flip the new stream's status.
+	src := &fakeSource{body: strings.Repeat("a\n", 100), kind: source.KindText}
+	stream, err := loader.Open(context.Background(), src, loader.Config{})
+	if err != nil {
+		t.Fatalf("loader.Open: %v", err)
+	}
+	other := &loader.Stream{}
+	m := NewModel(ModelOptions{
+		Source:       src,
+		Stream:       stream,
+		Capabilities: term.Capabilities{Cols: 80, Rows: 24},
+		Config:       config.Defaults(),
+		Theme:        render.ThemeDark(),
+		KeyMap:       keys.Default(),
+	})
+	m, _ = applyResize(m, 80, 24)
+	m.streaming = true
+	m.status = render.StatusStreaming
+	updated, _ := m.Update(streamDoneMsg{stream: other})
+	mm := updated.(Model)
+	if !mm.streaming {
+		t.Errorf("stale streamDoneMsg flipped streaming=false on the new stream")
+	}
+	if mm.status != render.StatusStreaming {
+		t.Errorf("stale streamDoneMsg changed status: got %v want StatusStreaming", mm.status)
+	}
+}
+
 func TestLoaderConfigFromConfig(t *testing.T) {
 	cfg := &config.Config{MaxResidentBytes: 1024, WindowSize: 8}
 	got := loaderConfigFromConfig(cfg)

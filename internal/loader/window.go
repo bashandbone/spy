@@ -93,6 +93,38 @@ func (b *LineBuffer) Append(in []source.Line) {
 	}
 }
 
+// SetTokens propagates highlighter Tokens from `lines` into the
+// matching resident lines (matched by [source.Line.Number]) under the
+// buffer's mutex. Lines whose number falls outside the resident hot
+// region (typically because windowed-mode eviction has already pruned
+// them) are silently skipped — the renderer can re-highlight on
+// demand for evicted ranges.
+//
+// Callers (currently `internal/ui`) highlight a freshly-arrived chunk
+// then immediately invoke SetTokens so the buffer's stored copies pick
+// up the tokens. Without this, the buffer's struct-copies retain
+// `Tokens == nil` and the renderer re-lexes on every frame — burning
+// the highlighter's byte cap on each repaint (Copilot review PR#8 #1
+// + #3).
+func (b *LineBuffer) SetTokens(lines []source.Line) {
+	if len(lines) == 0 {
+		return
+	}
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if len(b.lines) == 0 {
+		return
+	}
+	residentEnd := b.startLine + int64(len(b.lines))
+	for _, in := range lines {
+		if in.Number < b.startLine || in.Number >= residentEnd {
+			continue
+		}
+		idx := in.Number - b.startLine
+		b.lines[idx].Tokens = in.Tokens
+	}
+}
+
 // MarkComplete tells the buffer streaming has finished and pins the
 // final total. Renderers typically poll Total() after EOF.
 func (b *LineBuffer) MarkComplete(total int64) {
