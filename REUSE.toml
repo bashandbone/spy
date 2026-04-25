@@ -23,3 +23,13 @@ precedence = "override"
 SPDX-FileCopyrightText = "GitHub Inc."
 SPDX-License-Identifier = "MIT"
 
+# speckit-generated metadata that has no native comment syntax. Owned by
+# the project author; tracked here rather than inline.
+[[annotations]]
+path = [
+  ".specify/feature.json",
+]
+precedence = "aggregate"
+SPDX-FileCopyrightText = "2026 Adam Poulemanos"
+SPDX-License-Identifier = "MIT OR Apache-2.0"
+
