@@ -1,0 +1,25 @@
+# SPDX-FileCopyrightText: 2026 Adam Poulemanos
+# SPDX-License-Identifier: MIT OR Apache-2.0
+
+version = 1
+SPDX-PackageName = "spy"
+SPDX-PackageSupplier = "Adam Poulemanos"
+SPDX-PackageDownloadLocation = "https://github.com/bashandbone/spy"
+
+[[annotations]]
+path = [
+  ".github/prompts/speckit.*.md",
+  ".github/agents/speckit.*.agent.md",
+  ".claude/commands/speckit.*.md",
+  ".gemini/commands/speckit.*.toml",
+  ".specify/scripts/**",
+  ".specify/templates/**",
+  ".specify/workflows/**",
+  ".specify/extensions/**",
+  ".specify/integrations/**",
+  ".claude/skills/**",
+]
+precedence = "override"
+SPDX-FileCopyrightText = "GitHub Inc."
+SPDX-License-Identifier = "MIT"
+
