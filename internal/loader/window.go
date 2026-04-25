@@ -120,7 +120,7 @@ func (b *LineBuffer) SetTokens(lines []source.Line) {
 		if in.Number < b.startLine || in.Number >= residentEnd {
 			continue
 		}
-		idx := in.Number - b.startLine
+		idx := int(in.Number - b.startLine)
 		b.lines[idx].Tokens = in.Tokens
 	}
 }
