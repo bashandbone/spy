@@ -45,6 +45,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 // onResize reflows the viewport to the new terminal size. The status
 // bar (US6) reserves one row at the bottom; for now the viewport
 // claims the full height minus a placeholder footer.
+//
+// SC-008 / quickstart.md step 12 require that the line previously at
+// viewport row 0 stays at row 0 across a resize, so we preserve the
+// existing YOffset rather than constructing a fresh viewport.Model
+// (which would reset scroll state to top) — Copilot review PR#7 #22.
 func (m Model) onResize(msg tea.WindowSizeMsg) (tea.Model, tea.Cmd) {
 	m.width = msg.Width
 	m.height = msg.Height
@@ -52,8 +57,18 @@ func (m Model) onResize(msg tea.WindowSizeMsg) (tea.Model, tea.Cmd) {
 	if m.height < footerRows+1 {
 		footerRows = 0
 	}
-	m.viewport = viewport.New(m.width, m.height-footerRows)
+	prevYOffset := m.viewport.YOffset
+	first := m.viewport.Width == 0 && m.viewport.Height == 0
+	if first {
+		m.viewport = viewport.New(m.width, m.height-footerRows)
+	} else {
+		m.viewport.Width = m.width
+		m.viewport.Height = m.height - footerRows
+	}
 	m.viewport.SetContent(m.renderer.Render(m.renderContext()))
+	if !first {
+		m.viewport.SetYOffset(prevYOffset)
+	}
 	return m, nil
 }
 

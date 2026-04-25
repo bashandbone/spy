@@ -99,7 +99,7 @@ func Open(ctx context.Context, src source.Source, cfg Config) (*Stream, error) {
 	updates := make(chan Chunk, cfg.UpdatesBuffer)
 	errs := make(chan error, cfg.UpdatesBuffer+2)
 
-	buf := NewLineBuffer(cfg.MaxResidentBytes, cfg.WindowSize, src)
+	buf := newLineBuffer(cfg.MaxResidentBytes, cfg.WindowSize, cfg.MaxLineBytes, src)
 
 	stream := &Stream{
 		Updates: updates,

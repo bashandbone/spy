@@ -31,12 +31,19 @@ func (m Model) footerLine() string {
 		name = filepath.Base(m.source.DisplayName())
 	}
 	total := int64(0)
+	residentStart := int64(1)
 	if m.stream != nil && m.stream.Buffer != nil {
 		total = m.stream.Buffer.Total()
+		residentStart = m.stream.Buffer.ResidentStartLine()
 	}
+	// The viewport's YOffset is relative to the rendered content, which
+	// starts at the buffer's resident first line — not at file line 1
+	// once the buffer has flipped to windowed mode. Mapping through
+	// ResidentStartLine keeps the footer line number consistent with
+	// the gutter the renderer emits (Copilot review PR#7 #15).
+	current := residentStart + int64(m.viewport.YOffset)
 	// 0-byte input renders as "Line 0" per contracts/cli.md "Empty
 	// input"; non-empty buffers number from 1 (Copilot review PR#7 #6).
-	current := m.viewport.YOffset + 1
 	if total == 0 {
 		current = 0
 	}

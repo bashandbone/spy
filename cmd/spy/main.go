@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
 
@@ -156,7 +157,11 @@ func run(args []string) int {
 		Cancel:       cancel,
 	})
 
-	prog := tea.NewProgram(model, tea.WithAltScreen(), tea.WithMouseCellMotion())
+	// tea.WithMouseCellMotion is deferred to US1 (T046) — Phase 2 has no
+	// mouse handlers and enabling tracking sequences without a consumer
+	// can disrupt terminal selection / scrollback (Copilot review PR#7
+	// #19).
+	prog := tea.NewProgram(model, tea.WithAltScreen())
 	if _, err := prog.Run(); err != nil {
 		// Cancel the loader so its background goroutine doesn't leak
 		// past the program's error path (Copilot review PR#7 #2).
@@ -169,10 +174,13 @@ func run(args []string) int {
 
 // applyGraphicsOverride layers cfg.Graphics on top of the auto-detected
 // caps.Graphics. "" / "auto" leaves the auto value; anything else
-// matching the contracts/cli.md vocabulary replaces it. Unknown values
-// are treated as "auto" (caller already surfaced any warnings).
+// matching the contracts/cli.md vocabulary replaces it. The match is
+// case-insensitive so config/env/flag inputs all behave the same way
+// regardless of caller capitalization (Copilot review PR#7 #17).
+// Unknown values are treated as "auto" (caller already surfaced any
+// warnings).
 func applyGraphicsOverride(detected term.Graphics, override string) term.Graphics {
-	switch override {
+	switch strings.ToLower(strings.TrimSpace(override)) {
 	case "none":
 		return term.GraphicsNone
 	case "kitty":
@@ -195,7 +203,10 @@ func exitForSourceError(err error, args []string) int {
 	}
 	switch {
 	case errors.Is(err, source.ErrNoInput):
-		fmt.Fprintf(os.Stderr, "spy: no input: stdin is a TTY and no FILE was given\n")
+		// Phase 2 returns ErrNoInput regardless of stdin TTY state
+		// because StdinSource lands in US5; the message reflects the
+		// real condition (Copilot review PR#7 #18).
+		fmt.Fprintf(os.Stderr, "spy: no input: missing FILE; stdin is not supported yet\n")
 		return exitUsageError
 	case errors.Is(err, source.ErrNotFound):
 		fmt.Fprintf(os.Stderr, "spy: cannot open: %s: not found\n", target)

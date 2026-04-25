@@ -249,6 +249,36 @@ func TestModel_InitReturnsCmd(t *testing.T) {
 	}
 }
 
+func TestUpdate_ResizePreservesYOffset(t *testing.T) {
+	body := strings.Repeat("line\n", 200)
+	m := newTestModel(t, body)
+	m, _ = applyResize(m, 80, 20)
+	// Drain so buffer has > 20 lines.
+	for c := range m.stream.Updates {
+		updated, _ := m.Update(chunkLoadedMsg{chunk: c})
+		m = updated.(Model)
+	}
+	// Scroll down a few rows.
+	for i := 0; i < 10; i++ {
+		updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyDown})
+		m = updated.(Model)
+	}
+	beforeOff := m.viewport.YOffset
+	if beforeOff == 0 {
+		t.Skip("viewport refused to scroll; can't exercise the resize-preserve path")
+	}
+	// Resize and confirm the YOffset survives (SC-008).
+	updated, _ := m.Update(tea.WindowSizeMsg{Width: 100, Height: 30})
+	after := updated.(Model)
+	if after.viewport.YOffset != beforeOff {
+		t.Errorf("resize should preserve YOffset: before=%d after=%d",
+			beforeOff, after.viewport.YOffset)
+	}
+	if after.viewport.Width != 100 {
+		t.Errorf("resize should update Width: got %d", after.viewport.Width)
+	}
+}
+
 func TestView_EmptyInputShowsLineZero(t *testing.T) {
 	m := newTestModel(t, "")
 	m, _ = applyResize(m, 80, 24)

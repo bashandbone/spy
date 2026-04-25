@@ -131,6 +131,64 @@ func TestKindBinary_StubFrame(t *testing.T) {
 	}
 }
 
+func TestKindText_WordWrapWraps(t *testing.T) {
+	deps := Dependencies{Theme: ThemeDark(), LineNumbers: true, WordWrap: true}
+	r := ForKind(source.KindText, deps)
+	buf := loader.NewLineBuffer(0, 0, nil)
+	long := strings.Repeat("a", 200)
+	buf.Append([]source.Line{{Number: 1, Raw: long}})
+	out := r.Render(RenderContext{
+		Buffer:       buf,
+		Theme:        deps.Theme,
+		Capabilities: term.Capabilities{Cols: 40, Rows: 24},
+	})
+	rows := strings.Count(strings.TrimRight(out, "\n"), "\n") + 1
+	if rows < 5 {
+		t.Errorf("200-char line at width 40 should produce >= 5 wrapped rows, got %d (out=%q)",
+			rows, out)
+	}
+}
+
+func TestKindText_NoWrapPreservesLongLine(t *testing.T) {
+	deps := Dependencies{Theme: ThemeDark(), LineNumbers: true, WordWrap: false}
+	r := ForKind(source.KindText, deps)
+	buf := loader.NewLineBuffer(0, 0, nil)
+	long := strings.Repeat("a", 200)
+	buf.Append([]source.Line{{Number: 1, Raw: long}})
+	out := r.Render(RenderContext{
+		Buffer:       buf,
+		Theme:        deps.Theme,
+		Capabilities: term.Capabilities{Cols: 40, Rows: 24},
+	})
+	rows := strings.Count(strings.TrimRight(out, "\n"), "\n") + 1
+	if rows != 1 {
+		t.Errorf("--no-wrap: 200-char line should emit 1 row, got %d", rows)
+	}
+	if !strings.Contains(out, long) {
+		t.Errorf("--no-wrap should preserve full line content")
+	}
+}
+
+func TestKindText_BlankLineDoesNotCollapseUnderWrap(t *testing.T) {
+	deps := Dependencies{Theme: ThemeDark(), LineNumbers: true, WordWrap: true}
+	r := ForKind(source.KindText, deps)
+	buf := loader.NewLineBuffer(0, 0, nil)
+	buf.Append([]source.Line{
+		{Number: 1, Raw: "alpha"},
+		{Number: 2, Raw: ""},
+		{Number: 3, Raw: "gamma"},
+	})
+	out := r.Render(RenderContext{
+		Buffer:       buf,
+		Theme:        deps.Theme,
+		Capabilities: term.Capabilities{Cols: 80, Rows: 24},
+	})
+	rows := strings.Count(strings.TrimRight(out, "\n"), "\n") + 1
+	if rows != 3 {
+		t.Errorf("blank middle line must stay as one row; got %d rows in %q", rows, out)
+	}
+}
+
 // --- Theme ---
 
 func TestThemeDarkVsLight(t *testing.T) {

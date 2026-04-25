@@ -30,6 +30,10 @@ type LineBuffer struct {
 	residentBytes    int64
 	maxResidentBytes int64
 	windowSize       int
+	// maxLineBytes is the per-line truncation cap propagated from
+	// [Config]. Used by the windowed-mode re-seek path so streaming
+	// and reseek apply the same cap (Copilot review PR#7 #20).
+	maxLineBytes int64
 
 	src        source.Source
 	windowed   bool
@@ -45,15 +49,30 @@ type LineBuffer struct {
 // NewLineBuffer constructs an empty buffer. `src` is retained so
 // windowed-mode re-seeks can call Reopen(). When `maxResidentBytes` is
 // zero, the buffer never flips to windowed mode.
+//
+// maxLineBytes <= 0 means "use defaultMaxLineBytes" — callers that
+// don't care can pass 0; [Open] supplies the same value it gives the
+// streaming readChunk so both paths apply the same cap.
 func NewLineBuffer(maxResidentBytes int64, windowSize int, src source.Source) *LineBuffer {
+	return newLineBuffer(maxResidentBytes, windowSize, defaultMaxLineBytes, src)
+}
+
+// newLineBuffer is the full-arity constructor used by [Open] when the
+// caller needs to plumb a custom MaxLineBytes through to windowed-mode
+// re-seeks.
+func newLineBuffer(maxResidentBytes int64, windowSize int, maxLineBytes int64, src source.Source) *LineBuffer {
 	if windowSize <= 0 {
 		windowSize = defaultWindowSize
+	}
+	if maxLineBytes <= 0 {
+		maxLineBytes = defaultMaxLineBytes
 	}
 	return &LineBuffer{
 		startLine:        1,
 		totalLines:       -1,
 		maxResidentBytes: maxResidentBytes,
 		windowSize:       windowSize,
+		maxLineBytes:     maxLineBytes,
 		src:              src,
 	}
 }
@@ -105,14 +124,26 @@ func (b *LineBuffer) Windowed() bool {
 	return b.windowed
 }
 
-// Slice returns lines numbered in [start, end) using 1-based numbering.
+// ResidentStartLine returns the 1-based source line number of the first
+// line currently held in the resident hot region. While the buffer is
+// not windowed this is always 1; once windowed, the value tracks the
+// eviction frontier so callers (e.g. internal/ui's footer) can map a
+// viewport row back to the absolute line number that the renderer
+// printed in its gutter (Copilot review PR#7 #15).
+func (b *LineBuffer) ResidentStartLine() int64 {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.startLine
+}
+
+// Slice returns the lines in the 0-based half-open range [start, end).
+// The returned [source.Line] values retain their 1-based Number fields.
 // Returns whatever is currently resident if the range is partially
-// outside; in windowed mode, falls back to a re-seek via [source.Source]
-// .Reopen() when a range lies entirely outside the window.
+// outside; in windowed mode, falls back to a re-seek via
+// [source.Source.Reopen] when a range lies entirely outside the window.
 //
-// `start` and `end` are 0-based line indices in the source. We accept
-// either convention as long as callers are consistent — the contract in
-// internal-apis.md uses 0-based indices for Slice.
+// `start` and `end` are 0-based line indices in the source, matching the
+// Slice contract in internal-apis.md.
 func (b *LineBuffer) Slice(start, end int64) []source.Line {
 	if start < 0 {
 		start = 0
@@ -173,7 +204,7 @@ func (b *LineBuffer) Slice(start, end int64) []source.Line {
 	warningCh := b.warningCh
 	b.mu.Unlock()
 
-	out, err := readWindow(src, wantStart, wantEnd)
+	out, err := readWindow(src, wantStart, wantEnd, b.maxLineBytes)
 	if err != nil {
 		if errors.Is(err, source.ErrNotSeekable) {
 			b.mu.Lock()
@@ -242,8 +273,12 @@ func (b *LineBuffer) evictLocked() {
 
 // readWindow re-opens the source and skips ahead to `start`, copying
 // lines until `end`. Used by windowed-mode Slice() when the requested
-// range falls outside the resident window.
-func readWindow(src source.Source, start, end int64) ([]source.Line, error) {
+// range falls outside the resident window. The `maxLineBytes` cap
+// matches the streaming path so both produce identical truncations.
+func readWindow(src source.Source, start, end, maxLineBytes int64) ([]source.Line, error) {
+	if maxLineBytes <= 0 {
+		maxLineBytes = defaultMaxLineBytes
+	}
 	rs, err := src.Reopen()
 	if err != nil {
 		return nil, err
@@ -252,14 +287,13 @@ func readWindow(src source.Source, start, end int64) ([]source.Line, error) {
 		defer c.Close()
 	}
 	reader := bufio.NewReaderSize(rs, readerBufferBytes)
-	const reseekLineCap = 100 * 1024 // mirrors defaultMaxLineBytes
 	var out []source.Line
 	var lineNo int64 = 1
 	for {
 		if lineNo >= end {
 			break
 		}
-		raw, _, err := readLine(reader, reseekLineCap)
+		raw, _, err := readLine(reader, maxLineBytes)
 		if errors.Is(err, io.EOF) {
 			if len(raw) > 0 && lineNo >= start {
 				out = append(out, source.Line{Number: lineNo, Raw: string(raw)})
