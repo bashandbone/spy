@@ -110,7 +110,7 @@ Exit codes:
 | `2` | Usage error: bad flag, missing argument when stdin is a TTY, etc. |
 | `3` | I/O error: file not found, permission denied, broken symlink. |
 | `4` | Unsupported content: binary file, malformed PDF, decode failure. |
-| `5` | Terminal initialization error: no TTY when one is required. |
+| `5` | Terminal setup error: stdout is not a TTY but the user explicitly requested TTY-only behavior (e.g., `--graphics` set to a non-`none` value with no TTY available, or opening `/dev/tty` for OSC probes failed). The implicit-stdin pipe path uses degenerate-cat (exit 0); the no-input + TTY-stdin path uses usage error (exit 2); exit 5 is reserved for the rare case where TTY behavior was explicitly requested. |
 | `130` | Interrupted by SIGINT. |
 | `143` | Terminated by SIGTERM. |
 
@@ -160,6 +160,29 @@ Examples:
   cat main.go | spy -l go
   git diff HEAD~ | spy
 ```
+
+## Debug log format
+
+When `--debug=<path>` is set, `spy` appends to that path one structured
+event per line as line-delimited JSON. Existing files are appended-to,
+not truncated.
+
+Schema:
+
+```json
+{"ts":"2026-04-25T12:00:00Z","level":"info","event":"capabilities","data":{"graphics":"kitty","color_depth":"truecolor","luminance":0.18}}
+{"ts":"2026-04-25T12:00:00Z","level":"warn","event":"config","data":{"unknown_key":"foo","action":"ignored"}}
+{"ts":"2026-04-25T12:00:00Z","level":"error","event":"loader","data":{"file":"x.pdf","err":"open x.pdf: no such file"}}
+```
+
+Required fields:
+
+- `ts`: RFC 3339 timestamp.
+- `level`: one of `debug` | `info` | `warn` | `error`.
+- `event`: kebab-case event name. Defined names: `capabilities`, `config`, `source`, `loader`, `highlight`, `render`, `keymap`, `signal`, `panic`.
+- `data`: object with event-specific fields.
+
+Stable across patch releases; new events may be added in minor releases. The format is part of the public contract.
 
 ## Compatibility notes
 

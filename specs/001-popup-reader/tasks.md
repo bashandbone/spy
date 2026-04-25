@@ -15,6 +15,12 @@ NON-NEGOTIABLE. Every implementation task has a preceding failing-test task
 in the same logical change set. `go test ./... -race` and per-package
 coverage ≥ 80 % are gates on PR merge.
 
+**Test-sibling annotation**: Most implementation tasks have a preceding
+failing-test task in the same package. A small set of wiring/refactor
+tasks (T032, T035, T046, T065, T067) are covered by tests in adjacent
+packages and integration tests rather than dedicated unit tests; each is
+annotated below with `(test sibling: …)`.
+
 **Organization**: Tasks are grouped by user story (P1 → P3) so each story can
 be implemented, tested, and demoed independently after Foundational completes.
 
@@ -113,13 +119,13 @@ completes. Each task pair below puts the failing test first.
 
 - [ ] T030 [P] Write failing tests for flag parsing in `cmd/spy/flags_test.go` — every flag from `contracts/cli.md` (long + short forms), env var fallback, `--help` / `--version` exits, `--config` vs `--no-config` mutual exclusion, unknown flag → exit 2.
 - [ ] T031 Extract flag definitions into `cmd/spy/flags.go` exposing `ParseFlags([]string) (*ParsedFlags, error)`; pure (no side effects) so it's testable.
-- [ ] T032 Replace `cmd/spy/main.go` with the foundational wiring: `term.Detect` → `config.Load` → `source.FromArgs` → `loader.Open` → `ui.NewModel` → `tea.NewProgram(model, tea.WithAltScreen()).Run()`. Implement FR-013 stderr error path with the documented exit codes (0/1/2/3/4/5/130/143) and the `spy: <reason>: <detail>` format from `contracts/cli.md`. Defer order (LIFO, panic-safe per research R10): `defer restore := term.Restore()` first, then `defer graphics.CleanupFunc(caps.Graphics)()` second so graphics cleanup runs *before* terminal restore. The graphics-cleanup defer is a no-op until US4 lands but the wiring is added here so panic-safety is correct from the foundational phase.
+- [ ] T032 (test sibling: T030 flag tests + T035b signal test + integration tests T040, T088) Replace `cmd/spy/main.go` with the foundational wiring: `term.Detect` → `config.Load` → `source.FromArgs` → `loader.Open` → `ui.NewModel` → `tea.NewProgram(model, tea.WithAltScreen()).Run()`. Implement FR-013 stderr error path with the documented exit codes (0/1/2/3/4/5/130/143) and the `spy: <reason>: <detail>` format from `contracts/cli.md`. Defer order (LIFO, panic-safe per research R10): capture `restore := term.Restore()` then `defer restore()`; capture `cleanupGraphics := graphics.CleanupFunc(caps.Graphics)` then `defer cleanupGraphics()`. LIFO ordering means `cleanupGraphics()` runs first (graphics cleanup before terminal restore), then `restore()` runs last. The graphics-cleanup defer is a no-op until US4 lands but the wiring is added here so panic-safety is correct from the foundational phase.
 
 ### `internal/ui` rewiring
 
 - [ ] T033 [P] Write failing tests for `NewModel`, `Init`, `Update` (handles `tea.WindowSizeMsg`, `chunkLoadedMsg`, key events), and `View` in `internal/ui/model_test.go`. Cover: foundational quit on `q`/Esc/Ctrl-C, scroll up/down with arrow keys, end-of-file indicator on last line, resize reflows viewport.
 - [ ] T034 Replace `internal/ui/model.go` with a `bubbles/viewport`-based `Model`, `NewModel(opts ModelOptions) Model`, `ModelOptions` matching `contracts/internal-apis.md`, and the foundational `Init`/`Update`/`View`. Wire the `internal/keys.Default()` keymap; vim mode is added in US2.
-- [ ] T035 [P] Split UI into `internal/ui/update.go`, `internal/ui/view.go`, `internal/ui/help.go` (help is a stub overlay until later stories add bindings to surface).
+- [ ] T035 [P] (test sibling: T033 — refactor only, behavior unchanged) Split UI into `internal/ui/update.go`, `internal/ui/view.go`, `internal/ui/help.go` (help is a stub overlay until later stories add bindings to surface).
 - [ ] T035b [P] Failing integration test in `tests/integration/signal_test.go` driving the PTY harness against `/tmp/spy-fixtures/big.txt` (covers FR-015 / SC-008 signal-handling gate that Constitution Principle II requires): once the alt-screen frame is observed, send SIGINT and assert (a) process exits with code 130 within 1 s, (b) terminal modes restored (echo on, cursor visible, alt-screen exited via the `\x1b[?1049l` sequence), (c) no residual escape sequences trail on stdout. Repeat the run sending SIGTERM and assert exit code 143. Graphics-cleanup assertions deferred to T083; this task only covers the foundational `defer term.Restore()` chain from T032.
 
 ### Cleanup of legacy skeleton
@@ -158,7 +164,7 @@ the matching golden-file integration test.
       (a) feed loader chunks through `Highlighter.HighlightStream` when `source.Kind == KindCode`,
       (b) trigger a re-render frame on `chunkLoadedMsg` so highlighted content appears progressively,
       (c) display "END" indicator (`render.Theme.Footer`) when the viewport reaches the last loaded line and `Status == Ready`.
-- [ ] T046 [US1] Wire alt-screen entry/exit options in `cmd/spy/main.go`: `tea.WithAltScreen()`, `tea.WithMouseCellMotion()`, and a SIGWINCH-aware program option. Confirm `defer term.Restore()` still fires on panic.
+- [ ] T046 [US1] (test sibling: T040 PTY integration test) Wire alt-screen entry/exit options in `cmd/spy/main.go`: `tea.WithAltScreen()`, `tea.WithMouseCellMotion()`, and a SIGWINCH-aware program option. Confirm `defer term.Restore()` still fires on panic.
 - [ ] T046b [P] [US1] Failing unit tests for ActionReload in `internal/ui/update_test.go` (covers spec.md edge case "What happens when a file is deleted or its permissions change while the viewer is open"): (a) successful reload re-invokes `loader.Open` on the current `Source` and replaces the buffer atomically; (b) reload after the underlying file is deleted retains the prior buffer and emits a status-bar error styled with `Theme.Error`; (c) reload while a previous stream is still draining cancels the previous `context.Context` first.
 - [ ] T046c [US1] Implement `ActionReload` handling in `internal/ui/update.go`: capture the active loader `cancel` func; on reload, call `cancel()`, then `loader.Open(ctx, m.Source, m.Config)` afresh; on success swap `m.Buffer` and clear `m.LastError`; on error keep `m.Buffer` and set `m.Status = StatusError` with the wrapped error in `m.LastError`. Bind `Ctrl-R` and `r` to `ActionReload` in `internal/keys/default.go` (verify T008's "every Action from contracts/keys.md must be present" still holds).
 
@@ -219,9 +225,9 @@ light` at runtime visibly switches.
 ### Implementation for User Story 3
 
 - [ ] T064 [US3] Implement OSC 11 luminance probe via `muesli/termenv`'s `BackgroundColor()` in `internal/term/theme.go`, with a 50 ms total timeout and `COLORFGBG` env-var fallback.
-- [ ] T065 [US3] Wire `BackgroundLuminance` into `term.Detect()` (replacing the `NaN` placeholder from T012). Honour `SPY_THEME` to short-circuit the probe entirely.
+- [ ] T065 [US3] (test sibling: T060 OSC probe + T011 Detect tests) Wire `BackgroundLuminance` into `term.Detect()` (replacing the `NaN` placeholder from T012). Honour `SPY_THEME` to short-circuit the probe entirely.
 - [ ] T066 [US3] Replace the placeholder `ResolveTheme` from T029 with the full implementation in `internal/render/theme.go`: respects `cfg.Theme` (`auto`/`dark`/`light`/named Chroma style), `caps.BackgroundLuminance`, and `cfg.NoColor` (forces a Mono theme that disables Chroma styling).
-- [ ] T067 [US3] Wire runtime theme swap (`:set theme …` from T058) to `ResolveTheme` and re-render in `internal/ui/update.go`; the in-memory token buffer is reused — only the formatter changes.
+- [ ] T067 [US3] (test sibling: T061 ResolveTheme + T062 integration) Wire runtime theme swap (`:set theme …` from T058) to `ResolveTheme` and re-render in `internal/ui/update.go`; the in-memory token buffer is reused — only the formatter changes.
 
 **Checkpoint**: User Story 3 is functional. Steps 6 and 15 of `quickstart.md`
 pass. P1 stories (US1, US2, US3) all green.
@@ -259,9 +265,9 @@ graphics-capable terminal *and* one non-graphics terminal.
 - [ ] T081 [US4] Replace the `KindPDF` stub in `internal/render/pdf.go`: pdfcpu page-text extraction by default; on graphics-capable terminals AND `fitz` build, rasterize the current page and render via `graphics.Render`. Track `Page` index in the renderer state.
 - [ ] T082 [US4] Wire `]` / `[` page navigation when `source.Kind == KindPDF` and `:N` for page-jump (re-using the command-line state from T056) in `internal/ui/update.go`.
 - [ ] T083 [US4] Wire panic-safe graphics cleanup in **two** places (per `research.md` R10):
-      (a) `cmd/spy/main.go`: after capability detection, capture `cleanupGraphics := graphics.CleanupFunc(caps.Graphics)` and `defer cleanupGraphics()` *inside* the existing `defer term.Restore()` chain (LIFO ordering: graphics cleanup runs first, then terminal restore). This fires on `tea.Quit`, signals, AND panic — including cgo `go-fitz` panics that skip Bubble Tea's normal teardown.
+      (a) `cmd/spy/main.go`: T032 already wires `defer cleanupGraphics()` after `defer restore()` with a no-op closure. With US4's `graphics.CleanupFunc` now real (returning a closure that writes the protocol's "delete all images" escape — load-bearing for Kitty, no-op for Sixel/iTerm2/None), T032's wiring becomes load-bearing without any code change at this site. Verify via an integration test that the Kitty cleanup escape is emitted on `tea.Quit`, on SIGINT, AND on panic — including a synthetic cgo `go-fitz` panic — by extending T035b's harness with a graphics-emit assertion.
       (b) `internal/ui/update.go`: on source replacement (`:open`), invoke `graphics.Cleanup(caps.Graphics)` via a `tea.Cmd` so the previous source's images are cleared before the new ones render. The cleanup func must be idempotent.
-      Add a `graphics.CleanupFunc(proto term.Graphics) func()` constructor in `internal/graphics/graphics.go` returning a closure that writes the appropriate escape sequence to `os.Stdout` (no-op for `GraphicsNone`, `GraphicsITerm2`, `GraphicsSixel`).
+      Add a `graphics.CleanupFunc(proto term.Graphics) func()` constructor in `internal/graphics/graphics.go` (the no-op stub created in T032 is replaced here) returning a closure that writes the appropriate escape sequence to `os.Stdout`.
 - [ ] T084 [US4] Honour `--graphics` flag and `SPY_GRAPHICS` env via the merge order from T024 (CLI > env > config > auto-detect). `--graphics none` short-circuits all encoding.
 
 **Checkpoint**: User Story 4 is functional. Steps 7 and 8 of `quickstart.md`
@@ -280,7 +286,7 @@ language is auto-detected (shebang, hint, Chroma `Analyse`).
 
 ### Tests for User Story 5 ⚠️
 
-- [ ] T085 [P] [US5] Write failing tests for `StdinSource` in `internal/source/stdin_test.go`: `Open()` returns the underlying reader, `Reopen()` returns `nil, ErrNotSeekable`, `DisplayName()` is `<stdin>`.
+- [ ] T085 [P] [US5] Write failing tests for `StdinSource` in `internal/source/stdin_test.go`: first `Open()` returns the underlying reader, second `Open()` returns `nil, ErrAlreadyConsumed`, `Reopen()` returns `nil, ErrNotSeekable`, `DisplayName()` is `<stdin>`.
 - [ ] T086 [P] [US5] Write failing tests for stdin language inference in `internal/source/detect_test.go`: shebang first line, `--lang` hint override, Chroma `Analyse` fallback, plain text when none match.
 - [ ] T087 [P] [US5] Write failing tests for `FromArgs` stdin construction in `internal/source/source_test.go`: TTY stdin + no file → `ErrNoInput`; non-TTY stdin + no file → `StdinSource`; `-` positional + TTY stdin → `StdinSource` (blocks per contract); both file and stdin → file wins.
 - [ ] T088 [P] [US5] Write a failing integration test in `tests/integration/stdin_test.go`: PTY pair, write a Go diff to stdin, assert highlighted-diff output and `<stdin>` in the footer.
@@ -318,6 +324,11 @@ updates on scroll/resize, collapses gracefully under 80 columns.
 - [ ] T098 [US6] Implement `statusbar.Render(meta source.Metadata, vp viewport.Model, theme Theme) string` in `internal/render/statusbar.go`. Use `lipgloss` styles from the active `Theme`. Below 80 cols, emit only `<short-name> · L<current>`.
 - [ ] T099 [US6] Wire the statusbar into `internal/ui/View` in `internal/ui/view.go` so it renders on every frame; subscribe to `tea.WindowSizeMsg` for width updates.
 - [ ] T100 [US6] Update `loader.Stream` to surface `LineCount` updates (post a `metaUpdatedMsg{TotalLines int64}` on EOF) so the footer can switch from `…` to the final count without re-rendering everything.
+- [ ] T100b [P] [US6] Failing tests in `internal/ui/update_test.go` for `ActionToggleLineNumbers`, `ActionToggleWordWrap`, and `ActionOpenFile`: each toggle flips the corresponding `Config` field, triggers a render frame, and (for word-wrap) invalidates `Line.Wrapped` caches across the loaded buffer. `ActionOpenFile` opens the command-line prompt with `Buffer = "open "` and `CommandLineState.Active = true`, focused for the user to type the path.
+- [ ] T100c [US6] Implement the three handlers in `internal/ui/update.go`:
+      - `ActionToggleLineNumbers` flips `m.Config.LineNumbers`; the next render frame re-reads the field.
+      - `ActionToggleWordWrap` flips `m.Config.WordWrap`, walks the loaded buffer to set each `Line.Wrapped = nil`, and triggers a re-render so `internal/render/code.go` re-wraps from scratch at the active width.
+      - `ActionOpenFile` opens the command-line prompt pre-populated with `open ` (reuses the `:open` handler from T058); on Esc the prompt closes without reloading.
 
 **Checkpoint**: All P1/P2/P3 stories functional. `quickstart.md` Steps 1–15
 all pass on a Linux + xterm-compatible terminal.
@@ -338,15 +349,16 @@ and close residual constitution TODOs.
 - [ ] T104d [P] SC-008 resize integration test in `tests/integration/resize_test.go`: drive 50 successive `tea.WindowSizeMsg` events at random widths in `[40, 200]` cols against a 10 000-line file; assert (a) the line previously at viewport row 0 remains at row 0, (b) the wrap cache is invalidated on each event, (c) p95 re-paint ≤ 16 ms.
 - [ ] T105 [P] Add SC-003 benchmark in `tests/perf/search_bench_test.go`: search across a 1 MiB synthetic file and assert ≤ 500 ms.
 - [ ] T106 [P] Add SC-005 benchmarks in `tests/perf/large_file_test.go` in **two tiers**:
-      (a) `TestLargeFile_PRGate`: 200 MiB synthetic file (just above the 256 MiB windowed-mode threshold's complement — the largest file that *doesn't* trigger windowing), asserts RSS ≤ 250 MiB. Runs on every PR (no build tag); ~5s on commodity CI; gates the PR.
+      (a) `TestLargeFile_PRGate`: 200 MiB synthetic file (just below the 256 MiB windowed-mode threshold — the largest size that does NOT trigger windowing), asserts RSS ≤ 250 MiB. Runs on every PR (no build tag); ~5s on commodity CI; gates the PR.
       (b) `TestLargeFile_Nightly`: 1 GiB synthetic file, asserts RSS ≤ 500 MiB. Behind `-tags perf`; CI runs it on a nightly schedule via `.github/workflows/nightly-perf.yml` against an `ubuntu-latest` runner with `RUNNER_OS_RAM_HINT=8192`. A failure files an issue tagged `perf-regression` rather than blocking PRs (because the nightly cadence makes blame attribution clear).
       The PR-gate version catches algorithmic regressions; the nightly catches scaling-only regressions. SC-005's 1 GiB / 500 MiB promise is owned by (b).
 - [ ] T106a [P] Add SC-006 corpus + check in `tests/perf/highlight_corpus_test.go`: 50 source files under `tests/fixtures/highlight-corpus/` (one per GitHub Linguist top-50 language by repo count, each ≤ 4 KiB representative sample); assert Chroma selects a non-`fallback` lexer and ≤ 1 % of bytes per file land in `chroma.Error` tokens. Pass threshold: 47/50.
 - [ ] T106b [P] Add SC-007 dismiss benchmark in `tests/perf/dismiss_bench_test.go`: drive the PTY harness against `big.txt` 100 times, send `q`, measure wall-clock from keypress to `tea.Program.Run()` return; assert p95 ≤ 500 ms.
 - [ ] T106c [P] Add `.github/workflows/nightly-perf.yml`: scheduled `cron: '0 8 * * *'`, runs `make perf` (`go test -tags perf ./tests/perf/...`), uploads benchmark output as an artifact, opens an issue tagged `perf-regression` on failure (`peter-evans/create-issue-from-file@v5` or equivalent). Also add `make perf` target to `Makefile` (T003 add-on).
 - [ ] T107 [P] Run `reuse lint` and add SPDX headers to any files added across all phases that missed them. CI hook from T003 must pass.
-- [ ] T108 [P] Manual quickstart.md walkthrough on Linux/xterm; record results in `specs/001-popup-reader/checklists/quickstart-validation.md`.
-- [ ] T109 [P] Manual quickstart.md walkthrough on macOS/iTerm2 + Kitty; same checklist.
+- [ ] T108 [P] Implementer's quickstart.md walkthrough on Linux/xterm; record under `## Reviewer 1 (implementer)` in `specs/001-popup-reader/checklists/quickstart-validation.md`.
+- [ ] T109 [P] Implementer's quickstart.md walkthrough on macOS/iTerm2 + Kitty; record under `## Reviewer 1 (implementer, additional terminal)` in the same checklist.
+- [ ] T109a Recruit 2 independent reviewers (NOT the implementer) and have each complete `quickstart.md` Steps 2, 4, and 12 using only `F1`/`?`; record pass/fail per SC-012 under `## Reviewer 2` and `## Reviewer 3`. Block the v0.1.0 tag (T111) until both reviewers pass.
 - [ ] T109b Security review pass before tag. Cover, at minimum:
       (a) **Path handling**: file argument is `filepath.Clean`'ed; symlink target is checked for traversal outside `$HOME` only when `--debug` warns about it (we follow symlinks per `contracts/cli.md`, but don't open files whose canonicalized path is on a denylist of pseudo-fs roots: `/proc/self/mem`, `/dev/zero`, `/dev/random`, `/sys`).
       (b) **TOML parser robustness**: fuzz `config.Load` with `go test -fuzz=FuzzConfigLoad ./internal/config/...` for ≥ 60 s; corpus seeded from `examples/config.toml` plus malformed cases (deeply nested tables, huge integers, invalid UTF-8 in strings). Failures must surface as warnings (per T024/T025 contract) — never crash.

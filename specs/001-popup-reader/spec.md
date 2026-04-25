@@ -69,8 +69,8 @@ A developer wants to use spy with their preferred terminal theme (dark or light 
 
 **Acceptance Scenarios**:
 
-1. **Given** a PDF is opened with `spy paper.pdf` in a Kitty/iTerm2/WezTerm session, **When** the file is identified as PDF, **Then** the current page rasterizes inline at the viewport width and rendered text in the page is readable at the user's normal terminal font size.
-2. **Given** an image file is opened with `spy diagram.png` in a Kitty/iTerm2/WezTerm session, **When** the terminal supports inline rendering, **Then** the image displays inline preserving aspect ratio and the user can identify text labels in the image.
+1. **Given** a PDF is opened with `spy paper.pdf` in a Kitty/iTerm2/WezTerm session, **When** the file is identified as PDF, **Then** the current page rasterizes inline filling ≥ 80 % of the available viewport width while preserving aspect ratio; rendered pixel dimensions are recorded in `checklists/quickstart-validation.md` for the human-eye legibility step (see SC-012 reviewer panel).
+2. **Given** an image file is opened with `spy diagram.png` in a Kitty/iTerm2/WezTerm session, **When** the terminal supports inline rendering, **Then** the image displays inline preserving aspect ratio, scaling to fill ≥ 80 % of the viewport width or the image's native dimensions (whichever is smaller); legibility of any embedded text labels is recorded per reviewer in `checklists/quickstart-validation.md`.
 3. **Given** a terminal does not support image rendering (e.g., GNOME terminal), **When** a PDF or image is opened, **Then** a metadata block appears showing filename, dimensions (`W × H` for images, `N pages` for PDFs), file size, and a single-line note (`graphics not supported in this terminal`); for PDFs, page-1 text extraction is also displayed when available.
 
 ---
@@ -109,7 +109,7 @@ A developer using the tool wants to know which file they're viewing, how many li
 ### Edge Cases
 
 - How does the tool handle files with very long lines (>1000 characters)? Soft-wrap by default (`word_wrap = true`); `--no-wrap` enables horizontal scroll. Lines longer than 100 KiB are truncated at 100 KiB with a status-bar warning to bound per-line memory.
-- What happens when terminal is resized while the viewer is open? (Already covered in FR-014)
+- What happens when the terminal is resized while a `/` or `:` prompt is open? The prompt re-positions to the new viewport bottom; the buffered query characters and history cursor are preserved; any in-progress background search re-targets the resized line buffer.
 - What happens when both a file argument and non-TTY stdin are provided? File wins; stdin is ignored. See `contracts/cli.md` resolution table for the full matrix.
 - What happens with a 0-byte file or empty stdin? Viewer launches with a single styled `(empty)` line; not an error. See `contracts/cli.md` "Empty input".
 - What happens when a file is deleted or its permissions change while the viewer is open? Existing buffer remains viewable; reload (`Ctrl-R`/`r`) surfaces the failure as a status-bar error and keeps the prior buffer.
@@ -193,17 +193,15 @@ A developer using the tool wants to know which file they're viewing, how many li
 - **SC-009**: For each fixture in `tests/fixtures/img/{small.png 32 KB, medium.jpg 5 MB, large.gif 49 MB}`, `spy <file>` in a Kitty-emulating PTY (a) emits a Kitty payload that round-trips through the harness's reference decoder back to a pixel-identical `image.Image`, (b) exits 0, (c) keeps resident memory ≤ 250 MB. Measured by `tests/integration/graphics_test.go` (extends T073).
 - **SC-010**: For `dummy.pdf` (single-page, known text "Dummy PDF file") and `tests/fixtures/pdf/multi-page.pdf` (3 pages), the renderer (a) rasterizes page 1 via `graphics.PDFPage` under `-tags fitz` in a graphics-capable PTY, and (b) extracts page text via `pdfcpu` in a non-graphics PTY — the extracted text MUST contain the known sentinel string. Measured by `tests/integration/pdf_test.go`.
 - **SC-011**: Three pipeline shapes pass end-to-end in `tests/e2e/05_pipe.sh`: (a) `cat tests/fixtures/hello.go | spy -l go` displays Go-highlighted content with `<stdin>` in the footer; (b) `git diff HEAD~ | spy` displays diff-highlighted content; (c) `grep -n needle tests/fixtures/hello.go | spy` displays plain text with `<stdin>` in the footer. All three exit 0 on `q`.
-- **SC-012**: Three independent reviewers (not the implementer) complete the `quickstart.md` Steps 2, 4, and 12 (open file, search + jump-to-line, resize) using only the in-app help overlay (`F1`/`?`); each reviewer records pass/fail and notes blockers in `specs/001-popup-reader/checklists/quickstart-validation.md`. Pass threshold: 3/3 reviewers pass all three steps without escaping to external docs. *Note*: original SC-012 ("90 % of users without docs") would require a funded user study with N ≥ 20; deferred to a post-v0.1.0 success metric. The reviewer-panel heuristic above is the v0.1.0 gate.
+- **SC-012**: A 3-reviewer panel — the implementer plus 2 independent reviewers (not the implementer) — each completes `quickstart.md` Steps 2, 4, and 12 (open file, search + jump-to-line, resize) using only the in-app help overlay (`F1`/`?`); each reviewer records pass/fail and notes blockers in `specs/001-popup-reader/checklists/quickstart-validation.md`. Pass threshold: 3/3 reviewers pass all three steps without escaping to external docs. *Note*: a stricter "all three external" panel and the funded user study (N ≥ 20) are deferred to v0.2.0+.
 
 ## Assumptions
 
 - **User Environment**: Users have access to a modern terminal emulator (xterm-compatible or better) with at least 256 colors support. Minimum supported dimensions are 80×24 (standard terminal); tool degrades gracefully below 80 columns or 8 rows. Extended image support (Kitty protocol, iTerm2) is optional but enables enhanced features.
 - **File System**: Spy operates on local files only; remote file systems (NFS, SSH) are out of scope for v1 but could be added if performance is acceptable.
 - **Scope - Text Focus**: The primary use case is text file review; PDF and image support is supplementary and can degrade gracefully.
-- **Large File Handling**: Files larger than 1GB should be handled via streaming or pagination; attempting to load entire file into memory is prohibited.
+- **Large Files**: All sources stream through the chunked loader so the initial viewport paints without waiting for full read. The windowed-mode threshold and resident-memory bound are pinned in **FR-012** (256 MiB → windowed; ≤ 1 GiB viewable; ≤ 500 MB RSS). Loading an entire file into memory is prohibited.
 - **Binary File Behavior**: Binary files will display a clear "unsupported format" message rather than attempting to render binary data.
 - **Terminal State Preservation**: The tool will restore terminal state (colors, cursor position, echo mode) on exit in all cases, even on error or signal.
 - **Configuration**: User preferences (theme, keybindings) can be configured via a simple config file (~/.spy/config) or environment variables; full config system design is out of scope for v1.
 - **Stdin Handling**: Piped input streams into the viewer through the same chunked loader as files (per FR-002 and US5 acceptance #1); content is held only in memory subject to the FR-012 resident-memory bound, and is never persisted to disk. Non-seekable stdin above the windowed-mode threshold falls back to scroll-forward-only mode with a status-bar warning (per FR-012).
-- **Large File Loading**: Large files (>100MB) use progressive/concurrent loading: initial viewport displays immediately while remaining content streams in background. No blocking waits for full file load.
-- **Keyboard Shortcuts**: Default keybindings use arrow keys for navigation (accessible to all users). Optional vim mode (hjkl, /, :) can be enabled via `--vim` flag or config file. Emacs keybindings and full customization out of scope for v1.

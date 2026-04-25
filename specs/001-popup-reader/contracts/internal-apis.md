@@ -74,8 +74,14 @@ const (
 type Source interface {
     Kind() Kind
     DisplayName() string
-    Open() (io.ReadCloser, error) // may be called more than once for FileSource
-    Reopen() (io.ReadSeeker, error) // returns nil, ErrNotSeekable for stdin
+    // Open returns a reader for the source bytes. FileSource may be opened
+    // multiple times (each call yields a fresh os.File). StdinSource may be
+    // opened only once; subsequent calls return (nil, ErrAlreadyConsumed).
+    Open() (io.ReadCloser, error)
+    // Reopen returns a seekable reader for windowed-mode re-reads.
+    // FileSource returns a fresh *os.File. StdinSource returns
+    // (nil, ErrNotSeekable).
+    Reopen() (io.ReadSeeker, error)
     Metadata() Metadata
 }
 
@@ -98,6 +104,7 @@ var (
     ErrNotFound       = errors.New("file not found")
     ErrPermission     = errors.New("permission denied")
     ErrNotSeekable    = errors.New("source does not support seeking")
+    ErrAlreadyConsumed = errors.New("source already consumed")
 )
 
 // LineProvider is the read-side interface the search and renderer packages
