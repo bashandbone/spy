@@ -37,7 +37,7 @@ const oscReplyMaxBytes = 64
 var oscReplyRegex = regexp.MustCompile(`^\x1b\]11;rgb:([0-9a-fA-F]{1,4})/([0-9a-fA-F]{1,4})/([0-9a-fA-F]{1,4})(?:\x07|\x1b\\)$`)
 
 // envReader reads a single env var. The indirection lets the test suite
-// stub the lookup so DetectBackgroundLuminance can be exercised
+// stub the lookup so [detectBackgroundLuminance] can be exercised
 // deterministically without mutating the global environment.
 type envReader interface {
 	Getenv(key string) string

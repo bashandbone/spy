@@ -53,8 +53,12 @@ type Capabilities struct {
 // time-sensitive component (50 ms budget per research R6) and the
 // caller-supplied ctx propagates into it.
 //
-// The function is goroutine-safe: it reads the global env once and
-// does not mutate it.
+// The function is goroutine-safe: it reads global env vars and does
+// not mutate them. The reads are not snapshotted — the order is
+// Detect → detectColorDepth → detectGraphics → detectBackgroundLuminance,
+// each calling [os.Getenv] for the keys it needs — so a concurrent
+// process that mutates the env between probes can technically see
+// inconsistent values, but spy itself never does that.
 func Detect(ctx context.Context) Capabilities {
 	caps := Capabilities{
 		BackgroundLuminance: math.NaN(),

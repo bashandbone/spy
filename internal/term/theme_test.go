@@ -261,18 +261,20 @@ func TestDetectBackgroundLuminance_OSC11MalformedFallsThrough(t *testing.T) {
 
 // --- Detect-level integration smoke tests ---
 
-func TestDetect_PopulatesLuminanceFromColorFGBG(t *testing.T) {
+// TestDetect_NonTTYBypassesLuminanceProbe pins the contract from
+// research R6: when stdout is not a TTY [detectBackgroundLuminance]
+// short-circuits to NaN even when COLORFGBG would otherwise yield a
+// usable fallback. The piped-session caller has no use for theming
+// and surfacing a non-NaN value would surprise the renderer.
+func TestDetect_NonTTYBypassesLuminanceProbe(t *testing.T) {
 	resetEnv(t)
-	t.Setenv("COLORFGBG", "0;15") // light bg
+	t.Setenv("COLORFGBG", "0;15") // would say "light" if the probe ran
 	caps := Detect(context.Background())
 	if caps.IsTTY {
-		t.Skip("test runner has a real TTY; OSC 11 may run and override fixture")
+		t.Skip("test runner has a real TTY; non-TTY bypass path not exercised")
 	}
-	// Non-TTY → DetectBackgroundLuminance bypasses entirely. NaN here is
-	// the right answer; the env-var fallback is gated on TTY presence so
-	// piped-output sessions don't surprise the renderer.
 	if !math.IsNaN(caps.BackgroundLuminance) {
-		t.Errorf("non-TTY Detect: got %v, want NaN", caps.BackgroundLuminance)
+		t.Errorf("non-TTY Detect must bypass to NaN; got %v", caps.BackgroundLuminance)
 	}
 }
 
@@ -356,8 +358,9 @@ func (s *scriptedReader) Read(p []byte) (int, error) {
 		return 0, s.err
 	}
 	if s.idx >= len(s.chunks) {
-		// Block "forever" by returning a sentinel error so the loop
-		// terminates without an explicit terminator.
+		// Signal end-of-input once all scripted chunks have been read
+		// so [readOSCReply] stops looping even when the script never
+		// supplies an explicit OSC terminator.
 		return 0, io.EOF
 	}
 	c := s.chunks[s.idx]
