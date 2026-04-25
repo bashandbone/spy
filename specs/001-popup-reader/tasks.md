@@ -140,7 +140,7 @@ the matching golden-file integration test.
 
 ### Tests for User Story 1 ⚠️ (write first, FAIL before implementation)
 
-- [ ] T037 [P] [US1] Write failing tests for `Highlighter` in `internal/highlight/highlighter_test.go`: lexer auto-selection by language hint, fallback to plain text on unknown lexer, `HighlightCap` short-circuit (returns `Token{Type: Text}` for the whole line above the cap), streaming behaviour over a chunk channel.
+- [ ] T037 [P] [US1] Write failing tests for `Highlighter` in `internal/highlight/highlighter_test.go`: lexer auto-selection by language hint, fallback to plain text on unknown lexer, `HighlightCap` short-circuit (returns `Token{Type: Text}` for the whole line above the cap) **AND emits `WarnHighlightDisabled` exactly once per session on the side channel**, streaming behaviour over a chunk channel, `SetCap` adjusts the cap mid-session.
 - [ ] T038 [P] [US1] Write failing tests for the `KindCode` renderer in `internal/render/code_test.go`: ANSI output matches a golden file under `tests/integration/golden/hello_go_dark.txt`, line-number column rendering, `--no-line-numbers` honoured, soft-wrap behaviour.
 - [ ] T039 [P] [US1] Write failing tests for the `KindMarkdown` renderer in `internal/render/markdown_test.go`: Glamour rendering of headings/lists/code blocks against a golden file under `tests/integration/golden/sample_md.txt`.
 - [ ] T040 [P] [US1] Write a failing integration test in `tests/integration/text_review_test.go` driving the PTY harness against a small Go file: assert highlighted output, scroll-down behaviour, `q` exit.
@@ -148,7 +148,7 @@ the matching golden-file integration test.
 
 ### Implementation for User Story 1
 
-- [ ] T042 [US1] Implement `Highlighter`, `New(theme, depth, capBytes)`, `Highlight(lang, line)`, and `HighlightStream(ctx, in, out)` in `internal/highlight/highlighter.go` using `chroma/v2` lexers + `formatters.TTY256`/`TrueColour` selected from `term.ColorDepth`. Honour `HighlightCap` from config (above-cap → no-op).
+- [ ] T042 [US1] Implement `Highlighter`, `New(theme, depth, capBytes)`, `Highlight(lang, line)`, and `HighlightStream(ctx, in, out)` in `internal/highlight/highlighter.go` using `chroma/v2` lexers + `formatters.TTY256`/`TrueColour` selected from `term.ColorDepth`. Honour `HighlightCap` from config: above-cap, `Highlight*` return tokens of type `chroma.Text` (effective no-op styling) AND emit a one-shot `WarnHighlightDisabled{Cap int64}` message on a side channel that `internal/ui` surfaces in the status bar (per research R7 — "downgrade is surfaced, not silent"). The warning auto-clears after 5 s or on next status update. Add `Highlighter.SetCap(int64)` so `:set highlight_cap …` (future) can adjust at runtime; for v0.1.0 the runtime command is not exposed but the API is.
 - [ ] T043 [US1] Replace the `KindCode` stub with the real renderer in `internal/render/code.go`: consumes `[]source.Token` from the highlighter (or raw `Line.Raw` when `Tokens == nil`), formats with `lipgloss.Style` for line numbers, soft-wraps at viewport width when `Config.WordWrap` is true.
 - [ ] T044 [US1] Replace the `KindMarkdown` stub with a Glamour-backed renderer in `internal/render/markdown.go`. Pick the Glamour style from the active `Theme` (dark → `dark`, light → `light`). Disable Glamour when stdout color depth is `Mono`.
 - [ ] T045 [US1] Update `internal/ui/Model.Update` in `internal/ui/update.go` to:
@@ -206,7 +206,7 @@ light` at runtime visibly switches.
 
 ### Tests for User Story 3 ⚠️
 
-- [ ] T060 [P] [US3] Write failing tests for OSC 11 query + `COLORFGBG` fallback in `internal/term/theme_test.go` (mock the response stream; assert luminance ≥ 0.5 → light, < 0.5 → dark, malformed → NaN, timeout → NaN).
+- [ ] T060 [P] [US3] Write failing tests for OSC 11 query + `COLORFGBG` fallback in `internal/term/theme_test.go`. Mock the response stream and cover: well-formed `rgb:RRRR/GGGG/BBBB` (luminance ≥ 0.5 → light, < 0.5 → dark), well-formed with `\x1b\\` ST terminator instead of `\x07` BEL, malformed → NaN, timeout → NaN. **Adversarial fixtures (per research R6 defensive parsing)**: oversize reply (>64 B), CSI-embedded reply (e.g., `\x1b]11;rgb:\x1b[2J/0/0\x07` — must reject without ever echoing the embedded CSI), mid-stream abort (partial bytes then EOF), reply with extra trailing bytes. Each adversarial case asserts: (a) returns NaN, (b) discarded bytes do not appear on stdout, (c) no panic. The probe must also be bypassed when `NO_COLOR=1`, `SPY_THEME=…`, or stdout is non-TTY — three additional cases.
 - [ ] T061 [P] [US3] Write failing tests for `ResolveTheme(cfg, caps)` in `internal/render/theme_test.go`: `auto` + light caps → light theme; `auto` + dark caps → dark theme; `auto` + NaN luminance → dark fallback; explicit `light`/`dark`/`<chroma-style>` always wins.
 - [ ] T062 [P] [US3] Write a failing integration test in `tests/integration/theme_test.go` using a fake PTY that replies to OSC 11 with a light-grey colour, asserting the rendered ANSI uses the `github` Chroma style.
 - [ ] T063 [P] [US3] Add failing E2E script `tests/e2e/03_theme.sh` covering `--theme dark`, `--theme light`, `SPY_THEME=light`, `NO_COLOR=1` (forces mono).
@@ -339,8 +339,16 @@ and close residual constitution TODOs.
 - [ ] T107 [P] Run `reuse lint` and add SPDX headers to any files added across all phases that missed them. CI hook from T003 must pass.
 - [ ] T108 [P] Manual quickstart.md walkthrough on Linux/xterm; record results in `specs/001-popup-reader/checklists/quickstart-validation.md`.
 - [ ] T109 [P] Manual quickstart.md walkthrough on macOS/iTerm2 + Kitty; same checklist.
+- [ ] T109b Security review pass before tag. Cover, at minimum:
+      (a) **Path handling**: file argument is `filepath.Clean`'ed; symlink target is checked for traversal outside `$HOME` only when `--debug` warns about it (we follow symlinks per `contracts/cli.md`, but don't open files whose canonicalized path is on a denylist of pseudo-fs roots: `/proc/self/mem`, `/dev/zero`, `/dev/random`, `/sys`).
+      (b) **TOML parser robustness**: fuzz `config.Load` with `go test -fuzz=FuzzConfigLoad ./internal/config/...` for ≥ 60 s; corpus seeded from `examples/config.toml` plus malformed cases (deeply nested tables, huge integers, invalid UTF-8 in strings). Failures must surface as warnings (per T024/T025 contract) — never crash.
+      (c) **Terminal escape injection from file content**: `internal/render/code.go` MUST strip or neutralize `\x1b` bytes in input before they reach stdout when ANSI styling is active. Test: a file containing `\x1b]2;malicious\x07` (window-title set) must not change the user's terminal title. Add `tests/integration/escape_injection_test.go`.
+      (d) **OSC response parsing**: `term.theme` MUST validate the OSC 11 reply against a strict regex (`^\x1b\]11;rgb:[0-9a-fA-F/]+\x07$`) and discard anything else. Test with adversarial replies that embed CSI sequences. (Cross-ref MEDIUM #16.)
+      (e) **Graphics protocol input safety**: image / PDF source bytes are never executed; the `image` and `go-fitz` decoders are the trust boundary. Decoder panics are recovered in `internal/graphics/{kitty,iterm2,sixel}.go` and surfaced as `ErrUnsupported`.
+      (f) **No accidental network**: `grep -rE "(http\.|https://|net\.Dial|Get\()" internal/ cmd/` returns no matches (verified by a CI grep gate).
+      Document findings in `specs/001-popup-reader/checklists/security-review.md`; CRITICAL/HIGH issues block the v0.1.0 tag.
 - [ ] T110 Add a `CHANGELOG.md` `0.1.0` entry summarizing US1–US6.
-- [ ] T111 Final gate: `make lint vet test-race cover` clean, per-package coverage ≥ 80 % computed against the **merged** profile from `cover-default` + `cover-fitz` (so build-tag-gated files in `internal/graphics` are not silently excluded), `reuse lint` clean, default and `-tags fitz` builds both succeed.
+- [ ] T111 Final gate: `make lint vet test-race cover` clean, per-package coverage ≥ 80 % computed against the **merged** profile from `cover-default` + `cover-fitz` (so build-tag-gated files in `internal/graphics` are not silently excluded), `reuse lint` clean, default and `-tags fitz` builds both succeed, **T109b security review checklist signed off**.
 
 ---
 

@@ -199,6 +199,27 @@ If the query times out or the response is malformed, fall back to
 `COLORFGBG` env var (set by rxvt-style terminals). If that is also missing,
 default to **dark** — empirically the most common terminal default.
 
+**Defensive parsing requirements** (security: a hostile or buggy terminal
+could reply with bytes that the rest of the program then interprets as user
+input). Implementation MUST:
+
+1. Read at most 64 bytes of response, with a 50 ms total deadline (`SetReadDeadline`).
+2. Validate the response against the strict regex
+   `^\x1b\](?:11|10);rgb:[0-9a-fA-F]{1,4}/[0-9a-fA-F]{1,4}/[0-9a-fA-F]{1,4}(?:\x07|\x1b\\)$`.
+3. On any of: timeout, length excess, regex mismatch, partial read — discard
+   the response entirely, **do not** echo or buffer it for later, fall back
+   to `COLORFGBG`. The OSC probe runs *before* alt-screen entry and *before*
+   any keyboard input loop, so even discarded bytes have nowhere to leak.
+4. Bytes between `\x1b]` and the terminator that include further `\x1b`
+   bytes (a malformed reply) are treated as a parse failure; never
+   re-injected into stdout.
+5. The probe is bypassed entirely when stdout is not a TTY, when `NO_COLOR`
+   is set, or when `SPY_THEME` provides an explicit value.
+
+These rules are exercised by `internal/term/theme_test.go` (T060) which
+includes adversarial reply fixtures (CSI-embedded, oversize, mid-stream
+abort).
+
 The user can always override with `--theme dark|light` or
 `SPY_THEME=dark|light`. Theme switching at runtime (FR-004 acceptance #3)
 is implemented by sending a new theme into the renderer and re-rendering;
@@ -232,7 +253,13 @@ env vars handles the long tail. The 50ms budget keeps us within SC-001.
 
 For files larger than `HighlightCap` (default 5MiB), highlighting is disabled
 and we render plain text — the cost-benefit of syntax-highlighting a 50MB log
-file is poor and risks SC-002 (smooth scroll on 10k-line files).
+file is poor and risks SC-002 (smooth scroll on 10k-line files). The downgrade
+is **surfaced**, not silent: the status bar shows
+`highlighting disabled (file > <cap>); set highlight_cap_bytes to override`
+on the first paint after detection. The message clears on the next non-error
+status update or after 5 s, whichever comes first. Users who want
+highlighting on large files raise `highlight_cap_bytes` in their config or
+pass `--highlight-cap=<bytes>` (added to `contracts/cli.md`).
 
 **Rationale**: Chroma supports streaming via the iterator interface, but most
 of its lexers are stateful per-line; running per line is safe for the vast

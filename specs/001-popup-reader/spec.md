@@ -17,10 +17,10 @@ A developer using tmux with multiple panes needs to quickly review a file withou
 
 **Acceptance Scenarios**:
 
-1. **Given** a file is open in a terminal pane, **When** user pipes file contents to spy, **Then** a focused popup window appears with syntax-highlighted content
-2. **Given** a popup viewer is open, **When** user scrolls through content, **Then** navigation is smooth and accessible via arrow keys or vim keybindings
-3. **Given** a popup viewer is open, **When** user presses escape or 'q', **Then** the popup closes and the terminal returns to previous state
-4. **Given** content fills multiple screens, **When** user navigates to end of file, **Then** the viewer indicates end-of-file status (e.g., "END" indicator)
+1. **Given** `hello.go` exists on disk, **When** user runs `spy hello.go`, **Then** the alt-screen launches within 100 ms (SC-001), `hello.go` content is visible with Go syntax highlighting applied via Chroma's `go` lexer, and the footer reads `hello.go | <N> lines | Line 1`.
+2. **Given** the viewer is open, **When** user presses `↓` or `j`, **Then** the viewport scrolls one line down without visible flicker; `PgDn` / `Space` advances one viewport-height; `Home` / `End` jump to top/bottom.
+3. **Given** the viewer is open, **When** user presses `q`, `Esc`, or `Ctrl-C`, **Then** the alt-screen exits, the previous shell prompt is visible unchanged (no residual escape sequences, cursor restored, modes restored), and the process exits with code 0 (or 130 for `Ctrl-C`) within the SC-007 budget.
+4. **Given** content fills multiple screens, **When** user scrolls past the last loaded line, **Then** the footer shows `END` styled with `Theme.Footer` and further down-scroll is a no-op (no error, no wrap).
 
 ---
 
@@ -34,10 +34,10 @@ A developer reviewing code in the popup needs proper syntax highlighting to quic
 
 **Acceptance Scenarios**:
 
-1. **Given** a code file is displayed, **When** the file type is detected, **Then** syntax highlighting is applied appropriately for that language
-2. **Given** content is displayed, **When** user presses ':' followed by a line number, **Then** the viewer jumps to that line and centers it on screen
-3. **Given** content is displayed, **When** user presses '/' or '?', **Then** a search prompt appears and can filter/highlight matching text
-4. **Given** multiple matches exist for a search, **When** user presses 'n' or 'N', **Then** the viewer navigates to next/previous match
+1. **Given** a file with a recognized extension or shebang is displayed, **When** the renderer initializes, **Then** Chroma selects a non-`fallback` lexer (verified per the SC-006 corpus) and tokens are styled per the active `Theme.ChromaStyle`.
+2. **Given** content is displayed, **When** user presses `:`, types `42`, presses `Enter`, **Then** the viewport jumps so line 42 is visible (centered if possible; clamped to last loaded line if 42 > total). Out-of-range jumps emit a status-bar warning (`line 99999 out of range; clamped to <last>`) rather than failing. `:0` aliases to line 1; `:$` aliases to the last line.
+3. **Given** content is displayed, **When** user presses `/`, types a query, presses `Enter`, **Then** the first match at-or-below the current line is highlighted with `Theme.SearchActive`; all other matches in the visible range are highlighted with `Theme.SearchHit`; the footer shows `<query> · <current>/<total>` matches. `?` performs the same with backward direction.
+4. **Given** N matches exist for the active search and the cursor is on match `i`, **When** user presses `n`, **Then** the viewport advances to match `i+1`; if `i == N`, it wraps to match 1 AND the status bar shows `search wrapped` until the next non-search keypress. `N` performs the reverse. With zero matches, the status bar shows `no matches for <query>` and `n`/`N` are no-ops.
 
 ---
 
@@ -51,9 +51,9 @@ A developer wants to use spy with their preferred terminal theme (dark or light 
 
 **Acceptance Scenarios**:
 
-1. **Given** spy is launched in a terminal with dark mode, **When** content is displayed, **Then** text colors are readable against the dark background
-2. **Given** spy is launched in a terminal with light mode, **When** content is displayed, **Then** text colors are readable against the light background
-3. **Given** spy is configured, **When** user sets theme preference via flag or config, **Then** the override is applied consistently across launches
+1. **Given** the terminal responds to OSC 11 with a background color whose relative luminance is ≥ 0.5 (light), **When** spy launches with `theme = "auto"` (default), **Then** `Theme.ChromaStyle` resolves to the `github` Chroma style and `Theme.LineNumber` / `Theme.Footer` use the light palette.
+2. **Given** the terminal background luminance is < 0.5 (dark) OR OSC 11 returns no response within 50 ms, **When** spy launches with `theme = "auto"`, **Then** `Theme.ChromaStyle` resolves to `monokai` and the dark palette is used.
+3. **Given** any terminal, **When** spy is invoked with `--theme dark|light|<chroma-style>` OR `SPY_THEME=…` is set OR `theme = "…"` is in the config file, **Then** the explicit value wins over auto-detection (precedence: flag > env > config > auto). Setting `--theme github` with no terminal probe still works.
 
 ---
 
@@ -85,9 +85,9 @@ A developer wants to pipe command output directly to spy without saving to a fil
 
 **Acceptance Scenarios**:
 
-1. **Given** text is piped to spy via stdin, **When** no file argument is provided, **Then** the content is displayed in the popup
-2. **Given** piped content is displayed, **When** syntax highlighting is applicable, **Then** highlighting is auto-detected or inferred from context
-3. **Given** piped content fills the screen, **When** the viewer closes, **Then** the piped content is not retained (no disk writes)
+1. **Given** stdin is non-TTY and no `FILE` argument is provided (e.g., `git diff | spy`), **When** spy starts, **Then** stdin content streams into the viewer; the footer shows `<stdin> | … lines | Line 1` (line count shows `…` until EOF, then the final count).
+2. **Given** piped content is displayed, **When** language detection runs, **Then** the order is: explicit `--lang` > shebang on first line (`#!/usr/bin/env python3` → `python`) > Chroma `lexers.Analyse` content sniffing > plain text fallback. Detection result appears in the footer when non-empty.
+3. **Given** piped content has been displayed and the viewer is dismissed, **When** the process exits, **Then** no file is created under `$TMPDIR`, `/tmp`, `$XDG_CACHE_HOME`, or the current working directory; verified by `tests/integration/stdin_test.go` snapshotting the relevant directories pre/post.
 
 ---
 

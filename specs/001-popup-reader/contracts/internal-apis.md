@@ -179,6 +179,24 @@ type Highlighter struct { /* ... */ }
 
 func New(theme *chroma.Style, depth term.ColorDepth, capBytes int64) *Highlighter
 
+// SetCap adjusts HighlightCap at runtime; emits WarnHighlightDisabled on
+// Warns if the new cap is below the current source size.
+func (h *Highlighter) SetCap(bytes int64)
+
+// Warns is a one-shot side channel for user-visible advisories (currently:
+// "highlighting disabled (file > <cap>)"). Closed when the highlighter is
+// done. Consumers (internal/ui) surface entries in the status bar with a
+// 5 s auto-clear. Buffer 1; producer drops on full to avoid backpressure.
+type Warning struct {
+    Kind WarnKind
+    Cap  int64
+}
+type WarnKind int
+const (
+    WarnHighlightDisabled WarnKind = iota
+)
+func (h *Highlighter) Warns() <-chan Warning
+
 // Highlight runs Chroma against a single line; if the source has no known
 // lexer, it returns the line unchanged with a single Token of type Text.
 // Token lives in `source` (not `highlight`) so source.Line.Tokens has a

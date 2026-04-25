@@ -39,6 +39,7 @@ spy [OPTIONS] -      # explicit stdin
 | `--graphics` | | `auto`\|`none`\|`kitty`\|`iterm2`\|`sixel` | `auto` | Override graphics protocol detection. |
 | `--no-line-numbers` | | bool | false | Hide line numbers. |
 | `--no-wrap` | | bool | false | Disable soft-wrap; use horizontal scrolling instead. |
+| `--highlight-cap` | | bytes | `5242880` (5 MiB) | Disable syntax highlighting above this size. Set to `0` to disable highlighting entirely; set to a large value to force highlighting on big files (may impact SC-002). |
 | `--config` | | path | `$XDG_CONFIG_HOME/spy/config.toml` | Override config file path. |
 | `--no-config` | | bool | false | Skip loading any config file. |
 | `--debug` | | path | `""` | Write a debug log to the given file (no logging when unset). |
