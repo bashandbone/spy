@@ -161,9 +161,22 @@ func (m *regexMatcher) Find(line string) []Match {
 	if len(idxs) == 0 {
 		return nil
 	}
-	out := make([]Match, len(idxs))
-	for i, p := range idxs {
-		out[i] = Match{Start: p[0], End: p[1]}
+	// Filter out zero-width matches: patterns like `^`, `\b`, or
+	// `(?:)` produce them, but render.applyMatchHighlights skips
+	// empty ranges and search navigation can't usefully jump to a
+	// zero-width position. Without this filter, a `\b` query against
+	// a 10 000-line file produces tens of thousands of phantom
+	// matches that pollute SearchState and burn CPU during
+	// highlight (Copilot review PR#9 round-2 #3).
+	out := make([]Match, 0, len(idxs))
+	for _, p := range idxs {
+		if p[0] == p[1] {
+			continue
+		}
+		out = append(out, Match{Start: p[0], End: p[1]})
+	}
+	if len(out) == 0 {
+		return nil
 	}
 	return out
 }

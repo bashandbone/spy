@@ -87,6 +87,16 @@ func scanLoop(ctx context.Context, provider source.LineProvider, m Matcher, dir 
 // raw line, and forwarding the matches with the line number filled in.
 // Returns false if ctx was cancelled mid-scan so the caller can abort
 // the wrap-around step.
+//
+// Windowed-mode correctness: [loader.LineBuffer.Slice] returns only
+// the resident overlap when the requested range partially overlaps the
+// window. If the returned slice's first line.Number is greater than
+// `cur`, we re-request the missing prefix with a range that lies
+// entirely outside the resident window — that path inside Slice
+// triggers the [source.Source.Reopen] re-seek and yields the evicted
+// lines. Both progress and gap-detection use line numbers (not slice
+// length) so a partial response can never silently advance past
+// un-scanned content (Copilot review PR#9 round-2 #1, #2).
 func scanRange(ctx context.Context, provider source.LineProvider, m Matcher, from, to int64, out chan<- Match) bool {
 	for cur := from; cur < to; {
 		end := cur + scanChunk
@@ -96,6 +106,34 @@ func scanRange(ctx context.Context, provider source.LineProvider, m Matcher, fro
 		// LineProvider.Slice uses 0-based half-open indices internally
 		// but we have 1-based line numbers here; convert.
 		lines := provider.Slice(cur-1, end-1)
+		if len(lines) == 0 {
+			// Provider returned nothing for the requested range. This
+			// can mean (a) the range is empty, (b) the buffer doesn't
+			// have these lines and can't seek (e.g. stdin), or (c) the
+			// provider has been wound down. We can't make progress
+			// from `cur` in any case.
+			return true
+		}
+		// Fill any prefix gap caused by a partial-overlap response.
+		// Only keep gap-fill lines whose Number actually falls in the
+		// gap [cur, first); a stubborn provider that can't seek
+		// (stdin-like) may return its resident range again, which we
+		// must not splice in or we'd double-scan.
+		if first := lines[0].Number; first > cur {
+			gap := provider.Slice(cur-1, first-1)
+			filtered := gap[:0]
+			for _, g := range gap {
+				if g.Number >= cur && g.Number < first {
+					filtered = append(filtered, g)
+				}
+			}
+			if len(filtered) > 0 {
+				merged := make([]source.Line, 0, len(filtered)+len(lines))
+				merged = append(merged, filtered...)
+				merged = append(merged, lines...)
+				lines = merged
+			}
+		}
 		for _, l := range lines {
 			if ctx != nil {
 				select {
@@ -112,18 +150,26 @@ func scanRange(ctx context.Context, provider source.LineProvider, m Matcher, fro
 				}
 			}
 		}
-		if len(lines) == 0 {
-			// Provider returned nothing — likely windowed eviction; bail
-			// rather than spinning.
-			return true
+		// Advance based on the highest line number actually scanned so
+		// a partial-overlap response can't stall (`last + 1 == cur`
+		// after a gap-fill that returned nothing) or skip ahead.
+		next := lines[len(lines)-1].Number + 1
+		if next <= cur {
+			// Defensive: provider returned overlapping/duplicate
+			// content. Force progress so we don't loop.
+			next = cur + 1
 		}
-		cur += int64(len(lines))
+		cur = next
 	}
 	return true
 }
 
 // scanRangeReverse walks lines in [from, to) descending, calling m.Find
-// on each raw line. Same return semantics as [scanRange].
+// on each raw line. Same return semantics as [scanRange] and the same
+// windowed-mode gap handling — except the gap, if any, sits at the
+// high end of the response (Slice returned a resident prefix but
+// dropped the requested suffix), so we re-request that range before
+// iterating.
 func scanRangeReverse(ctx context.Context, provider source.LineProvider, m Matcher, from, to int64, out chan<- Match) bool {
 	for cur := to; cur > from; {
 		start := cur - scanChunk
@@ -131,6 +177,26 @@ func scanRangeReverse(ctx context.Context, provider source.LineProvider, m Match
 			start = from
 		}
 		lines := provider.Slice(start-1, cur-1)
+		if len(lines) == 0 {
+			return true
+		}
+		// Fill any suffix gap caused by a partial-overlap response.
+		// Only keep gap-fill lines whose Number actually lands in
+		// (last, cur); see the forward-scan comment for why filtering
+		// matters when the provider can't seek.
+		if last := lines[len(lines)-1].Number; last < cur-1 {
+			gapStart := last + 1
+			gap := provider.Slice(gapStart-1, cur-1)
+			filtered := gap[:0]
+			for _, g := range gap {
+				if g.Number >= gapStart && g.Number < cur {
+					filtered = append(filtered, g)
+				}
+			}
+			if len(filtered) > 0 {
+				lines = append(lines, filtered...) // ascending order preserved
+			}
+		}
 		// Iterate in descending order to honour DirBackward.
 		for i := len(lines) - 1; i >= 0; i-- {
 			if ctx != nil {
@@ -152,10 +218,13 @@ func scanRangeReverse(ctx context.Context, provider source.LineProvider, m Match
 				}
 			}
 		}
-		if len(lines) == 0 {
-			return true
+		// Advance based on the lowest line number actually scanned so a
+		// partial-overlap response can't stall the reverse walk.
+		next := lines[0].Number
+		if next >= cur {
+			next = cur - 1
 		}
-		cur -= int64(len(lines))
+		cur = next
 	}
 	return true
 }

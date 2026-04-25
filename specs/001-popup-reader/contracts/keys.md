@@ -78,11 +78,19 @@ Unknown commands surface a status-bar warning; they never crash the viewer.
 | Action | Default | Vim addition |
 |--------|---------|--------------|
 | Quit | `q` / `Esc` / `Ctrl-C` | `ZZ`, `:q` |
-| Toggle help | `F1` | `?` (only outside search prompt) |
+| Toggle help | `F1` | — |
 | Open file dialog | `o` | — |
 | Reload current source | `Ctrl-R` / `r` | — |
 | Toggle line numbers | `Ctrl-L` | — |
 | Toggle word wrap | `Ctrl-W` | — |
+
+In vim, `?` opens a backward search; in spy we keep that meaning so
+`?foo<Enter>` works the way muscle memory expects. `?` is therefore
+*not* a vim help-toggle binding — `F1` remains the only help toggle in
+both default and vim modes (Copilot review PR#9 round-2 #5: an earlier
+draft of this contract listed `?` as a vim addition for help, which
+conflicted with `ActionSearchBackward`; the implementation has always
+followed the search-backward semantics).
 
 ## Conflict-resolution rules
 

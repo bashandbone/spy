@@ -79,11 +79,16 @@ func (m Model) onOpenResult(msg openResultMsg) (tea.Model, tea.Cmd) {
 		m.statusAdvisory = fmt.Sprintf("open: %v", msg.err)
 		return m, nil
 	}
-	// Swap in the new source/stream/renderer.
+	// Swap in the new source/stream/renderer. Clear the advisory and
+	// last-error state so messages from the prior session ("search
+	// wrapped", a previous reload error, etc.) don't bleed into the
+	// new file's footer (Copilot review PR#9 round-2 #4).
 	m.source = msg.src
 	m.stream = msg.stream
 	m.cancel = msg.cancel
 	m.search = search.State{}
+	m.statusAdvisory = ""
+	m.lastError = nil
 	m.viewport.GotoTop()
 	kind := source.KindUnknown
 	lang := ""

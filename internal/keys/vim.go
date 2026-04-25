@@ -37,9 +37,11 @@ import (
 //
 // `?` (vim's help toggle) is intentionally NOT added because the
 // default keymap already binds it as ActionSearchBackward; remapping
-// would shadow backward search. The F1 help binding remains the only
-// help toggle in vim mode (Copilot review of contracts/keys.md
-// "Conflict-resolution rules" — `?` inside a search prompt is a literal).
+// would shadow backward search. F1 remains the only help toggle in
+// both default and vim modes — contracts/keys.md was updated to match
+// (Copilot review PR#9 round-2 #5; the contract previously listed `?`
+// as a vim help addition, which conflicted with the search-backward
+// binding the implementation has always honoured).
 //
 // `ZZ` and `:q` (vim quit) are not bound here because:
 //   - `:q` is a command-line command resolved by [internal/ui]'s
