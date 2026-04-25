@@ -1,0 +1,142 @@
+// SPDX-FileCopyrightText: 2026 Adam Poulemanos
+//
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
+package source
+
+import (
+	"errors"
+	"fmt"
+	"io"
+	"io/fs"
+	"os"
+	"path/filepath"
+	"time"
+
+	"github.com/alecthomas/chroma/v2"
+)
+
+// Kind names the high-level category of a [Source]'s content. It drives
+// renderer selection in [internal/render]; the per-language Chroma lexer
+// is carried alongside on [Source] / [Metadata].
+type Kind int
+
+const (
+	KindUnknown Kind = iota
+	KindCode
+	KindMarkdown
+	KindText
+	KindPDF
+	KindImage
+	KindBinary
+)
+
+// Sentinel errors. Callers identify error categories via [errors.Is].
+// All package-internal errors wrap these so tests like
+// `errors.Is(err, ErrNotFound)` resolve regardless of the call site.
+var (
+	ErrNoInput         = errors.New("no input provided")
+	ErrBinary          = errors.New("binary content")
+	ErrUnsupported     = errors.New("unsupported format")
+	ErrNotFound        = errors.New("file not found")
+	ErrPermission      = errors.New("permission denied")
+	ErrNotSeekable     = errors.New("source does not support seeking")
+	ErrAlreadyConsumed = errors.New("source already consumed")
+)
+
+// Source is the producer-side abstraction for the byte stream a viewer
+// session reads. FileSource may be opened many times (each call yields a
+// fresh os.File); the StdinSource added in US5 may be opened only once.
+type Source interface {
+	Kind() Kind
+	DisplayName() string
+	// Open returns a reader for the source bytes. Callers must Close.
+	Open() (io.ReadCloser, error)
+	// Reopen returns a seekable reader for windowed-mode re-reads.
+	// Returns ErrNotSeekable for non-seekable sources.
+	Reopen() (io.ReadSeeker, error)
+	Metadata() Metadata
+}
+
+// Metadata is the static description of a Source. LineCount is -1 until
+// the loader has finished streaming; PageCount is non-zero only for PDFs.
+type Metadata struct {
+	Path      string
+	Size      int64
+	LineCount int64
+	PageCount int
+	Modified  time.Time
+	Language  string
+	Encoding  string
+}
+
+// Line is a single line of source content. Tokens is populated by the
+// highlighter; Wrapped is a per-width wrap cache invalidated on resize.
+// Defining Line here (instead of in `loader`) keeps the package DAG
+// acyclic — see contracts/internal-apis.md `internal/source`.
+type Line struct {
+	Number  int64
+	Raw     string
+	Tokens  []Token
+	Wrapped []string
+}
+
+// Token is the unit of styled output the renderer consumes. The Type
+// uses Chroma's vocabulary so any future highlighter (Treesitter, plain
+// regex) can produce them with a known semantics. Living in `source`
+// avoids a `source -> highlight` import edge.
+type Token struct {
+	Type  chroma.TokenType
+	Value string
+}
+
+// LineProvider is the read-side interface the search and renderer
+// packages consume. Implemented by *loader.LineBuffer (implementation
+// lands in T021); defining the interface here keeps consumers
+// independent of loader's concrete type.
+type LineProvider interface {
+	Slice(start, end int64) []Line
+	Total() int64
+}
+
+// FromArgs picks a Source from CLI arguments and stdin. In Phase 2 only
+// file paths are honoured; the stdin/"-" paths return [ErrNoInput] until
+// US5 wires StdinSource. The `hint` is an optional language hint that
+// short-circuits content-based detection (see contracts/cli.md `--lang`).
+func FromArgs(args []string, _ *os.File, hint string) (Source, error) {
+	if len(args) == 0 {
+		return nil, fmt.Errorf("%w: stdin support lands in US5", ErrNoInput)
+	}
+	first := args[0]
+	if first == "-" {
+		return nil, fmt.Errorf("%w: stdin support lands in US5", ErrNoInput)
+	}
+	return newFileSourceWithHint(first, hint)
+}
+
+// classifyFSError translates the "raw" filesystem error into one of the
+// sentinel errors so callers can categorize via [errors.Is].
+func classifyFSError(err error) error {
+	if err == nil {
+		return nil
+	}
+	if errors.Is(err, fs.ErrNotExist) {
+		return fmt.Errorf("%w: %v", ErrNotFound, err)
+	}
+	if errors.Is(err, fs.ErrPermission) {
+		return fmt.Errorf("%w: %v", ErrPermission, err)
+	}
+	return err
+}
+
+// resolveSymlink resolves the final target of a path. Returns the same
+// classification errors as the rest of the file paths so a broken
+// symlink surfaces as ErrNotFound rather than the raw EvalSymlinks
+// error wording.
+func resolveSymlink(path string) (string, error) {
+	resolved, err := filepath.EvalSymlinks(path)
+	if err != nil {
+		return "", classifyFSError(err)
+	}
+	return resolved, nil
+}
