@@ -252,10 +252,10 @@ func (m Model) onKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	if matchAction(m.keyMap, keys.ActionEndOfLine, msg) {
-		// Without a per-line column tracker, "end of line" is a no-op
-		// for now; the binding is still wired so the help overlay and
-		// override path stay consistent. Full horizontal-end behaviour
-		// is a future polish (Copilot review of US2 deferred).
+		// Best-effort end-of-line: jump to a very large horizontal
+		// offset and let the viewport clamp it to the furthest valid
+		// position for the currently visible content.
+		m.viewport.SetXOffset(int(^uint(0) >> 1))
 		return m, nil
 	}
 	return m, nil
