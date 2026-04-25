@@ -222,8 +222,23 @@ func (h *Highlighter) HighlightStream(ctx context.Context, in <-chan loader.Chun
 ```go
 package graphics
 
+// Renderer is the per-protocol encoder selected at startup based on
+// term.Capabilities. render.Dependencies.Graphics holds the chosen instance
+// so render/image.go and render/pdf.go don't switch on protocol per frame.
+// GraphicsNone returns a no-op Renderer whose Render produces "".
+type Renderer interface {
+    Render(img image.Image, cols, rows int) (string, error)
+    Cleanup() string
+}
+
+// RendererFor returns the Renderer matching proto. Idempotent; returns the
+// no-op Renderer for GraphicsNone.
+func RendererFor(proto term.Graphics) Renderer
+
 // Render encodes the given image into the active graphics protocol.
-// Returns an empty string if proto == GraphicsNone.
+// Returns an empty string if proto == GraphicsNone. Convenience wrapper
+// around RendererFor(proto).Render(...) for call sites that already have
+// the protocol value.
 func Render(proto term.Graphics, img image.Image, cols, rows int) (string, error)
 
 // Cleanup emits any escape sequences needed to clear residual images
@@ -254,7 +269,7 @@ package render
 // Render(). Defining it here (rather than reaching into ui.ViewerSession)
 // keeps the dependency direction acyclic: ui → render, never render → ui.
 type RenderContext struct {
-    Buffer       *source.LineBuffer  // resident lines + windowing state
+    Buffer       *loader.LineBuffer  // resident lines + windowing state (lives in internal/loader; see data-model.md package map)
     Viewport     viewport.Model      // scroll position + dimensions
     Theme        Theme
     Capabilities term.Capabilities
@@ -286,10 +301,10 @@ type Dependencies struct {
 }
 ```
 
-**Dependency direction**: `render` imports `source`, `term`, `graphics`,
-`highlight`, `search`, and the upstream `bubbles/viewport` type. It does NOT
-import `internal/ui`. `internal/ui` constructs a `RenderContext` from its
-`ViewerSession` on each frame and passes it in.
+**Dependency direction**: `render` imports `source`, `loader`, `term`,
+`graphics`, `highlight`, `search`, and the upstream `bubbles/viewport`
+type. It does NOT import `internal/ui`. `internal/ui` constructs a
+`RenderContext` from its `ViewerSession` on each frame and passes it in.
 
 ## `internal/search`
 
@@ -297,6 +312,20 @@ import `internal/ui`. `internal/ui` constructs a `RenderContext` from its
 package search
 
 type Match struct { Line int64; Start, End int }
+
+// State is the per-frame view of the active search consumed by render and
+// surfaced in ui. Inactive when Query == "". Field semantics match
+// data-model.md SearchState; this is the canonical Go type signature.
+type State struct {
+    Query        string
+    Direction    Direction
+    Regex        bool
+    CaseMode     CaseMode
+    Matches      []Match
+    CurrentMatch int   // -1 when no match selected
+    Wrapped      bool  // last navigation wrapped around
+    Pending      bool  // a background scan is still running
+}
 
 func Compile(query string, regex bool, caseMode CaseMode) (Matcher, error)
 

@@ -422,19 +422,15 @@ penalising keyboard-shy users.
 
 ## R13. Constitutional template (project-level)
 
-**Observation**: `.specify/memory/constitution.md` contains placeholder
-template content (`[PROJECT_NAME]`, `[PRINCIPLE_1_NAME]`, etc.) and has not
-been ratified for this project. The `/speckit-constitution` workflow has not
-been run.
+**Status (closed)**: Constitution v1.0.0 was ratified 2026-04-25 with
+Principles I–VI. `plan.md`'s Constitution Check now evaluates against
+that ratified document; T103 (Polish phase) is marked done. No further
+research action — this entry is retained for historical context.
 
-**Decision for this plan**: Proceed with a Constitution Check stub that
-declares "no ratified constitution; using sensible Go defaults aligned with
-[~/.claude/rules/golang/](~/.claude/rules/golang/) and the project's
-existing `DEVELOPMENT.md`". Recommend the user run `/speckit-constitution`
-before later features so future plans have real gates to evaluate against.
-
-**Rationale**: Blocking on an empty template would prevent any feature
-planning; we explicitly call out the gap so it's not silently hidden.
+**Original observation (now resolved)**: `.specify/memory/constitution.md`
+held placeholder template content; the `/speckit-constitution` workflow
+had not yet run. The plan was authored against a stub that has since
+been replaced by the ratified principles.
 
 ---
 
