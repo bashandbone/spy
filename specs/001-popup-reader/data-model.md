@@ -18,15 +18,23 @@ columns and are produced during /speckit-implement.
 | Type group | Package |
 |------------|---------|
 | Capabilities, theme detection | `internal/term` |
-| Source / loader / chunked reader | `internal/loader` |
-| File detection, file metadata | `internal/source` |
-| Tokens, highlighter | `internal/highlight` |
+| Chunked reader, windowed buffer | `internal/loader` |
+| Source detection, metadata, **Line, Token, LineProvider** | `internal/source` |
+| Highlighter (Chroma wrapper) | `internal/highlight` |
 | Image / PDF rasterization, graphics protocols | `internal/graphics` |
-| Renderer (text, code, image, PDF) | `internal/render` |
+| Renderer (text, code, image, PDF), **RenderContext, Status, Theme** | `internal/render` |
 | Bubble Tea model + viewport | `internal/ui` |
 | Config | `internal/config` |
-| Search state | `internal/search` |
+| Search state, matcher | `internal/search` |
 | Key bindings | `internal/keys` |
+
+**Type-home rationale**: `Token` lives in `source` (not `highlight`) because
+`source.Line.Tokens` is a field; placing Token in `highlight` would force
+`source → highlight` and break the acyclic DAG. The Token type is agnostic
+to its producer — `highlight` populates it via Chroma, but a future
+non-Chroma colorizer could populate the same shape. `Status` and
+`RenderContext` live in `render` for the dual reason (avoids
+`render → ui` cycle); see `contracts/internal-apis.md`.
 
 The existing skeleton's `internal/reader` and `internal/renderer` are renamed
 for clarity (`source` and `render`) and split into the additional packages

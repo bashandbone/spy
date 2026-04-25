@@ -90,7 +90,7 @@ completes. Each task pair below puts the failing test first.
 
 ### `internal/loader`
 
-- [ ] T020 [P] Write failing tests for `Open(ctx, src, cfg)` in `internal/loader/stream_test.go`: small file (one chunk + EOF), multi-chunk, empty file, cancellation via ctx, error propagation through `Errs` channel, first chunk synchronously available before return.
+- [ ] T020 [P] Write failing tests for `Open(ctx, src, cfg)` in `internal/loader/stream_test.go`: small file (one chunk + EOF), multi-chunk, empty file, cancellation via ctx, error propagation through `Errs` channel, first chunk synchronously available before return, **bounded `Updates` channel (default cap 4): producer blocks on send when consumer falls behind, verified via a slow-consumer test that asserts the producer goroutine is not at runtime.NumGoroutine higher than baseline + 2 after 1s of idle**.
 - [ ] T021 Implement `Chunk`, `Stream`, `Config`, and `Open(ctx, src, cfg)` in `internal/loader/stream.go` using `bufio.Scanner` with a 64 KiB read buffer. The first chunk is sized to ≥ `cfg.InitialChunkLines` (default = 2× viewport height = 80) so the first frame paints inside SC-001.
 - [ ] T022 [P] Write failing tests for windowed mode in `internal/loader/window_test.go`: trigger threshold via `cfg.MaxResidentBytes`, slice access reads-ahead, slice access for non-resident range re-seeks the source, stdin (non-seekable) falls back to "scroll forward only" with the documented warning.
 - [ ] T023 Implement windowing buffer (`Append`, `Slice`) and `MaxResidentBytes`-driven mode switch in `internal/loader/window.go`; emit `loader.WarnStdinNonSeekable` (a wrapped error sent on `Errs`) when stdin needs windowing.
@@ -234,12 +234,13 @@ graphics-capable terminal *and* one non-graphics terminal.
 
 ### Tests for User Story 4 ⚠️
 
-- [ ] T068 [P] [US4] Write failing unit tests for the Kitty encoder in `internal/graphics/kitty_test.go`: chunked base64 framing at 4096 B, escape sequence shape, `Cleanup` returns the documented "delete all images" sequence.
-- [ ] T069 [P] [US4] Write failing unit tests for the iTerm2 encoder in `internal/graphics/iterm2_test.go`: `\x1b]1337;File=…;preserveAspectRatio=1:<base64>\x07` shape.
-- [ ] T070 [P] [US4] Write failing unit tests for the sixel encoder in `internal/graphics/sixel_test.go`: round-trips a small in-memory PNG via `mattn/go-sixel`.
+- [ ] T068 [P] [US4] Write failing unit tests for the Kitty encoder in `internal/graphics/kitty_test.go`: chunked base64 framing at 4096 B, escape sequence shape, `Cleanup` returns the documented "delete all images" sequence, **full-payload golden test (T068b below)**.
+- [ ] T068b [P] [US4] Write failing golden-payload test in `internal/graphics/kitty_test.go`: encode a deterministic 16×16 PNG (checked into `internal/graphics/testdata/kitty_input.png`) and assert the **complete** escape stream byte-for-byte against `internal/graphics/testdata/kitty_expected.bin`. This catches malformed payloads between the `\x1b_G…` prefix and `\x1b\\` terminator that look correct under T068's prefix-only check but render as broken images.
+- [ ] T069 [P] [US4] Write failing unit tests for the iTerm2 encoder in `internal/graphics/iterm2_test.go`: `\x1b]1337;File=…;preserveAspectRatio=1:<base64>\x07` shape **plus full-payload golden test against `internal/graphics/testdata/iterm2_expected.bin`** using the same input PNG as T068b.
+- [ ] T070 [P] [US4] Write failing unit tests for the sixel encoder in `internal/graphics/sixel_test.go`: round-trips a small in-memory PNG via `mattn/go-sixel` **plus a full-payload golden test against `internal/graphics/testdata/sixel_expected.bin`** using the same input PNG. Note: sixel output may vary across `go-sixel` versions; pin the dep version in `go.mod` and document the regen procedure in `internal/graphics/testdata/README.md`.
 - [ ] T071 [P] [US4] Write failing tests for the `KindImage` renderer in `internal/render/image_test.go`: capable path emits the right protocol bytes; non-capable path emits a deterministic metadata block (filename, dimensions, size, fallback notice).
 - [ ] T072 [P] [US4] Write failing tests for the `KindPDF` renderer in `internal/render/pdf_test.go`: pdfcpu text extraction path returns page text; capable + `fitz` build tag triggers `graphics.PDFPage`; capable + `nofitz` build returns `ErrPDFGraphicsUnavailable` + falls back to text.
-- [ ] T073 [P] [US4] Write failing integration tests for graphics dispatch in `tests/integration/graphics_test.go`: assert that `term.Capabilities.Graphics == GraphicsKitty` produces the Kitty protocol bytes at the start of the rendered frame.
+- [ ] T073 [P] [US4] Write failing integration tests for graphics dispatch in `tests/integration/graphics_test.go`: assert that with `term.Capabilities.Graphics == GraphicsKitty` the rendered frame contains the **complete** Kitty payload (prefix `\x1b_G`, the same base64 chunks the unit-test golden produces, terminator `\x1b\\`) — not just the prefix. Diff against the same golden file as T068b. Repeat for iTerm2 and sixel paths.
 - [ ] T074 [P] [US4] Add failing E2E script `tests/e2e/04_graphics.sh` running `--graphics none` (forces metadata fallback) and `--graphics kitty` (forces Kitty encoder) against fixture image and PDF.
 
 ### Implementation for User Story 4
@@ -328,7 +329,13 @@ and close residual constitution TODOs.
 - [ ] T103 [P] Refresh the Constitution Check section in `specs/001-popup-reader/plan.md` to cite constitution v1.0.0 (closes `TODO(plan-001)` from `.specify/memory/constitution.md`).
 - [ ] T104 [P] Add SC-001 benchmark in `tests/perf/firstframe_bench_test.go`: load a 100-line file end-to-end and assert ≤ 100 ms.
 - [ ] T105 [P] Add SC-003 benchmark in `tests/perf/search_bench_test.go`: search across a 1 MiB synthetic file and assert ≤ 500 ms.
-- [ ] T106 [P] Add SC-005 benchmark in `tests/perf/large_file_test.go`: stream a 1 GiB synthetic file and assert RSS ≤ 500 MiB (skipped on CI by default; run via `-run TestLargeFile -tags perf`).
+- [ ] T106 [P] Add SC-005 benchmarks in `tests/perf/large_file_test.go` in **two tiers**:
+      (a) `TestLargeFile_PRGate`: 200 MiB synthetic file (just above the 256 MiB windowed-mode threshold's complement — the largest file that *doesn't* trigger windowing), asserts RSS ≤ 250 MiB. Runs on every PR (no build tag); ~5s on commodity CI; gates the PR.
+      (b) `TestLargeFile_Nightly`: 1 GiB synthetic file, asserts RSS ≤ 500 MiB. Behind `-tags perf`; CI runs it on a nightly schedule via `.github/workflows/nightly-perf.yml` against an `ubuntu-latest` runner with `RUNNER_OS_RAM_HINT=8192`. A failure files an issue tagged `perf-regression` rather than blocking PRs (because the nightly cadence makes blame attribution clear).
+      The PR-gate version catches algorithmic regressions; the nightly catches scaling-only regressions. SC-005's 1 GiB / 500 MiB promise is owned by (b).
+- [ ] T106a [P] Add SC-006 corpus + check in `tests/perf/highlight_corpus_test.go`: 50 source files under `tests/fixtures/highlight-corpus/` (one per GitHub Linguist top-50 language by repo count, each ≤ 4 KiB representative sample); assert Chroma selects a non-`fallback` lexer and ≤ 1 % of bytes per file land in `chroma.Error` tokens. Pass threshold: 47/50.
+- [ ] T106b [P] Add SC-007 dismiss benchmark in `tests/perf/dismiss_bench_test.go`: drive the PTY harness against `big.txt` 100 times, send `q`, measure wall-clock from keypress to `tea.Program.Run()` return; assert p95 ≤ 500 ms.
+- [ ] T106c [P] Add `.github/workflows/nightly-perf.yml`: scheduled `cron: '0 8 * * *'`, runs `make perf` (`go test -tags perf ./tests/perf/...`), uploads benchmark output as an artifact, opens an issue tagged `perf-regression` on failure (`peter-evans/create-issue-from-file@v5` or equivalent). Also add `make perf` target to `Makefile` (T003 add-on).
 - [ ] T107 [P] Run `reuse lint` and add SPDX headers to any files added across all phases that missed them. CI hook from T003 must pass.
 - [ ] T108 [P] Manual quickstart.md walkthrough on Linux/xterm; record results in `specs/001-popup-reader/checklists/quickstart-validation.md`.
 - [ ] T109 [P] Manual quickstart.md walkthrough on macOS/iTerm2 + Kitty; same checklist.

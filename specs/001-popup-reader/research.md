@@ -135,6 +135,15 @@ For files exceeding `MaxResidentBytes` (default 256MiB to stay under SC-005's
 the current viewport ± 4096 lines hot and discards the rest, re-reading from
 the file (which it keeps `os.Open`-ed for the lifetime of the session).
 
+**Backpressure**: `loader.Stream.Updates` is a *bounded* channel (capacity 4
+chunks). When the highlighter or the UI consumer falls behind, the loader
+goroutine blocks on send — preventing chunks (and the `Line.Raw` strings
+they hold) from accumulating in memory beyond ~4 × `InitialChunkLines` ×
+average-line-bytes (~256 KiB at defaults). The same applies to the
+intermediate channel between `loader` and `highlight.HighlightStream`:
+buffer 4. This is the single mechanism that keeps a fast on-disk source
+from breaching the 500 MB ceiling while the user idles in the viewer.
+
 **Rationale**: Goroutines + channels match the user's explicit Q1 answer
 ("goroutines exist for a reason"). Posting through `tea.Cmd` keeps the model
 update path single-threaded — Bubble Tea's standard idiom. The chunked

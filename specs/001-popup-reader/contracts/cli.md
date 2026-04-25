@@ -68,6 +68,30 @@ Flag parsing uses Go's `flag` package conventions (`--flag=value` or
   must be a TTY); if stdout is also not a TTY, `spy` exits with the input
   copied verbatim to stdout (degenerate "cat" behavior) and exit code 0.
 
+### Resolution table when both a file argument and non-TTY stdin are present
+
+`spy` resolves source ambiguity deterministically:
+
+| `FILE` arg | `-` arg | stdin is TTY | stdout is TTY | Source used | Stdin handling |
+|------------|---------|--------------|---------------|-------------|----------------|
+| present    | no      | yes          | yes           | FILE        | ignored |
+| present    | no      | no           | yes           | FILE        | ignored (drained at exit, never read) |
+| present    | yes     | —            | yes           | usage error | exit 2 (`-` and FILE are mutually exclusive) |
+| absent     | no      | no           | yes           | stdin       | streamed |
+| absent     | no      | yes          | yes           | none        | exit 2 (usage printed) |
+| absent     | yes     | —            | yes           | stdin       | blocks on stdin until EOF/Ctrl-D |
+| absent     | no      | no           | no            | stdin       | degenerate cat to stdout, exit 0 |
+
+When a file argument is present, stdin is **never** read, even if it is
+non-TTY. This avoids a class of accidents where a piped command's output
+silently overrides an explicit file argument.
+
+### Empty input
+
+A 0-byte file or 0-byte stdin produces an alt-screen viewer showing the
+single line `(empty)` styled with `Theme.Footer`, footer reading
+`<displayname> | 0 lines | Line 0`, exit 0 on dismiss. Not an error.
+
 ## Stdout / stderr / exit codes
 
 | Stream | Use |

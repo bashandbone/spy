@@ -97,7 +97,42 @@ var (
     ErrUnsupported    = errors.New("unsupported format")
     ErrNotFound       = errors.New("file not found")
     ErrPermission     = errors.New("permission denied")
+    ErrNotSeekable    = errors.New("source does not support seeking")
 )
+
+// LineProvider is the read-side interface the search and renderer packages
+// consume. Implemented by *loader.LineBuffer (the in-memory hot region with
+// optional windowing). Defining the interface in `source` keeps consumers
+// independent of the loader's concrete buffer type.
+type LineProvider interface {
+    // Slice returns the lines in [start, end). May trigger a paging read
+    // in windowed mode. Returns whatever is currently resident if either
+    // bound exceeds the loaded range; callers must check len(returned).
+    Slice(start, end int64) []Line
+
+    // Total returns the total line count once known, or -1 while streaming.
+    Total() int64
+}
+
+// Line and Token are defined here so all consumers (highlight, render,
+// search) depend on `source` rather than each other. Token lives in
+// `source` (not `highlight`) because a Line carries its tokens as a field;
+// the alternative (Token in highlight) would force `source → highlight`
+// and break the DAG. The Token type is intentionally agnostic to where
+// the styling came from — `highlight` populates it via Chroma, but a
+// future plain-text colorizer could produce the same shape. See
+// data-model.md for field semantics.
+type Line struct {
+    Number  int64
+    Raw     string
+    Tokens  []Token   // nil until highlighter has run
+    Wrapped []string  // cached wrap; invalidated on resize
+}
+
+type Token struct {
+    Type  chroma.TokenType  // reused from chroma; semantic styling key
+    Value string             // substring of Line.Raw
+}
 ```
 
 ## `internal/loader`
@@ -113,17 +148,21 @@ type Chunk struct {
 
 type Stream struct {
     First    Chunk             // populated synchronously before Stream is returned
-    Updates  <-chan Chunk      // subsequent chunks; closed on EOF or error
+    Updates  <-chan Chunk      // bounded buffer (cap = Config.UpdatesBuffer, default 4); closed on EOF or error
     Errs     <-chan error      // single-value channel; closed when no more errors
 }
 
 // Open begins streaming. cfg.MaxResidentBytes triggers windowed mode.
+// The Updates channel is bounded; producer blocks when full so the buffer
+// never holds more than UpdatesBuffer chunks worth of Line.Raw bytes.
+// See research.md R4 (Backpressure).
 func Open(ctx context.Context, src source.Source, cfg Config) (*Stream, error)
 
 type Config struct {
     MaxResidentBytes int64
     WindowSize       int
     InitialChunkLines int
+    UpdatesBuffer     int  // chunk channel capacity; default 4
 }
 ```
 
@@ -142,6 +181,9 @@ func New(theme *chroma.Style, depth term.ColorDepth, capBytes int64) *Highlighte
 
 // Highlight runs Chroma against a single line; if the source has no known
 // lexer, it returns the line unchanged with a single Token of type Text.
+// Token lives in `source` (not `highlight`) so source.Line.Tokens has a
+// home without forcing source → highlight; see internal-apis.md `source`
+// section.
 func (h *Highlighter) Highlight(lang string, line string) []source.Token
 
 // HighlightStream consumes chunks from in and emits chunks with Tokens
@@ -241,7 +283,24 @@ type Index struct {
     Wrapped bool
 }
 
-func Scan(ctx context.Context, lines source.LineProvider, m Matcher, dir Direction, from int64) <-chan Match
+// Scan walks lines through `provider` in `dir`, starting at `from`.
+// Emits matches on the returned channel; closes after the final match.
+// On wrap-around, emits a synthetic Match with Line == -1 as a sentinel
+// before continuing (or before close if no further matches).
+func Scan(ctx context.Context, provider source.LineProvider, m Matcher, dir Direction, from int64) <-chan Match
+
+type Direction int
+const (
+    DirForward Direction = iota
+    DirBackward
+)
+
+type CaseMode int
+const (
+    CaseSmart CaseMode = iota
+    CaseSensitive
+    CaseInsensitive
+)
 ```
 
 ## `internal/keys`

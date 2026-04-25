@@ -251,6 +251,25 @@ launching. Open a code file. Expected:
 
 Covers: Q4 clarification, "graceful degradation" assumption.
 
+## 14b. Empty input + file/stdin precedence
+
+```bash
+: > /tmp/spy-fixtures/empty.txt
+./bin/spy /tmp/spy-fixtures/empty.txt
+```
+
+Expected: viewer launches; body shows `(empty)`; footer
+`empty.txt | 0 lines | Line 0`; `q` dismisses with exit 0.
+
+```bash
+echo "this should be ignored" | ./bin/spy /tmp/spy-fixtures/hello.go
+```
+
+Expected: viewer shows `hello.go` content (NOT the piped text). The piped
+input is silently dropped.
+
+Covers: `contracts/cli.md` resolution table, empty-input edge case.
+
 ## 15. Configuration file override
 
 ```bash

@@ -59,17 +59,19 @@ A developer wants to use spy with their preferred terminal theme (dark or light 
 
 ### User Story 4 - PDF and Image Support in Modern Terminals (Priority: P2)
 
-A developer occasionally needs to review PDF documents or images (screenshots, diagrams) inline in their terminal workflow. Modern terminal emulators (iTerm2, Kitty, WezTerm) support inline image rendering, and spy should leverage this capability.
+**Primary actor**: developer triaging a bug report or reviewing a design artifact.
+**Trigger**: a teammate has shared a screenshot, diagram, or PDF (e.g., a Slack drop, a `gh issue view` attachment, a research paper from a download folder), and the developer wants to confirm the visual content matches the description without leaving the terminal or context-switching to a GUI viewer.
+**Goal**: see the image/PDF clearly enough to read embedded text and identify diagram structure (not just confirm a thumbnail is "the right colour"), or — when the terminal can't — get an honest, useful metadata fallback that names the file, dimensions, and size.
 
 **Why this priority**: This is a differentiator feature that extends spy beyond text-only viewers. While text is the primary use case, supporting PDFs and images in capable terminals adds significant value without disrupting the text workflow.
 
-**Independent Test**: Can be fully tested by opening a PDF in a capable terminal (Kitty or iTerm2), verifying at least basic display/thumbnail rendering, and confirming fallback behavior in terminals without image support.
+**Independent Test**: Can be fully tested by opening a PDF in a capable terminal (Kitty or iTerm2), verifying the rendered image is large enough to read 12-pt embedded text, and confirming the metadata fallback in terminals without image support shows filename + dimensions + size.
 
 **Acceptance Scenarios**:
 
-1. **Given** a PDF is piped to spy in a terminal that supports image rendering, **When** the file is identified as PDF, **Then** a preview/thumbnail is rendered if available
-2. **Given** an image file is piped to spy, **When** the terminal supports inline rendering (Kitty protocol), **Then** the image displays inline
-3. **Given** a terminal does not support image rendering, **When** a PDF or image is opened, **Then** a fallback message appears (e.g., "Image/PDF not supported in this terminal")
+1. **Given** a PDF is opened with `spy paper.pdf` in a Kitty/iTerm2/WezTerm session, **When** the file is identified as PDF, **Then** the current page rasterizes inline at the viewport width and rendered text in the page is readable at the user's normal terminal font size.
+2. **Given** an image file is opened with `spy diagram.png` in a Kitty/iTerm2/WezTerm session, **When** the terminal supports inline rendering, **Then** the image displays inline preserving aspect ratio and the user can identify text labels in the image.
+3. **Given** a terminal does not support image rendering (e.g., GNOME terminal), **When** a PDF or image is opened, **Then** a metadata block appears showing filename, dimensions (`W × H` for images, `N pages` for PDFs), file size, and a single-line note (`graphics not supported in this terminal`); for PDFs, page-1 text extraction is also displayed when available.
 
 ---
 
@@ -106,8 +108,11 @@ A developer using the tool wants to know which file they're viewing, how many li
 
 ### Edge Cases
 
-- How does the tool handle files with very long lines (>1000 characters)? (Wrap or horizontal scroll)
+- How does the tool handle files with very long lines (>1000 characters)? Soft-wrap by default (`word_wrap = true`); `--no-wrap` enables horizontal scroll. Lines longer than 100 KiB are truncated at 100 KiB with a status-bar warning to bound per-line memory.
 - What happens when terminal is resized while the viewer is open? (Already covered in FR-014)
+- What happens when both a file argument and non-TTY stdin are provided? File wins; stdin is ignored. See `contracts/cli.md` resolution table for the full matrix.
+- What happens with a 0-byte file or empty stdin? Viewer launches with a single styled `(empty)` line; not an error. See `contracts/cli.md` "Empty input".
+- What happens when a file is deleted or its permissions change while the viewer is open? Existing buffer remains viewable; reload (`Ctrl-R`/`r`) surfaces the failure as a status-bar error and keeps the prior buffer.
 
 ## Requirements *(mandatory)*
 
@@ -124,7 +129,7 @@ A developer using the tool wants to know which file they're viewing, how many li
 - **FR-009**: System MUST display file metadata in footer (file name, line count, current position) when viewing files
 - **FR-010**: System MUST support detection and inline rendering of image files in compatible terminals (Kitty, iTerm2, WezTerm)
 - **FR-011**: System MUST support PDF preview/rendering in compatible terminals with graceful fallback in unsupported terminals
-- **FR-012**: System MUST handle very large files gracefully via progressive loading (load initial viewport immediately, stream remaining content in background using concurrent goroutines)
+- **FR-012**: System MUST handle large files gracefully via progressive loading (initial viewport paints immediately while remaining content streams in the background). Files exceeding 256 MiB MUST switch to windowed mode (a sliding hot region kept in RAM, with the rest re-read from disk on demand). Files up to 1 GiB MUST remain viewable, with resident memory ≤ 500 MB (cross-ref SC-005). For non-seekable sources (stdin) above 256 MiB, the viewer enters scroll-forward-only mode with a status-bar warning rather than failing.
 - **FR-013**: System MUST output error messages to stderr (single-line, prefixed `spy: <reason>: <detail>`) and exit without launching the viewer if file is inaccessible, binary, or unsupported format. Exit codes follow `contracts/cli.md` (3 = I/O, 4 = unsupported, 2 = usage)
 - **FR-014**: System MUST handle terminal resize events and reflow content appropriately
 - **FR-015**: System MUST exit cleanly on signals (SIGINT, SIGTERM) without corrupting terminal state
@@ -182,13 +187,13 @@ A developer using the tool wants to know which file they're viewing, how many li
 - **SC-003**: Text search returns results in under 500ms even in files larger than 1MB
 - **SC-004**: Theme switching between dark/light modes occurs instantly without visual artifacts
 - **SC-005**: The tool successfully handles file sizes up to 1GB without consuming more than 500MB of memory
-- **SC-006**: 95% of common programming languages (Go, Python, JavaScript, Rust, Java, C, etc.) have correct syntax highlighting
-- **SC-007**: Users can dismiss the viewer and return to their terminal in under 500ms
+- **SC-006**: For a fixed corpus of 50 representative source files (one per language from the GitHub Linguist top-50 by repository count, captured under `tests/fixtures/highlight-corpus/`), Chroma successfully selects a non-`fallback` lexer and produces tokenization where ≤ 1 % of bytes per file land in `chroma.Error` tokens. Pass threshold: ≥ 47/50 files (94 %). Measured by `tests/perf/highlight_corpus_test.go`.
+- **SC-007**: From the user pressing `q`/`Esc`/`Ctrl-C` to `tea.Program.Run()` returning and the alt-screen having been exited (terminal back to main screen, cursor restored), elapsed wall-clock ≤ 500 ms at the 95th percentile across 100 invocations against `/tmp/spy-fixtures/big.txt` (10 000 lines). Measured by `tests/perf/dismiss_bench_test.go` driving the PTY harness.
 - **SC-008**: Terminal resize events are handled without visual corruption or loss of viewport state
 - **SC-009**: Image rendering in Kitty/iTerm2 terminals displays correctly for JPEG, PNG, and GIF files under 50MB
 - **SC-010**: PDF preview/rendering works in supported terminals; fallback message appears clearly in unsupported terminals
 - **SC-011**: Piped input from common commands (cat, git diff, grep, etc.) displays correctly
-- **SC-012**: 90% of users can complete a typical code review task (find specific line, search for text, navigate to end, dismiss) without consulting documentation
+- **SC-012**: Three independent reviewers (not the implementer) complete the `quickstart.md` Steps 2, 4, and 12 (open file, search + jump-to-line, resize) using only the in-app help overlay (`F1`/`?`); each reviewer records pass/fail and notes blockers in `specs/001-popup-reader/checklists/quickstart-validation.md`. Pass threshold: 3/3 reviewers pass all three steps without escaping to external docs. *Note*: original SC-012 ("90 % of users without docs") would require a funded user study with N ≥ 20; deferred to a post-v0.1.0 success metric. The reviewer-panel heuristic above is the v0.1.0 gate.
 
 ## Assumptions
 
