@@ -8,6 +8,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"strings"
 
@@ -51,7 +52,7 @@ func run(args []string) int {
 		return exitUsageError
 	}
 	if pf.Help {
-		fmt.Fprint(os.Stdout, helpText)
+		WriteHelp(os.Stdout)
 		return exitOK
 	}
 	if pf.Version {
@@ -89,7 +90,7 @@ func run(args []string) int {
 		FlagGraphics:       pf.Graphics,
 		FlagWordWrap:       flagWordWrap,
 		FlagLineNums:       flagLineNums,
-		FlagHighlightCap:   pf.HighlightCap,
+		FlagHighlightCap:   pf.HighlightCap, // *int64; nil when unset, &0 disables
 	})
 	for _, w := range warnings {
 		if errors.Is(w, config.ErrConfigNotFound) {
@@ -118,6 +119,14 @@ func run(args []string) int {
 	src, err := source.FromArgs(pf.Args, os.Stdin, pf.Lang)
 	if err != nil {
 		return exitForSourceError(err, pf.Args)
+	}
+
+	// Non-TTY stdout falls back to degenerate-cat (verbatim copy, exit
+	// 0) per contracts/cli.md "Stdout / stderr / exit codes". exit 5
+	// is reserved for explicitly TTY-required paths (Copilot review
+	// PR#7 #29).
+	if !caps.IsTTY {
+		return runDegenerate(src)
 	}
 
 	// 4. Open the loader stream.
@@ -157,18 +166,6 @@ func run(args []string) int {
 		Cancel:       cancel,
 	})
 
-	// Alt-screen rendering needs a TTY on stdout; without one the escape
-	// sequences would corrupt whatever pipe / file is attached. The
-	// implicit-stdin pipe path uses degenerate-cat (US5); reaching here
-	// without a TTY in Phase 2 means the user explicitly gave a FILE
-	// arg from a non-TTY context, so exit 5 per contracts/cli.md
-	// (Copilot review PR#7 #27).
-	if !caps.IsTTY {
-		cancel()
-		fmt.Fprintf(os.Stderr, "spy: stdout is not a TTY: alt-screen viewer requires a terminal\n")
-		return exitTTYError
-	}
-
 	// tea.WithMouseCellMotion is deferred to US1 (T046) — Phase 2 has no
 	// mouse handlers and enabling tracking sequences without a consumer
 	// can disrupt terminal selection / scrollback (Copilot review PR#7
@@ -180,6 +177,23 @@ func run(args []string) int {
 		cancel()
 		fmt.Fprintf(os.Stderr, "spy: tea program: %v\n", err)
 		return exitGenericError
+	}
+	return exitOK
+}
+
+// runDegenerate is the contracts/cli.md "stdout (non-TTY)" path:
+// open the source and stream its bytes verbatim to stdout, exit 0.
+// No alt-screen, no rendering, no graphics — `spy file.go > out.txt`
+// behaves like `cat file.go > out.txt`.
+func runDegenerate(src source.Source) int {
+	rc, err := src.Open()
+	if err != nil {
+		return exitForSourceError(err, []string{src.DisplayName()})
+	}
+	defer rc.Close()
+	if _, err := io.Copy(os.Stdout, rc); err != nil {
+		fmt.Fprintf(os.Stderr, "spy: write stdout: %v\n", err)
+		return exitIOError
 	}
 	return exitOK
 }
@@ -243,37 +257,3 @@ func boolPtr(b bool) *bool {
 	}
 	return &b
 }
-
-// helpText is the --help output. The stdin examples (`cat ... | spy`,
-// `git diff | spy`) from contracts/cli.md are intentionally omitted
-// here because Phase 2 does not yet implement StdinSource — those
-// examples return cleanly when US5 (T090–T094) wires up stdin and
-// helpText is updated then.
-//
-// `--debug` is parsed and accepted (so the flag never reads as
-// "unknown") but the structured-JSON debug log it documents in
-// contracts/cli.md "Debug log format" lands as part of the polish
-// phase. It is omitted from helpText for now.
-const helpText = `Usage: spy [OPTIONS] [FILE]
-A focused popup viewer for text, code, PDFs, and images.
-
-Options:
-  -h, --help              show this help and exit
-  -V, --version           show version and exit
-      --theme=<value>     dark|light|auto|<chroma-style>  (default: auto)
-      --vim               enable vim keybindings
-  -l, --lang=<name>       force language for highlighting
-      --regex             treat searches as regex by default
-      --no-color          disable color (alias for NO_COLOR=1)
-      --graphics=<value>  auto|none|kitty|iterm2|sixel    (default: auto)
-      --no-line-numbers   hide line numbers
-      --no-wrap           disable soft wrap
-      --highlight-cap=N   disable highlighting above N bytes
-      --config=<path>     config file path
-      --no-config         do not load any config file
-
-Examples:
-  spy README.md
-  spy --theme=light README.md
-  spy -l go ./cmd/spy/main.go
-`

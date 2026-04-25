@@ -65,8 +65,8 @@ func TestParseFlags_LongForm(t *testing.T) {
 	if !pf.NoLineNumbers || !pf.NoWrap {
 		t.Errorf("NoLineNumbers/NoWrap should be true")
 	}
-	if pf.HighlightCap != 1024 {
-		t.Errorf("HighlightCap: got %d", pf.HighlightCap)
+	if pf.HighlightCap == nil || *pf.HighlightCap != 1024 {
+		t.Errorf("HighlightCap: got %v want &1024", pf.HighlightCap)
 	}
 	if pf.ConfigPath != "/tmp/spy.toml" {
 		t.Errorf("ConfigPath: got %q", pf.ConfigPath)
@@ -119,6 +119,64 @@ func TestParseFlags_ConfigVsNoConfigMutex(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "mutually exclusive") {
 		t.Errorf("error message should mention mutual exclusion: %v", err)
+	}
+}
+
+func TestParseFlags_HighlightCapZero(t *testing.T) {
+	// --highlight-cap=0 is a valid user-supplied value (cli.md "Set to
+	// 0 to disable highlighting entirely") and must round-trip as a
+	// non-nil pointer (Copilot review PR#7 #28).
+	pf, err := ParseFlags([]string{"--highlight-cap", "0"})
+	if err != nil {
+		t.Fatalf("ParseFlags: %v", err)
+	}
+	if pf.HighlightCap == nil {
+		t.Fatal("--highlight-cap=0 should produce a non-nil pointer")
+	}
+	if *pf.HighlightCap != 0 {
+		t.Errorf("--highlight-cap=0: got %d want 0", *pf.HighlightCap)
+	}
+}
+
+func TestParseFlags_HighlightCapUnset(t *testing.T) {
+	pf, err := ParseFlags(nil)
+	if err != nil {
+		t.Fatalf("ParseFlags: %v", err)
+	}
+	if pf.HighlightCap != nil {
+		t.Errorf("unset HighlightCap should be nil, got &%d", *pf.HighlightCap)
+	}
+}
+
+func TestParseFlags_HighlightCapNegativeRejected(t *testing.T) {
+	_, err := ParseFlags([]string{"--highlight-cap", "-1"})
+	if err == nil {
+		t.Fatal("expected error for negative --highlight-cap")
+	}
+}
+
+func TestParseFlags_HighlightCapBadValueRejected(t *testing.T) {
+	_, err := ParseFlags([]string{"--highlight-cap", "huge"})
+	if err == nil {
+		t.Fatal("expected error for non-numeric --highlight-cap")
+	}
+}
+
+func TestWriteHelp_IncludesAllFlags(t *testing.T) {
+	var buf strings.Builder
+	WriteHelp(&buf)
+	out := buf.String()
+	for _, name := range []string{
+		"theme", "vim", "lang", "regex", "no-color", "graphics",
+		"no-line-numbers", "no-wrap", "highlight-cap", "config",
+		"no-config", "debug", "help", "version",
+	} {
+		if !strings.Contains(out, name) {
+			t.Errorf("WriteHelp output missing flag %q", name)
+		}
+	}
+	if !strings.Contains(out, "Examples:") {
+		t.Errorf("WriteHelp output missing Examples section")
 	}
 }
 

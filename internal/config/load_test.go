@@ -267,10 +267,11 @@ func TestLoad_FlagsForAllPointerFields(t *testing.T) {
 
 func TestLoad_FlagRegexAndHighlightCap(t *testing.T) {
 	yes := true
+	cap := int64(1024)
 	cfg, _ := Load(LoadOptions{
 		NoConfig:         true,
 		FlagRegex:        &yes,
-		FlagHighlightCap: 1024,
+		FlagHighlightCap: &cap,
 	})
 	if !cfg.RegexDefault {
 		t.Errorf("FlagRegex should set cfg.RegexDefault")
@@ -280,13 +281,26 @@ func TestLoad_FlagRegexAndHighlightCap(t *testing.T) {
 	}
 }
 
-func TestLoad_FlagHighlightCapZeroIsUnset(t *testing.T) {
-	// The flag is "unset" when the value is 0; we don't want to wipe the
-	// config file's value just because the user didn't pass --highlight-cap.
+func TestLoad_FlagHighlightCapNilIsUnset(t *testing.T) {
+	// nil FlagHighlightCap means "user didn't pass --highlight-cap"; the
+	// config file's value must survive.
 	p := writeConfig(t, `highlight_cap_bytes = 9999`)
-	cfg, _ := Load(LoadOptions{ConfigPath: p, FlagHighlightCap: 0})
+	cfg, _ := Load(LoadOptions{ConfigPath: p, FlagHighlightCap: nil})
 	if cfg.HighlightCapBytes != 9999 {
-		t.Errorf("zero FlagHighlightCap should not override file: got %d want 9999",
+		t.Errorf("nil FlagHighlightCap should not override file: got %d want 9999",
+			cfg.HighlightCapBytes)
+	}
+}
+
+func TestLoad_FlagHighlightCapZeroDisables(t *testing.T) {
+	// --highlight-cap=0 is a valid user-supplied value (per cli.md,
+	// "Set to 0 to disable highlighting entirely") and must override
+	// the config file's value (Copilot review PR#7 #28).
+	zero := int64(0)
+	p := writeConfig(t, `highlight_cap_bytes = 9999`)
+	cfg, _ := Load(LoadOptions{ConfigPath: p, FlagHighlightCap: &zero})
+	if cfg.HighlightCapBytes != 0 {
+		t.Errorf("--highlight-cap=0 should override to 0, got %d",
 			cfg.HighlightCapBytes)
 	}
 }

@@ -9,13 +9,15 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"strconv"
 )
 
 // ParsedFlags is the post-parse view of every flag and positional from
-// contracts/cli.md. Pointer-typed fields (Vim, NoColor, etc.) would
-// surface "flag was set vs left default" but the contract is content
-// with bools — config / env precedence is layered after parsing in
-// internal/config.Load.
+// contracts/cli.md. Pointer-typed fields (HighlightCap) surface "flag
+// was set vs left default" so a literal `--highlight-cap=0` can disable
+// highlighting (Copilot review PR#7 #28); plain bools / strings rely
+// on the layered config merge in [internal/config.Load] for "is set"
+// semantics.
 type ParsedFlags struct {
 	Help    bool
 	Version bool
@@ -28,7 +30,7 @@ type ParsedFlags struct {
 	Graphics      string
 	NoLineNumbers bool
 	NoWrap        bool
-	HighlightCap  int64
+	HighlightCap  *int64 // nil when --highlight-cap was not passed
 	ConfigPath    string
 	NoConfig      bool
 	DebugPath     string
@@ -41,13 +43,51 @@ type ParsedFlags struct {
 // (main) is responsible for surfacing --help / --version and exiting.
 func ParseFlags(args []string) (*ParsedFlags, error) {
 	pf := &ParsedFlags{}
-	fs := flag.NewFlagSet("spy", flag.ContinueOnError)
-	// Suppress flag's automatic "flag provided but not defined" message
-	// — we surface our own error wrapping for the test surface.
+	fs := buildFlagSet(pf)
 	fs.SetOutput(io.Discard)
+	if err := fs.Parse(args); err != nil {
+		return nil, fmt.Errorf("flag parse: %w", err)
+	}
+	if pf.ConfigPath != "" && pf.NoConfig {
+		return nil, errors.New("--config and --no-config are mutually exclusive")
+	}
+	pf.Args = fs.Args()
+	return pf, nil
+}
 
-	fs.BoolVar(&pf.Help, "help", false, "show help and exit")
-	fs.BoolVar(&pf.Help, "h", false, "show help and exit (short)")
+// WriteHelp prints the same FlagSet that [ParseFlags] uses, so the
+// flag surface and `--help` output cannot drift (Copilot review PR#7
+// #30). Includes the usage header and examples; the flag list itself
+// comes from [flag.FlagSet.PrintDefaults].
+//
+// Stdin examples (`cat ... | spy`, `git diff | spy`) are intentionally
+// omitted because Phase 2 has not yet implemented StdinSource — those
+// land in US5.
+func WriteHelp(w io.Writer) {
+	fmt.Fprintln(w, "Usage: spy [OPTIONS] [FILE]")
+	fmt.Fprintln(w, "A focused popup viewer for text, code, PDFs, and images.")
+	fmt.Fprintln(w)
+	fmt.Fprintln(w, "Options:")
+	pf := &ParsedFlags{}
+	fs := buildFlagSet(pf)
+	fs.SetOutput(w)
+	fs.PrintDefaults()
+	fmt.Fprintln(w)
+	fmt.Fprintln(w, "Examples:")
+	fmt.Fprintln(w, "  spy README.md")
+	fmt.Fprintln(w, "  spy --theme=light README.md")
+	fmt.Fprintln(w, "  spy -l go ./cmd/spy/main.go")
+}
+
+// buildFlagSet wires every flag the contracts/cli.md surface defines
+// into the supplied [ParsedFlags]. Shared by [ParseFlags] (which uses
+// it to actually parse argv) and [WriteHelp] (which prints the same
+// flags via [flag.FlagSet.PrintDefaults]).
+func buildFlagSet(pf *ParsedFlags) *flag.FlagSet {
+	fs := flag.NewFlagSet("spy", flag.ContinueOnError)
+
+	fs.BoolVar(&pf.Help, "help", false, "show this help and exit")
+	fs.BoolVar(&pf.Help, "h", false, "show this help and exit (short)")
 	fs.BoolVar(&pf.Version, "version", false, "show version and exit")
 	fs.BoolVar(&pf.Version, "V", false, "show version and exit (short)")
 
@@ -60,19 +100,20 @@ func ParseFlags(args []string) (*ParsedFlags, error) {
 	fs.StringVar(&pf.Graphics, "graphics", "", `graphics: "auto"|"none"|"kitty"|"iterm2"|"sixel"`)
 	fs.BoolVar(&pf.NoLineNumbers, "no-line-numbers", false, "hide line numbers")
 	fs.BoolVar(&pf.NoWrap, "no-wrap", false, "disable soft-wrap")
-	fs.Int64Var(&pf.HighlightCap, "highlight-cap", 0, "disable syntax highlighting above this many bytes (0 = use config / default)")
+	fs.Func("highlight-cap", "disable syntax highlighting above this many bytes (set to 0 to disable entirely)", func(s string) error {
+		n, err := strconv.ParseInt(s, 10, 64)
+		if err != nil {
+			return fmt.Errorf("--highlight-cap: %w", err)
+		}
+		if n < 0 {
+			return fmt.Errorf("--highlight-cap: must be >= 0, got %d", n)
+		}
+		pf.HighlightCap = &n
+		return nil
+	})
 	fs.StringVar(&pf.ConfigPath, "config", "", "config file path (overrides XDG default)")
 	fs.BoolVar(&pf.NoConfig, "no-config", false, "skip loading any config file")
 	fs.StringVar(&pf.DebugPath, "debug", "", "write a debug log to this path")
 
-	if err := fs.Parse(args); err != nil {
-		return nil, fmt.Errorf("flag parse: %w", err)
-	}
-
-	if pf.ConfigPath != "" && pf.NoConfig {
-		return nil, errors.New("--config and --no-config are mutually exclusive")
-	}
-
-	pf.Args = fs.Args()
-	return pf, nil
+	return fs
 }

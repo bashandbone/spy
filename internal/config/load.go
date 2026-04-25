@@ -40,14 +40,17 @@ type LoadOptions struct {
 	NoConfig bool
 
 	// Flag-level overrides. Empty / zero values mean "no flag was set"
-	// — flags don't override env unless the user passed them.
+	// — flags don't override env unless the user passed them. Pointer
+	// types let `false` / `0` be real values rather than "unset"
+	// sentinels (FlagHighlightCap accepts 0 = disable highlighting,
+	// per Copilot review PR#7 #28).
 	FlagTheme        string
 	FlagVim          *bool
 	FlagRegex        *bool
 	FlagGraphics     string
 	FlagWordWrap     *bool
 	FlagLineNums     *bool
-	FlagHighlightCap int64 // 0 = unset; positive overrides cfg.HighlightCapBytes
+	FlagHighlightCap *int64
 }
 
 // Load discovers the config file (per [LoadOptions]), parses it, then
@@ -214,8 +217,8 @@ func applyFlags(cfg *Config, opts LoadOptions) {
 	if opts.FlagLineNums != nil {
 		cfg.LineNumbers = *opts.FlagLineNums
 	}
-	if opts.FlagHighlightCap > 0 {
-		cfg.HighlightCapBytes = opts.FlagHighlightCap
+	if opts.FlagHighlightCap != nil {
+		cfg.HighlightCapBytes = *opts.FlagHighlightCap
 	}
 }
 

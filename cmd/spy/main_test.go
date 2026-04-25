@@ -10,6 +10,7 @@ import (
 	"runtime"
 	"testing"
 
+	"github.com/knitli/spy/internal/source"
 	"github.com/knitli/spy/internal/term"
 )
 
@@ -129,16 +130,57 @@ func TestRun_NoColorFlag(t *testing.T) {
 	}
 }
 
-func TestRun_NoTTYExitsWith5(t *testing.T) {
-	// In go test, stdout is rarely a TTY, so a successful path through
-	// source/loader will land at the TTY gate and exit 5.
+func TestRun_NoTTYDegenerateCats(t *testing.T) {
+	// In `go test`, stdout is rarely a TTY, so a successful path through
+	// source/loader degenerate-cats the file content to stdout and
+	// exits 0 per contracts/cli.md (Copilot review PR#7 #29).
 	p := filepath.Join(t.TempDir(), "real.txt")
 	if err := os.WriteFile(p, []byte("hello\n"), 0o644); err != nil {
 		t.Fatalf("write: %v", err)
 	}
 	got := run([]string{"--no-config", p})
-	if got != exitTTYError {
-		t.Errorf("non-TTY stdout with file arg: got exit %d want %d", got, exitTTYError)
+	if got != exitOK {
+		t.Errorf("non-TTY stdout with file arg: got exit %d want %d", got, exitOK)
+	}
+}
+
+func TestRunDegenerate_WritesContentVerbatim(t *testing.T) {
+	// runDegenerate copies the source's bytes verbatim — no rendering,
+	// no line numbers, no escape sequences. Capture os.Stdout, invoke
+	// runDegenerate, and confirm the bytes round-trip (Copilot review
+	// PR#7 #29).
+	p := filepath.Join(t.TempDir(), "verbatim.txt")
+	want := "alpha\nbeta\ngamma\n"
+	if err := os.WriteFile(p, []byte(want), 0o644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	src, err := source.FromArgs([]string{p}, nil, "")
+	if err != nil {
+		t.Fatalf("FromArgs: %v", err)
+	}
+
+	origStdout := os.Stdout
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("pipe: %v", err)
+	}
+	os.Stdout = w
+	t.Cleanup(func() { os.Stdout = origStdout })
+
+	done := make(chan []byte, 1)
+	go func() {
+		buf := make([]byte, 1024)
+		n, _ := r.Read(buf)
+		done <- buf[:n]
+	}()
+
+	if got := runDegenerate(src); got != exitOK {
+		t.Errorf("runDegenerate: got exit %d want 0", got)
+	}
+	w.Close()
+	got := string(<-done)
+	if got != want {
+		t.Errorf("runDegenerate output: got %q want %q", got, want)
 	}
 }
 
