@@ -277,6 +277,66 @@ func TestStream_EmptyLineUnaffected(t *testing.T) {
 	}
 }
 
+func TestStream_LineLargerThanScannerLimit(t *testing.T) {
+	// Synthesise a single line that would have errored under bufio.Scanner's
+	// 16 MiB ceiling — the bufio.Reader-based readLine truncates and keeps
+	// the stream alive (Copilot review PR#7 #5).
+	bigLine := strings.Repeat("z", 20*1024*1024) // 20 MiB
+	src := &fakeSource{body: bigLine + "\nok\n", kind: source.KindText}
+	s, err := Open(context.Background(), src, Config{
+		InitialChunkLines: 4,
+		MaxLineBytes:      100 * 1024,
+	})
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	all := append([]Chunk{s.First}, collectChunks(t, s)...)
+	var lines []source.Line
+	for _, c := range all {
+		lines = append(lines, c.Lines...)
+	}
+	if len(lines) != 2 {
+		t.Fatalf("expected 2 lines past the truncation, got %d", len(lines))
+	}
+	if int64(len(lines[0].Raw)) != 100*1024 {
+		t.Errorf("20 MiB line truncation: got %d want %d",
+			len(lines[0].Raw), 100*1024)
+	}
+	if lines[1].Raw != "ok" {
+		t.Errorf("post-truncation line: got %q want %q", lines[1].Raw, "ok")
+	}
+	gotTruncatedWarn := false
+	for err := range s.Errs {
+		if errors.Is(err, ErrLineTruncated) {
+			gotTruncatedWarn = true
+		}
+	}
+	if !gotTruncatedWarn {
+		t.Errorf("expected ErrLineTruncated for the >16 MiB line")
+	}
+}
+
+func TestStream_BufferAppendsBeforeUpdatesSend(t *testing.T) {
+	// On every chunk delivered via Updates, the corresponding lines
+	// must already be in Stream.Buffer so the UI's re-render sees them.
+	// Reproduces the race from Copilot review PR#7 #3.
+	body := repeatLines(500, "y")
+	src := &fakeSource{body: body, kind: source.KindText}
+	s, err := Open(context.Background(), src, Config{InitialChunkLines: 50})
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	totalSeen := int64(len(s.First.Lines))
+	for c := range s.Updates {
+		totalSeen += int64(len(c.Lines))
+		// Every chunk's lines must be visible in Buffer the moment we
+		// observe the chunk on Updates.
+		if got := s.Buffer.Total(); got < totalSeen {
+			t.Errorf("Buffer.Total()=%d behind chunk Updates=%d", got, totalSeen)
+		}
+	}
+}
+
 // --- helpers ---
 
 func repeatLines(n int, body string) string {

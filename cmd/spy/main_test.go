@@ -9,6 +9,8 @@ import (
 	"path/filepath"
 	"runtime"
 	"testing"
+
+	"github.com/knitli/spy/internal/term"
 )
 
 // Phase 2 cmd/spy mostly hosts runtime wiring (term.Detect, tea.Program
@@ -124,6 +126,32 @@ func TestRun_NoColorFlag(t *testing.T) {
 	got := run([]string{"--no-config", "--no-color", filepath.Join(t.TempDir(), "missing.txt")})
 	if got != exitIOError {
 		t.Errorf("--no-color path: got exit %d want %d", got, exitIOError)
+	}
+}
+
+func TestApplyGraphicsOverride(t *testing.T) {
+	detected := term.GraphicsKitty
+	// "" / "auto" leaves the auto-detected protocol alone.
+	if got := applyGraphicsOverride(detected, ""); got != detected {
+		t.Errorf("empty override: got %v want detected", got)
+	}
+	if got := applyGraphicsOverride(detected, "auto"); got != detected {
+		t.Errorf("auto override: got %v want detected", got)
+	}
+	cases := map[string]term.Graphics{
+		"none":   term.GraphicsNone,
+		"kitty":  term.GraphicsKitty,
+		"iterm":  term.GraphicsITerm2,
+		"iterm2": term.GraphicsITerm2,
+		"sixel":  term.GraphicsSixel,
+	}
+	for in, want := range cases {
+		if got := applyGraphicsOverride(detected, in); got != want {
+			t.Errorf("override %q: got %v want %v", in, got, want)
+		}
+	}
+	if got := applyGraphicsOverride(detected, "garbage"); got != detected {
+		t.Errorf("unknown override: got %v want detected", got)
 	}
 }
 

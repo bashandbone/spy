@@ -22,7 +22,6 @@ import (
 var (
 	ErrConfigNotFound   = errors.New("config file not found")
 	ErrConfigUnknownKey = errors.New("unknown config key")
-	ErrConfigTypeBad    = errors.New("config value type mismatch")
 	ErrConfigParse      = errors.New("config parse error")
 )
 
@@ -42,11 +41,13 @@ type LoadOptions struct {
 
 	// Flag-level overrides. Empty / zero values mean "no flag was set"
 	// — flags don't override env unless the user passed them.
-	FlagTheme    string
-	FlagVim      *bool
-	FlagGraphics string
-	FlagWordWrap *bool
-	FlagLineNums *bool
+	FlagTheme        string
+	FlagVim          *bool
+	FlagRegex        *bool
+	FlagGraphics     string
+	FlagWordWrap     *bool
+	FlagLineNums     *bool
+	FlagHighlightCap int64 // 0 = unset; positive overrides cfg.HighlightCapBytes
 }
 
 // Load discovers the config file (per [LoadOptions]), parses it, then
@@ -105,8 +106,13 @@ func loadFile(cfg *Config, path string, explicit bool) []error {
 }
 
 // mergeTOML decodes `data` over `cfg`. Unknown top-level keys produce
-// warnings; type mismatches do too, with the offending field reset to
-// its default value.
+// [ErrConfigUnknownKey] warnings; the file is otherwise applied
+// field-by-field over the supplied defaults. A type mismatch anywhere
+// in the file is fatal at decode time — [BurntSushi/toml] returns a
+// single decode error rather than per-field validation, so we surface
+// the whole file as [ErrConfigParse]. Per-field type validation with
+// fall-through to defaults would require a custom UnmarshalTOML pass
+// and is deferred to a future polish task.
 func mergeTOML(cfg *Config, data []byte, _ bool) []error {
 	var warnings []error
 	// Decode into a fresh Config so we know exactly what was set vs.
@@ -196,6 +202,9 @@ func applyFlags(cfg *Config, opts LoadOptions) {
 	if opts.FlagVim != nil {
 		cfg.VimMode = *opts.FlagVim
 	}
+	if opts.FlagRegex != nil {
+		cfg.RegexDefault = *opts.FlagRegex
+	}
 	if opts.FlagGraphics != "" {
 		cfg.Graphics = strings.ToLower(opts.FlagGraphics)
 	}
@@ -204,6 +213,9 @@ func applyFlags(cfg *Config, opts LoadOptions) {
 	}
 	if opts.FlagLineNums != nil {
 		cfg.LineNumbers = *opts.FlagLineNums
+	}
+	if opts.FlagHighlightCap > 0 {
+		cfg.HighlightCapBytes = opts.FlagHighlightCap
 	}
 }
 

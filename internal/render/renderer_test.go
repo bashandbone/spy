@@ -94,6 +94,31 @@ func TestUnsupportedKind_StubFrame(t *testing.T) {
 	}
 }
 
+func TestKindText_EmptyInputShowsPlaceholder(t *testing.T) {
+	deps := Dependencies{Theme: ThemeDark(), LineNumbers: true}
+	r := ForKind(source.KindText, deps)
+	out := r.Render(RenderContext{
+		Buffer:       loader.NewLineBuffer(0, 0, nil),
+		Theme:        deps.Theme,
+		Capabilities: term.Capabilities{Cols: 80, Rows: 24},
+	})
+	if !strings.Contains(out, "(empty)") {
+		t.Errorf("empty buffer: expected (empty) placeholder, got %q", out)
+	}
+}
+
+func TestKindText_NilBufferShowsPlaceholder(t *testing.T) {
+	deps := Dependencies{Theme: ThemeDark(), LineNumbers: true}
+	r := ForKind(source.KindText, deps)
+	out := r.Render(RenderContext{
+		Theme:        deps.Theme,
+		Capabilities: term.Capabilities{Cols: 80, Rows: 24},
+	})
+	if !strings.Contains(out, "(empty)") {
+		t.Errorf("nil buffer: expected (empty) placeholder, got %q", out)
+	}
+}
+
 func TestKindBinary_StubFrame(t *testing.T) {
 	deps := Dependencies{Theme: ThemeDark(), LineNumbers: true}
 	r := ForKind(source.KindBinary, deps)

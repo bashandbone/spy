@@ -265,6 +265,32 @@ func TestLoad_FlagsForAllPointerFields(t *testing.T) {
 	}
 }
 
+func TestLoad_FlagRegexAndHighlightCap(t *testing.T) {
+	yes := true
+	cfg, _ := Load(LoadOptions{
+		NoConfig:         true,
+		FlagRegex:        &yes,
+		FlagHighlightCap: 1024,
+	})
+	if !cfg.RegexDefault {
+		t.Errorf("FlagRegex should set cfg.RegexDefault")
+	}
+	if cfg.HighlightCapBytes != 1024 {
+		t.Errorf("FlagHighlightCap: got %d want 1024", cfg.HighlightCapBytes)
+	}
+}
+
+func TestLoad_FlagHighlightCapZeroIsUnset(t *testing.T) {
+	// The flag is "unset" when the value is 0; we don't want to wipe the
+	// config file's value just because the user didn't pass --highlight-cap.
+	p := writeConfig(t, `highlight_cap_bytes = 9999`)
+	cfg, _ := Load(LoadOptions{ConfigPath: p, FlagHighlightCap: 0})
+	if cfg.HighlightCapBytes != 9999 {
+		t.Errorf("zero FlagHighlightCap should not override file: got %d want 9999",
+			cfg.HighlightCapBytes)
+	}
+}
+
 func TestParseBool(t *testing.T) {
 	cases := map[string]bool{
 		"1": true, "true": true, "TRUE": true, "yes": true, "on": true,

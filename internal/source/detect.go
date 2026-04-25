@@ -21,9 +21,10 @@ import (
 //  3. Chroma `Analyse` over the read-ahead buffer.
 //  4. Text/binary heuristic over the first 8 KiB.
 //
-// The reader is consumed up to 8 KiB; callers that need to feed the
-// bytes downstream should wrap the result with [io.MultiReader] using
-// the buffer returned via [DetectAndPeek] (see file.go).
+// The reader is consumed up to 8 KiB during detection. Callers that
+// need to read the content again must account for those consumed
+// bytes; [FileSource] does this by reopening the file after detection,
+// so no peek buffer needs to be replayed here.
 func detectKind(r io.Reader, hint string) (Kind, string, error) {
 	// 1. Extension hint.
 	if hint != "" {

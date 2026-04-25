@@ -82,7 +82,12 @@ func (b *LineBuffer) MarkComplete(total int64) {
 	b.mu.Unlock()
 }
 
-// Total returns the total line count once known, or -1 while streaming.
+// Total returns the line count of the full source if known (after
+// [LineBuffer.MarkComplete] has been called) or, while streaming is
+// still in progress, the number of lines seen so far. Callers that
+// specifically need an "unknown total" sentinel should compare against
+// the [source.Metadata.LineCount] field, which is `-1` until the
+// loader's EOF chunk lands.
 func (b *LineBuffer) Total() int64 {
 	b.mu.Lock()
 	defer b.mu.Unlock()
@@ -246,25 +251,28 @@ func readWindow(src source.Source, start, end int64) ([]source.Line, error) {
 	if c, ok := rs.(io.Closer); ok {
 		defer c.Close()
 	}
-	scanner := bufio.NewScanner(rs)
-	scanner.Buffer(make([]byte, scannerBufferBytes), scannerMaxBytes)
-
+	reader := bufio.NewReaderSize(rs, readerBufferBytes)
+	const reseekLineCap = 100 * 1024 // mirrors defaultMaxLineBytes
 	var out []source.Line
 	var lineNo int64 = 1
-	for scanner.Scan() {
+	for {
 		if lineNo >= end {
 			break
 		}
+		raw, _, err := readLine(reader, reseekLineCap)
+		if errors.Is(err, io.EOF) {
+			if len(raw) > 0 && lineNo >= start {
+				out = append(out, source.Line{Number: lineNo, Raw: string(raw)})
+			}
+			break
+		}
+		if err != nil {
+			return out, err
+		}
 		if lineNo >= start {
-			raw := scanner.Bytes()
-			cp := make([]byte, len(raw))
-			copy(cp, raw)
-			out = append(out, source.Line{Number: lineNo, Raw: string(cp)})
+			out = append(out, source.Line{Number: lineNo, Raw: string(raw)})
 		}
 		lineNo++
-	}
-	if err := scanner.Err(); err != nil {
-		return out, err
 	}
 	return out, nil
 }

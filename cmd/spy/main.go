@@ -58,15 +58,17 @@ func run(args []string) int {
 		return exitOK
 	}
 
-	// 1. Probe terminal capabilities; capture restore + graphics cleanup.
+	// 1. Probe terminal capabilities. We defer Restore + cleanup AFTER
+	//    cfg.Graphics has had a chance to override caps.Graphics — the
+	//    cleanup closure must fire against the protocol we actually
+	//    used to emit, not the auto-detected one.
 	caps := term.Detect(context.Background())
 	restore := term.Restore()
 	defer restore()
-	cleanupGraphics := graphics.CleanupFunc(caps.Graphics)
-	defer cleanupGraphics()
 
 	// 2. Load layered config.
 	flagVim := boolPtr(pf.Vim)
+	flagRegex := boolPtr(pf.Regex)
 	var flagWordWrap, flagLineNums *bool
 	if pf.NoWrap {
 		f := false
@@ -82,9 +84,11 @@ func run(args []string) int {
 		NoConfig:           pf.NoConfig,
 		FlagTheme:          pf.Theme,
 		FlagVim:            flagVim,
+		FlagRegex:          flagRegex,
 		FlagGraphics:       pf.Graphics,
 		FlagWordWrap:       flagWordWrap,
 		FlagLineNums:       flagLineNums,
+		FlagHighlightCap:   pf.HighlightCap,
 	})
 	for _, w := range warnings {
 		if errors.Is(w, config.ErrConfigNotFound) {
@@ -98,6 +102,13 @@ func run(args []string) int {
 	if pf.NoColor {
 		cfg.NoColor = true
 	}
+
+	// Apply cfg.Graphics over caps.Graphics so flag/env/config overrides
+	// drive the runtime cleanup defer chain. "auto" / "" leaves the
+	// auto-detected protocol alone (Copilot review PR#7 #1).
+	caps.Graphics = applyGraphicsOverride(caps.Graphics, cfg.Graphics)
+	cleanupGraphics := graphics.CleanupFunc(caps.Graphics)
+	defer cleanupGraphics()
 
 	// 3. Pick source. FromArgs honours file paths; "-" / stdin
 	//    construction is deferred to US5 so we surface ErrNoInput here
@@ -147,10 +158,31 @@ func run(args []string) int {
 
 	prog := tea.NewProgram(model, tea.WithAltScreen(), tea.WithMouseCellMotion())
 	if _, err := prog.Run(); err != nil {
+		// Cancel the loader so its background goroutine doesn't leak
+		// past the program's error path (Copilot review PR#7 #2).
+		cancel()
 		fmt.Fprintf(os.Stderr, "spy: tea program: %v\n", err)
 		return exitGenericError
 	}
 	return exitOK
+}
+
+// applyGraphicsOverride layers cfg.Graphics on top of the auto-detected
+// caps.Graphics. "" / "auto" leaves the auto value; anything else
+// matching the contracts/cli.md vocabulary replaces it. Unknown values
+// are treated as "auto" (caller already surfaced any warnings).
+func applyGraphicsOverride(detected term.Graphics, override string) term.Graphics {
+	switch override {
+	case "none":
+		return term.GraphicsNone
+	case "kitty":
+		return term.GraphicsKitty
+	case "iterm", "iterm2":
+		return term.GraphicsITerm2
+	case "sixel":
+		return term.GraphicsSixel
+	}
+	return detected
 }
 
 // exitForSourceError maps a source-layer error to the documented exit
@@ -189,6 +221,16 @@ func boolPtr(b bool) *bool {
 	return &b
 }
 
+// helpText is the --help output. The stdin examples (`cat ... | spy`,
+// `git diff | spy`) from contracts/cli.md are intentionally omitted
+// here because Phase 2 does not yet implement StdinSource — those
+// examples return cleanly when US5 (T090–T094) wires up stdin and
+// helpText is updated then.
+//
+// `--debug` is parsed and accepted (so the flag never reads as
+// "unknown") but the structured-JSON debug log it documents in
+// contracts/cli.md "Debug log format" lands as part of the polish
+// phase. It is omitted from helpText for now.
 const helpText = `Usage: spy [OPTIONS] [FILE]
 A focused popup viewer for text, code, PDFs, and images.
 
@@ -198,7 +240,7 @@ Options:
       --theme=<value>     dark|light|auto|<chroma-style>  (default: auto)
       --vim               enable vim keybindings
   -l, --lang=<name>       force language for highlighting
-      --regex             treat searches as regex
+      --regex             treat searches as regex by default
       --no-color          disable color (alias for NO_COLOR=1)
       --graphics=<value>  auto|none|kitty|iterm2|sixel    (default: auto)
       --no-line-numbers   hide line numbers
@@ -206,15 +248,9 @@ Options:
       --highlight-cap=N   disable highlighting above N bytes
       --config=<path>     config file path
       --no-config         do not load any config file
-      --debug=<path>      write debug log to path
 
 Examples:
   spy README.md
-  cat main.go | spy -l go
-  git diff HEAD~ | spy
+  spy --theme=light README.md
+  spy -l go ./cmd/spy/main.go
 `
-
-// _ = ensure we keep the term package imported even if no live caller
-// references it directly during refactors. Removed once all wiring is
-// in place; harmless to keep until US3 lands.
-var _ = term.Capabilities{}

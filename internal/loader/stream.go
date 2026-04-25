@@ -21,8 +21,7 @@ const (
 	defaultMaxLineBytes      = 100 * 1024 // 100 KiB
 	defaultWindowSize        = 4096
 	defaultStreamingChunk    = 256 // lines per Updates send after the first
-	scannerBufferBytes       = 64 * 1024
-	scannerMaxBytes          = 16 * 1024 * 1024
+	readerBufferBytes        = 64 * 1024
 )
 
 // Config tunes [Open]. Zero fields use the documented defaults.
@@ -95,8 +94,7 @@ func Open(ctx context.Context, src source.Source, cfg Config) (*Stream, error) {
 		return nil, fmt.Errorf("loader.Open: %w", err)
 	}
 
-	scanner := bufio.NewScanner(rc)
-	scanner.Buffer(make([]byte, scannerBufferBytes), scannerMaxBytes)
+	reader := bufio.NewReaderSize(rc, readerBufferBytes)
 
 	updates := make(chan Chunk, cfg.UpdatesBuffer)
 	errs := make(chan error, cfg.UpdatesBuffer+2)
@@ -111,7 +109,7 @@ func Open(ctx context.Context, src source.Source, cfg Config) (*Stream, error) {
 	buf.SetWarningSink(errs)
 
 	// Read the first chunk synchronously.
-	first, hitEOF, readErr := readChunk(scanner, 1, cfg.InitialChunkLines, cfg.MaxLineBytes, errs)
+	first, hitEOF, readErr := readChunk(reader, 1, cfg.InitialChunkLines, cfg.MaxLineBytes, errs)
 	first.EOF = hitEOF
 	stream.First = first
 	buf.Append(first.Lines)
@@ -143,16 +141,20 @@ func Open(ctx context.Context, src source.Source, cfg Config) (*Stream, error) {
 			if ctx.Err() != nil {
 				return
 			}
-			c, eof, err := readChunk(scanner, next, defaultStreamingChunk, cfg.MaxLineBytes, errs)
+			c, eof, err := readChunk(reader, next, defaultStreamingChunk, cfg.MaxLineBytes, errs)
 			c.EOF = eof
 			if len(c.Lines) > 0 {
+				// Append BEFORE send so the UI consumer never sees an
+				// EOF chunk on Updates while the corresponding lines
+				// are still missing from Stream.Buffer (Copilot review
+				// PR#7 #3).
+				buf.Append(c.Lines)
+				next += int64(len(c.Lines))
 				select {
 				case <-ctx.Done():
 					return
 				case updates <- c:
 				}
-				buf.Append(c.Lines)
-				next += int64(len(c.Lines))
 			}
 			if err != nil {
 				select {
@@ -171,40 +173,128 @@ func Open(ctx context.Context, src source.Source, cfg Config) (*Stream, error) {
 	return stream, nil
 }
 
-// readChunk reads up to `n` lines from the scanner starting at line
+// readChunk reads up to `n` lines from the reader starting at line
 // number `start`. Lines longer than `maxLineBytes` are truncated and a
 // matching [ErrLineTruncated] is sent on `errs` (best-effort: drops the
 // warning if `errs` is full to avoid backpressure on the warning path).
 //
-// Returns the populated chunk plus whether EOF was hit and any scanner
+// Uses [bufio.Reader] (not [bufio.Scanner]) so genuinely enormous lines
+// — multi-GB log dumps, minified JSON / JS bundles past the scanner's
+// 16 MiB hard limit — get truncated cleanly instead of erroring the
+// whole stream (Copilot review PR#7 #5).
+//
+// Returns the populated chunk plus whether EOF was hit and any read
 // error encountered.
-func readChunk(scanner *bufio.Scanner, start int64, n int, maxLineBytes int64, errs chan<- error) (Chunk, bool, error) {
+func readChunk(r *bufio.Reader, start int64, n int, maxLineBytes int64, errs chan<- error) (Chunk, bool, error) {
 	c := Chunk{StartLine: start, Lines: make([]source.Line, 0, n)}
 	for len(c.Lines) < n {
-		if !scanner.Scan() {
-			if err := scanner.Err(); err != nil && !errors.Is(err, io.EOF) {
-				return c, false, err
+		raw, truncated, err := readLine(r, maxLineBytes)
+		if errors.Is(err, io.EOF) {
+			if len(raw) > 0 {
+				c.Lines = append(c.Lines, source.Line{
+					Number: start + int64(len(c.Lines)),
+					Raw:    string(raw),
+				})
 			}
 			return c, true, nil
 		}
-		raw := scanner.Bytes()
-		if int64(len(raw)) > maxLineBytes {
+		if err != nil {
+			return c, false, err
+		}
+		if truncated {
 			lineNo := start + int64(len(c.Lines))
-			raw = raw[:maxLineBytes]
 			select {
 			case errs <- fmt.Errorf("%w: line %d", ErrLineTruncated, lineNo):
 			default:
 			}
 		}
-		// Copy the bytes so the scanner can reuse its internal buffer
-		// safely. Without a copy, line.Raw aliases the scanner's buffer
-		// and contents change on the next Scan().
-		out := make([]byte, len(raw))
-		copy(out, raw)
 		c.Lines = append(c.Lines, source.Line{
 			Number: start + int64(len(c.Lines)),
-			Raw:    string(out),
+			Raw:    string(raw),
 		})
 	}
 	return c, false, nil
+}
+
+// readLine reads bytes from `r` until a newline or EOF. The first
+// `maxLineBytes` bytes are kept; any remainder is silently consumed
+// (so the next call still starts at the right offset) and the
+// `truncated` return is set so the caller can emit ErrLineTruncated.
+//
+// The trailing '\n' (and any preceding '\r') is stripped from the
+// returned slice.
+func readLine(r *bufio.Reader, maxLineBytes int64) ([]byte, bool, error) {
+	var buf []byte
+	truncated := false
+	gotAny := false
+	for {
+		chunk, err := r.ReadSlice('\n')
+		// A non-nil chunk plus bufio.ErrBufferFull means we read up to
+		// the internal buffer boundary without finding '\n'; keep going
+		// and accumulate into `buf`.
+		if len(chunk) > 0 {
+			gotAny = true
+		}
+		if errors.Is(err, bufio.ErrBufferFull) {
+			buf, truncated = appendBounded(buf, chunk, maxLineBytes, truncated)
+			continue
+		}
+		if err != nil {
+			// EOF or any other terminal error — return what we have.
+			if len(chunk) > 0 {
+				// Trim a trailing newline if the input happened to end
+				// with one despite the error path (rare).
+				chunk = trimTrailingNewline(chunk)
+				buf, truncated = appendBounded(buf, chunk, maxLineBytes, truncated)
+			}
+			if !gotAny {
+				return nil, false, err
+			}
+			// EOF with content read: surface as no-error so the caller
+			// records the line, then EOF on the next call.
+			if errors.Is(err, io.EOF) {
+				return buf, truncated, io.EOF
+			}
+			return buf, truncated, err
+		}
+		// Got a complete line ending in '\n'. Strip the newline (and
+		// preceding '\r' if any) before returning.
+		chunk = trimTrailingNewline(chunk)
+		buf, truncated = appendBounded(buf, chunk, maxLineBytes, truncated)
+		return buf, truncated, nil
+	}
+}
+
+// appendBounded copies bytes from `src` into `buf` up to maxBytes; any
+// overflow is dropped and `truncated` is set. Returns the (possibly
+// re-allocated) buf and updated truncated flag.
+func appendBounded(buf, src []byte, maxBytes int64, truncated bool) ([]byte, bool) {
+	if int64(len(buf)) >= maxBytes {
+		if len(src) > 0 {
+			truncated = true
+		}
+		return buf, truncated
+	}
+	rem := maxBytes - int64(len(buf))
+	if int64(len(src)) > rem {
+		buf = append(buf, src[:rem]...)
+		truncated = true
+	} else {
+		buf = append(buf, src...)
+	}
+	return buf, truncated
+}
+
+// trimTrailingNewline strips a single trailing '\n' (and optionally a
+// preceding '\r') from `b`. Bytes past the trim are gone — this is
+// safe because [bufio.Reader.ReadSlice] returns a slice into its own
+// buffer that we then copy into `buf` via [appendBounded].
+func trimTrailingNewline(b []byte) []byte {
+	if len(b) > 0 && b[len(b)-1] == '\n' {
+		b = b[:len(b)-1]
+	}
+	if len(b) > 0 && b[len(b)-1] == '\r' {
+		b = b[:len(b)-1]
+	}
+	return b
 }

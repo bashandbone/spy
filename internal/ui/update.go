@@ -77,10 +77,18 @@ func (m Model) onKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	if matchAction(m.keyMap, keys.ActionPageUp, msg) {
-		m.viewport.HalfViewUp()
+		m.viewport.ViewUp()
 		return m, nil
 	}
 	if matchAction(m.keyMap, keys.ActionPageDown, msg) {
+		m.viewport.ViewDown()
+		return m, nil
+	}
+	if matchAction(m.keyMap, keys.ActionHalfPageUp, msg) {
+		m.viewport.HalfViewUp()
+		return m, nil
+	}
+	if matchAction(m.keyMap, keys.ActionHalfPageDown, msg) {
 		m.viewport.HalfViewDown()
 		return m, nil
 	}

@@ -34,7 +34,12 @@ func (m Model) footerLine() string {
 	if m.stream != nil && m.stream.Buffer != nil {
 		total = m.stream.Buffer.Total()
 	}
+	// 0-byte input renders as "Line 0" per contracts/cli.md "Empty
+	// input"; non-empty buffers number from 1 (Copilot review PR#7 #6).
 	current := m.viewport.YOffset + 1
+	if total == 0 {
+		current = 0
+	}
 
 	totalDisplay := fmt.Sprintf("%d", total)
 	if m.streaming {
