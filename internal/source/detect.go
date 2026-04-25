@@ -16,10 +16,10 @@ import (
 
 // detectKind decides the [Kind] (and, for code, the Chroma lexer name)
 // for a byte stream. Order, per T016:
-//   1. Extension hint (markdown/image/pdf/code).
-//   2. Magic bytes (PDF / image).
-//   3. Chroma `Analyse` over the read-ahead buffer.
-//   4. Text/binary heuristic over the first 8 KiB.
+//  1. Extension hint (markdown/image/pdf/code).
+//  2. Magic bytes (PDF / image).
+//  3. Chroma `Analyse` over the read-ahead buffer.
+//  4. Text/binary heuristic over the first 8 KiB.
 //
 // The reader is consumed up to 8 KiB; callers that need to feed the
 // bytes downstream should wrap the result with [io.MultiReader] using

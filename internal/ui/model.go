@@ -2,267 +2,102 @@
 //
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
+// Package ui implements the Bubble Tea Model that drives the viewer.
+// The Phase 2 foundational viewer wires loader → render → viewport with
+// quit-on-q/esc/Ctrl-C and arrow-key scrolling. Search, vim, command
+// line, and graphics cleanup are added in their respective story
+// phases (US1–US6).
 package ui
 
 import (
-	"fmt"
-	"path/filepath"
-	"strings"
+	"context"
 
-	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/bubbles/viewport"
+
 	"github.com/knitli/spy/internal/config"
-	"github.com/knitli/spy/internal/reader"
-	"github.com/knitli/spy/internal/renderer"
+	"github.com/knitli/spy/internal/keys"
+	"github.com/knitli/spy/internal/loader"
+	"github.com/knitli/spy/internal/render"
+	"github.com/knitli/spy/internal/source"
+	"github.com/knitli/spy/internal/term"
 )
 
+// ModelOptions matches contracts/internal-apis.md `internal/ui`.
+type ModelOptions struct {
+	Source       source.Source
+	Stream       *loader.Stream
+	Capabilities term.Capabilities
+	Config       *config.Config
+	Theme        render.Theme
+	KeyMap       keys.KeyMap
+
+	// Cancel cancels the loader's background streaming goroutine; the
+	// model fires it on tea.Quit so Open's goroutine exits before the
+	// program returns. Optional; nil is safe.
+	Cancel context.CancelFunc
+}
+
+// Model is the Bubble Tea state for a viewer session. The fields are
+// unexported because callers construct via [NewModel]; once constructed,
+// the model is owned by tea.NewProgram for the duration of the run.
 type Model struct {
-	filePath       string
-	config         *config.Config
-	content        *reader.Content
-	renderer       *renderer.Renderer
-	viewport       Viewport
-	width          int
-	height         int
-	err            error
-	showHelp       bool
-	showOpenDialog bool
-	searchQuery    string
+	source   source.Source
+	stream   *loader.Stream
+	caps     term.Capabilities
+	cfg      *config.Config
+	theme    render.Theme
+	keyMap   keys.KeyMap
+	cancel   context.CancelFunc
+	renderer render.Renderer
+
+	viewport viewport.Model
+	width    int
+	height   int
+
+	// streaming flips false on the first chunkLoadedMsg with EOF=true;
+	// before then the footer advertises "loading..." instead of the
+	// final line count.
+	streaming bool
 }
 
-type Viewport struct {
-	scrollOffset int
-	lineHeight   int
-}
-
-func NewModel(filePath string, cfg *config.Config) *Model {
-	m := &Model{
-		filePath:       filePath,
-		config:         cfg,
-		viewport:       Viewport{scrollOffset: 0, lineHeight: 1},
-		showHelp:       false,
-		showOpenDialog: false,
-		err:            nil,
+// NewModel constructs the viewer's Bubble Tea model. The first frame
+// uses the synchronously-loaded First chunk from the loader stream so
+// the alt-screen paints immediately; further chunks arrive via
+// chunkLoadedMsg as the producer streams.
+func NewModel(opts ModelOptions) Model {
+	deps := render.Dependencies{
+		Theme:        opts.Theme,
+		Capabilities: opts.Capabilities,
+		LineNumbers:  opts.Config != nil && opts.Config.LineNumbers,
+		WordWrap:     opts.Config != nil && opts.Config.WordWrap,
 	}
-
-	if filePath != "" {
-		if err := m.loadFile(filePath); err != nil {
-			m.err = err
-		}
+	kind := source.KindUnknown
+	if opts.Source != nil {
+		kind = opts.Source.Kind()
 	}
-
+	m := Model{
+		source:    opts.Source,
+		stream:    opts.Stream,
+		caps:      opts.Capabilities,
+		cfg:       opts.Config,
+		theme:     opts.Theme,
+		keyMap:    opts.KeyMap,
+		cancel:    opts.Cancel,
+		renderer:  render.ForKind(kind, deps),
+		streaming: true,
+	}
+	if opts.Stream != nil && opts.Stream.First.EOF {
+		m.streaming = false
+	}
 	return m
 }
 
-func (m *Model) loadFile(filePath string) error {
-	content, err := reader.ReadFile(filePath)
-	if err != nil {
-		return err
-	}
-
-	m.filePath = filePath
-	m.content = content
-	m.viewport.scrollOffset = 0
-
-	return nil
+// chunkLoadedMsg announces that the loader produced another chunk. The
+// model's Update routes it through the buffer (already done by the
+// loader internally) and re-renders.
+type chunkLoadedMsg struct {
+	chunk loader.Chunk
 }
 
-func (m Model) Init() tea.Cmd {
-	return nil
-}
-
-func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
-	switch msg := msg.(type) {
-	case tea.KeyMsg:
-		return m.handleKeyPress(msg)
-
-	case tea.WindowSizeMsg:
-		m.width = msg.Width
-		m.height = msg.Height
-		if m.renderer == nil {
-			m.renderer = renderer.NewRenderer(m.width, m.height, m.config.Theme)
-		} else {
-			m.renderer = renderer.NewRenderer(m.width, m.height, m.config.Theme)
-		}
-		return m, nil
-
-	case errMsg:
-		m.err = msg
-		return m, nil
-	}
-
-	return m, nil
-}
-
-func (m Model) View() string {
-	if m.content == nil {
-		return m.renderWelcome()
-	}
-
-	if m.width == 0 || m.height == 0 {
-		return "Loading..."
-	}
-
-	content := m.renderer.Render(m.content)
-	lines := strings.Split(content, "\n")
-
-	viewHeight := m.height
-	if m.config.ShowStatusBar {
-		viewHeight -= 2
-	}
-
-	startLine := m.viewport.scrollOffset
-	endLine := startLine + viewHeight
-
-	if endLine > len(lines) {
-		endLine = len(lines)
-	}
-
-	if startLine > len(lines) {
-		startLine = len(lines) - 1
-	}
-
-	visibleLines := lines[startLine:endLine]
-	mainView := strings.Join(visibleLines, "\n")
-
-	if m.config.ShowStatusBar {
-		fileName := filepath.Base(m.filePath)
-		if fileName == "" {
-			fileName = "spy"
-		}
-		statusBar := m.renderer.RenderStatusBar(fileName, startLine+1, len(lines))
-		helpBar := m.renderer.RenderHelpBar()
-		return mainView + "\n" + statusBar + "\n" + helpBar
-	}
-
-	return mainView
-}
-
-func (m Model) handleKeyPress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	if m.showOpenDialog {
-		return m.handleOpenDialogKey(msg)
-	}
-
-	switch msg.String() {
-	case "q", "ctrl+c":
-		return m, tea.Quit
-
-	case "o":
-		m.showOpenDialog = true
-		return m, nil
-
-	case "?", "h":
-		m.showHelp = !m.showHelp
-		return m, nil
-
-	case "up", "k":
-		if m.viewport.scrollOffset > 0 {
-			m.viewport.scrollOffset--
-		}
-		return m, nil
-
-	case "down", "j":
-		if m.content != nil {
-			lines := strings.Split(m.renderer.Render(m.content), "\n")
-			maxScroll := len(lines) - (m.height - 2)
-			if m.viewport.scrollOffset < maxScroll && maxScroll > 0 {
-				m.viewport.scrollOffset++
-			}
-		}
-		return m, nil
-
-	case "home":
-		m.viewport.scrollOffset = 0
-		return m, nil
-
-	case "end":
-		if m.content != nil {
-			lines := strings.Split(m.renderer.Render(m.content), "\n")
-			m.viewport.scrollOffset = len(lines) - (m.height - 2)
-			if m.viewport.scrollOffset < 0 {
-				m.viewport.scrollOffset = 0
-			}
-		}
-		return m, nil
-
-	case "pageup":
-		m.viewport.scrollOffset -= (m.height - 2)
-		if m.viewport.scrollOffset < 0 {
-			m.viewport.scrollOffset = 0
-		}
-		return m, nil
-
-	case "pagedown":
-		if m.content != nil {
-			lines := strings.Split(m.renderer.Render(m.content), "\n")
-			m.viewport.scrollOffset += (m.height - 2)
-			maxScroll := len(lines) - (m.height - 2)
-			if m.viewport.scrollOffset > maxScroll && maxScroll > 0 {
-				m.viewport.scrollOffset = maxScroll
-			}
-		}
-		return m, nil
-	}
-
-	return m, nil
-}
-
-func (m Model) handleOpenDialogKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	switch msg.String() {
-	case "esc":
-		m.showOpenDialog = false
-		return m, nil
-
-	case "enter":
-		if m.searchQuery != "" {
-			if err := m.loadFile(m.searchQuery); err != nil {
-				m.err = err
-			}
-			m.searchQuery = ""
-			m.showOpenDialog = false
-		}
-		return m, nil
-
-	case "backspace":
-		if len(m.searchQuery) > 0 {
-			m.searchQuery = m.searchQuery[:len(m.searchQuery)-1]
-		}
-		return m, nil
-
-	default:
-		if len(msg.Runes) > 0 {
-			m.searchQuery += string(msg.Runes[0])
-		}
-		return m, nil
-	}
-}
-
-func (m Model) renderWelcome() string {
-	return fmt.Sprintf(`
-╔════════════════════════════════════════════════════════════════════╗
-║                          spy - File Viewer                         ║
-║           A syntax-highlighted reader for code and more            ║
-╚════════════════════════════════════════════════════════════════════╝
-
-Supported File Types:
-  • Source code (Go, Python, Rust, JavaScript, etc.)
-  • Markdown files
-  • Plain text
-  • PDFs
-  • Images (PNG, JPG, GIF)
-
-Keyboard Shortcuts:
-  [o]      - Open file
-  [q]      - Quit
-  [↑/↓]    - Scroll up/down
-  [k/j]    - Scroll up/down (vim style)
-  [Home]   - Jump to start
-  [End]    - Jump to end
-  [PgUp]   - Page up
-  [PgDn]   - Page down
-  [?]      - Toggle help
-
-Press 'o' to open a file or drag and drop a file onto this window.
-`)
-}
-
-type errMsg error
+// streamDoneMsg is sent when the loader's Updates channel closes.
+type streamDoneMsg struct{}

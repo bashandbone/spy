@@ -52,12 +52,12 @@ const (
 
 // Application-level actions.
 const (
-	ActionQuit               Action = "quit"
-	ActionToggleHelp         Action = "toggle_help"
-	ActionOpenFile           Action = "open_file"
-	ActionReload             Action = "reload"
-	ActionToggleLineNumbers  Action = "toggle_line_numbers"
-	ActionToggleWordWrap     Action = "toggle_word_wrap"
+	ActionQuit              Action = "quit"
+	ActionToggleHelp        Action = "toggle_help"
+	ActionOpenFile          Action = "open_file"
+	ActionReload            Action = "reload"
+	ActionToggleLineNumbers Action = "toggle_line_numbers"
+	ActionToggleWordWrap    Action = "toggle_word_wrap"
 )
 
 // KeyMap binds each known [Action] to one or more [key.Binding] entries.

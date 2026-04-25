@@ -1,0 +1,137 @@
+// SPDX-FileCopyrightText: 2026 Adam Poulemanos
+//
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
+package main
+
+import (
+	"os"
+	"path/filepath"
+	"runtime"
+	"testing"
+)
+
+// Phase 2 cmd/spy mostly hosts runtime wiring (term.Detect, tea.Program
+// .Run, etc.) which can't be tested without a PTY. These smoke tests
+// cover the testable parts: the early exits for --help / --version and
+// the documented usage-error path for unknown flags. The full
+// integration coverage lands with the PTY harness in Phase 9.
+
+func TestRun_VersionExitsZero(t *testing.T) {
+	if got := run([]string{"--version"}); got != exitOK {
+		t.Errorf("--version: got exit %d want %d", got, exitOK)
+	}
+}
+
+func TestRun_HelpExitsZero(t *testing.T) {
+	if got := run([]string{"--help"}); got != exitOK {
+		t.Errorf("--help: got exit %d want %d", got, exitOK)
+	}
+}
+
+func TestRun_UnknownFlagExitsUsage(t *testing.T) {
+	if got := run([]string{"--mystery"}); got != exitUsageError {
+		t.Errorf("unknown flag: got exit %d want %d", got, exitUsageError)
+	}
+}
+
+func TestRun_ConflictingConfigFlagsExitsUsage(t *testing.T) {
+	if got := run([]string{"--config", "/x", "--no-config"}); got != exitUsageError {
+		t.Errorf("conflicting flags: got exit %d want %d", got, exitUsageError)
+	}
+}
+
+func TestRun_NoInputExitsUsage(t *testing.T) {
+	// No FILE arg + go-test runs with stdin/stdout typically not a TTY,
+	// but FromArgs sees no args and returns ErrNoInput — exit 2.
+	got := run([]string{"--no-config"})
+	if got != exitUsageError {
+		t.Errorf("no input: got exit %d want %d", got, exitUsageError)
+	}
+}
+
+func TestRun_MissingFileExitsIO(t *testing.T) {
+	got := run([]string{"--no-config", filepath.Join(t.TempDir(), "nope.txt")})
+	if got != exitIOError {
+		t.Errorf("missing file: got exit %d want %d", got, exitIOError)
+	}
+}
+
+func TestRun_BinaryFileExitsUnsupported(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "blob.bin")
+	body := make([]byte, 9000)
+	if err := os.WriteFile(p, body, 0o644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	if got := run([]string{"--no-config", p}); got != exitUnsupported {
+		t.Errorf("binary file: got exit %d want %d", got, exitUnsupported)
+	}
+}
+
+func TestRun_DirectoryExitsUnsupported(t *testing.T) {
+	dir := t.TempDir()
+	if got := run([]string{"--no-config", dir}); got != exitUnsupported {
+		t.Errorf("directory: got exit %d want %d", got, exitUnsupported)
+	}
+}
+
+func TestRun_PermissionDeniedExitsIO(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("permission semantics differ on Windows")
+	}
+	if os.Geteuid() == 0 {
+		t.Skip("root bypasses permission checks")
+	}
+	p := filepath.Join(t.TempDir(), "secret.txt")
+	if err := os.WriteFile(p, []byte("hi"), 0o644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	if err := os.Chmod(p, 0o000); err != nil {
+		t.Fatalf("chmod: %v", err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(p, 0o644) })
+	if got := run([]string{"--no-config", p}); got != exitIOError {
+		t.Errorf("permission denied: got exit %d want %d", got, exitIOError)
+	}
+}
+
+func TestRun_ExplicitMissingConfigExitsUsage(t *testing.T) {
+	// --config <missing> is a hard error per contracts/cli.md
+	// "Discovery rules" #1 — exit 2.
+	got := run([]string{"--config", filepath.Join(t.TempDir(), "no.toml")})
+	if got != exitUsageError {
+		t.Errorf("missing --config: got exit %d want %d", got, exitUsageError)
+	}
+}
+
+func TestRun_BadConfigSurfacesWarnings(t *testing.T) {
+	// Soft warnings (unknown key, type mismatch) write to stderr but
+	// don't abort. We pair the bad config with a missing file so run()
+	// still exits with exitIOError after surfacing the warning.
+	p := filepath.Join(t.TempDir(), "bad.toml")
+	if err := os.WriteFile(p, []byte(`unknown_key = 42`), 0o644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	got := run([]string{"--config", p, filepath.Join(t.TempDir(), "missing.txt")})
+	if got != exitIOError {
+		t.Errorf("bad config + missing file: got exit %d want %d", got, exitIOError)
+	}
+}
+
+func TestRun_NoColorFlag(t *testing.T) {
+	// --no-color sets cfg.NoColor = true; pair with a missing file so
+	// the run exits before tea.Program starts.
+	got := run([]string{"--no-config", "--no-color", filepath.Join(t.TempDir(), "missing.txt")})
+	if got != exitIOError {
+		t.Errorf("--no-color path: got exit %d want %d", got, exitIOError)
+	}
+}
+
+func TestBoolPtr(t *testing.T) {
+	if boolPtr(false) != nil {
+		t.Errorf("boolPtr(false) should be nil to signal 'not set'")
+	}
+	if got := boolPtr(true); got == nil || *got != true {
+		t.Errorf("boolPtr(true): got %v", got)
+	}
+}

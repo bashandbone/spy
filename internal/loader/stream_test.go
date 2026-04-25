@@ -28,8 +28,8 @@ type fakeSource struct {
 	kind source.Kind
 }
 
-func (f *fakeSource) Kind() source.Kind        { return f.kind }
-func (f *fakeSource) DisplayName() string      { return "<fake>" }
+func (f *fakeSource) Kind() source.Kind         { return f.kind }
+func (f *fakeSource) DisplayName() string       { return "<fake>" }
 func (f *fakeSource) Metadata() source.Metadata { return source.Metadata{LineCount: -1} }
 func (f *fakeSource) Open() (io.ReadCloser, error) {
 	return io.NopCloser(strings.NewReader(f.body)), nil
@@ -313,8 +313,8 @@ type errorSource struct {
 	err error
 }
 
-func (e *errorSource) Kind() source.Kind        { return source.KindUnknown }
-func (e *errorSource) DisplayName() string      { return "<error>" }
+func (e *errorSource) Kind() source.Kind         { return source.KindUnknown }
+func (e *errorSource) DisplayName() string       { return "<error>" }
 func (e *errorSource) Metadata() source.Metadata { return source.Metadata{} }
 func (e *errorSource) Open() (io.ReadCloser, error) {
 	return nil, e.err

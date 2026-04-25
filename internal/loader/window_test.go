@@ -138,8 +138,8 @@ type nonSeekableSource struct {
 	body string
 }
 
-func (n *nonSeekableSource) Kind() source.Kind        { return source.KindText }
-func (n *nonSeekableSource) DisplayName() string      { return "<stdin>" }
+func (n *nonSeekableSource) Kind() source.Kind         { return source.KindText }
+func (n *nonSeekableSource) DisplayName() string       { return "<stdin>" }
 func (n *nonSeekableSource) Metadata() source.Metadata { return source.Metadata{LineCount: -1} }
 func (n *nonSeekableSource) Open() (io.ReadCloser, error) {
 	return io.NopCloser(strings.NewReader(n.body)), nil

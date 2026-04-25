@@ -20,10 +20,10 @@ import (
 // fatal. Only an explicit `--config <path>` that points at a missing
 // file should raise an error the caller surfaces as exit 2.
 var (
-	ErrConfigNotFound  = errors.New("config file not found")
+	ErrConfigNotFound   = errors.New("config file not found")
 	ErrConfigUnknownKey = errors.New("unknown config key")
-	ErrConfigTypeBad   = errors.New("config value type mismatch")
-	ErrConfigParse     = errors.New("config parse error")
+	ErrConfigTypeBad    = errors.New("config value type mismatch")
+	ErrConfigParse      = errors.New("config parse error")
 )
 
 // LoadOptions controls discovery and the per-source overrides that flow
