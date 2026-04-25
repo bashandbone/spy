@@ -300,8 +300,10 @@ func (m Model) onPromptKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 // recallHistory steps through the active prefix's submission history.
 // `direction == -1` walks toward older entries, `+1` toward newer.
-// When the cursor reaches the end (newer than the newest), the buffer
-// is restored to whatever the user had typed before history recall.
+// When the cursor reaches the end (newer than the newest), history
+// navigation exits, HistoryCursor is reset to -1, and the buffer is
+// cleared. (Storing the pre-recall buffer to restore on exit is a
+// future polish — not implemented today.)
 func (m *Model) recallHistory(direction int) {
 	hist := m.commandLine.historyFor(m.commandLine.Prefix)
 	if len(hist) == 0 {
@@ -350,15 +352,33 @@ func (m Model) submitPrompt() (tea.Model, tea.Cmd) {
 // against the resident buffer. A full async background scan with
 // progress is a future polish (the Pending flag on search.State); the
 // MVP scope is small enough to scan in-line.
+//
+// The prompt buffer can carry vim-style prefix toggles per
+// contracts/keys.md ("Search" section): `\v` forces regex, `\V`
+// forces literal, `\c` forces case-insensitive, and `\C` forces
+// case-sensitive. Prefixes apply in the order typed and override the
+// cfg defaults; the cleaned query is stored on SearchState.Query so
+// the renderer's highlight overlay matches what the user actually
+// searched for.
 func (m Model) runSearch(query string, dir search.Direction) (tea.Model, tea.Cmd) {
 	if query == "" || m.stream == nil || m.stream.Buffer == nil {
 		return m, nil
 	}
 	regex := false
+	caseMode := search.CaseSmart
 	if m.cfg != nil {
 		regex = m.cfg.RegexDefault
+		caseMode = caseModeFromConfig(m.cfg.CaseMode, caseMode)
 	}
-	matcher, err := search.Compile(query, regex, search.CaseSmart)
+	cleaned, regex, caseMode := stripSearchPrefixes(query, regex, caseMode)
+	if cleaned == "" {
+		// All-prefix queries (e.g. typed `\c` then immediately Enter)
+		// don't have anything to match — surface a soft advisory rather
+		// than producing an empty Match list.
+		m.statusAdvisory = "search: empty query after prefix toggles"
+		return m, nil
+	}
+	matcher, err := search.Compile(cleaned, regex, caseMode)
 	if err != nil {
 		m.statusAdvisory = fmt.Sprintf("invalid pattern: %v", err)
 		return m, nil
@@ -375,38 +395,99 @@ func (m Model) runSearch(query string, dir search.Direction) (tea.Model, tea.Cmd
 	// the UI can render the highlights on the next frame.
 	ch := search.Scan(context.Background(), m.stream.Buffer, matcher, dir, from)
 	var matches []search.Match
-	wrapped := false
+	// scanWrapAt is the index in `matches` at which the wrap-around
+	// portion starts (-1 when the scan never wrapped). Tracking it lets
+	// us decide whether the *initially selected* match came from the
+	// post-wrap section, which is the only case that warrants a
+	// "search wrapped" advisory on the first jump (Copilot review PR#9
+	// #4 — bare "scan wrapped" is too noisy when the first hit was
+	// found before wrap).
+	scanWrapAt := -1
 	for hit := range ch {
 		if hit.Line == search.SentinelWrapped {
-			wrapped = true
+			scanWrapAt = len(matches)
 			continue
 		}
 		matches = append(matches, hit)
 	}
 	m.search = search.State{
-		Query:        query,
+		Query:        cleaned,
 		Direction:    dir,
 		Regex:        regex,
-		CaseMode:     search.CaseSmart,
+		CaseMode:     caseMode,
 		Matches:      matches,
 		CurrentMatch: -1,
-		Wrapped:      wrapped,
+		Wrapped:      false,
 	}
 	if len(matches) == 0 {
-		m.statusAdvisory = fmt.Sprintf("no match for %q", query)
+		m.statusAdvisory = fmt.Sprintf("no match for %q", cleaned)
 		m.viewport.SetContent(m.renderer.Render(m.renderContext()))
 		return m, nil
 	}
+	// search.Scan emits matches in *traversal* order for the requested
+	// direction, so index 0 is always the first hit the user encounters
+	// from `from`. Selecting index 0 for both directions keeps the
+	// initial jump intuitive (Copilot review PR#9 #5).
 	m.search.CurrentMatch = 0
-	if dir == search.DirBackward {
-		m.search.CurrentMatch = len(matches) - 1
-	}
-	m.jumpToMatch(m.search.CurrentMatch)
-	if wrapped {
+	// Only flag "wrapped" on this first jump if the selected match
+	// actually came from the wrap-around section of the scan.
+	if scanWrapAt == 0 {
+		m.search.Wrapped = true
 		m.statusAdvisory = "search wrapped"
 	}
+	m.jumpToMatch(m.search.CurrentMatch)
 	m.viewport.SetContent(m.renderer.Render(m.renderContext()))
 	return m, nil
+}
+
+// stripSearchPrefixes peels vim-style prefix toggles from the start of
+// `query` and returns the cleaned query alongside the resulting
+// (regex, caseMode) pair. Recognised prefixes (per contracts/keys.md):
+//
+//	\v   force regex
+//	\V   force literal
+//	\c   force case-insensitive
+//	\C   force case-sensitive
+//
+// Multiple prefixes may stack (e.g. `\v\C`); they're consumed in the
+// order they appear. Anything past the first non-prefix rune is
+// treated as the literal query.
+func stripSearchPrefixes(query string, regex bool, caseMode search.CaseMode) (string, bool, search.CaseMode) {
+	for {
+		if !strings.HasPrefix(query, `\`) || len(query) < 2 {
+			break
+		}
+		switch query[1] {
+		case 'v':
+			regex = true
+		case 'V':
+			regex = false
+		case 'c':
+			caseMode = search.CaseInsensitive
+		case 'C':
+			caseMode = search.CaseSensitive
+		default:
+			return query, regex, caseMode
+		}
+		query = query[2:]
+	}
+	return query, regex, caseMode
+}
+
+// caseModeFromConfig maps the `case_mode` string in cfg
+// ("smart"|"sensitive"|"insensitive") to the search.CaseMode enum.
+// Unrecognised / empty strings fall back to `fallback` so the caller
+// supplies a sensible default (CaseSmart).
+func caseModeFromConfig(spec string, fallback search.CaseMode) search.CaseMode {
+	switch strings.ToLower(strings.TrimSpace(spec)) {
+	case "smart":
+		return search.CaseSmart
+	case "sensitive":
+		return search.CaseSensitive
+	case "insensitive":
+		return search.CaseInsensitive
+	}
+	return fallback
 }
 
 // advanceMatch cycles through the search results in `delta` direction
@@ -585,10 +666,6 @@ func (m Model) runOpenCommand(path string) (tea.Model, tea.Cmd) {
 		m.cancel = nil
 	}
 	cfg := m.cfg
-	caps := m.caps
-	highlighter := m.highlighter
-	theme := m.theme
-	keymap := m.keyMap
 	return m, func() tea.Msg {
 		ctx, cancel := context.WithCancel(context.Background())
 		stream, err := loader.Open(ctx, src, loaderConfigFromConfig(cfg))
@@ -596,8 +673,7 @@ func (m Model) runOpenCommand(path string) (tea.Model, tea.Cmd) {
 			cancel()
 			return openResultMsg{err: err, src: src}
 		}
-		return openResultMsg{stream: stream, cancel: cancel, src: src,
-			cfg: cfg, caps: caps, highlighter: highlighter, theme: theme, keymap: keymap}
+		return openResultMsg{stream: stream, cancel: cancel, src: src}
 	}
 }
 

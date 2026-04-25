@@ -191,19 +191,16 @@ type reloadResultMsg struct {
 }
 
 // openResultMsg carries the outcome of an in-flight `:open <path>`
-// command. On success the model swaps in the new source, stream, and
-// renderer; on failure the prior session is retained and the error is
-// surfaced via statusAdvisory.
+// command. On success the model swaps in the new source and stream;
+// the rest of the session state (cfg / caps / highlighter / theme /
+// keymap) survives unchanged on the receiving Model so we don't need
+// to round-trip it through the message. On failure the prior session
+// is retained and the error is surfaced via statusAdvisory.
 type openResultMsg struct {
-	stream      *loader.Stream
-	cancel      context.CancelFunc
-	src         source.Source
-	cfg         *config.Config
-	caps        term.Capabilities
-	highlighter *highlight.Highlighter
-	theme       render.Theme
-	keymap      keys.KeyMap
-	err         error
+	stream *loader.Stream
+	cancel context.CancelFunc
+	src    source.Source
+	err    error
 }
 
 // highlightLines runs the highlighter against `lines` in place. Exists

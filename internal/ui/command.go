@@ -5,9 +5,15 @@
 package ui
 
 // CommandLineState captures the per-frame view of an active `:` / `/`
-// `?` prompt. The full schema lives in data-model.md; the canonical Go
-// type signature is here so the UI's Update path has a single source of
-// truth.
+// `?` prompt. data-model.md provides higher-level documentation, but
+// the canonical Go type signature is defined here so the UI's Update
+// path has a single source of truth.
+//
+// The schema deliberately keeps two history slices (`HistoryColon` and
+// `HistorySlash`) rather than one shared ring: `↑` from a `:` prompt
+// must not surface recent `/` searches, otherwise the recall flow
+// becomes noisy. data-model.md was updated alongside this type so the
+// spec and the implementation stay aligned.
 type CommandLineState struct {
 	// Active is true while a `:` / `/` / `?` prompt is open.
 	Active bool

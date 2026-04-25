@@ -563,6 +563,262 @@ func TestPromptView_ShowsBuffer(t *testing.T) {
 	}
 }
 
+func TestStripSearchPrefixes_ForceRegex(t *testing.T) {
+	t.Parallel()
+	cleaned, regex, mode := stripSearchPrefixes(`\vfoo.*bar`, false, search.CaseSmart)
+	if cleaned != "foo.*bar" {
+		t.Errorf("cleaned: got %q want %q", cleaned, "foo.*bar")
+	}
+	if !regex {
+		t.Errorf("\\v prefix should force regex=true")
+	}
+	if mode != search.CaseSmart {
+		t.Errorf("\\v should not change case mode; got %v want CaseSmart", mode)
+	}
+}
+
+func TestStripSearchPrefixes_ForceLiteral(t *testing.T) {
+	t.Parallel()
+	cleaned, regex, _ := stripSearchPrefixes(`\Vfoo.*bar`, true, search.CaseSmart)
+	if cleaned != "foo.*bar" {
+		t.Errorf("cleaned: got %q want %q", cleaned, "foo.*bar")
+	}
+	if regex {
+		t.Errorf("\\V prefix should force regex=false")
+	}
+}
+
+func TestStripSearchPrefixes_ForceCaseSensitivity(t *testing.T) {
+	t.Parallel()
+	cleaned, _, mode := stripSearchPrefixes(`\cFoo`, false, search.CaseSmart)
+	if cleaned != "Foo" {
+		t.Errorf("cleaned: got %q want Foo", cleaned)
+	}
+	if mode != search.CaseInsensitive {
+		t.Errorf("\\c should force CaseInsensitive; got %v", mode)
+	}
+
+	cleaned, _, mode = stripSearchPrefixes(`\CFoo`, false, search.CaseSmart)
+	if cleaned != "Foo" {
+		t.Errorf("cleaned: got %q want Foo", cleaned)
+	}
+	if mode != search.CaseSensitive {
+		t.Errorf("\\C should force CaseSensitive; got %v", mode)
+	}
+}
+
+func TestStripSearchPrefixes_StackedPrefixes(t *testing.T) {
+	t.Parallel()
+	cleaned, regex, mode := stripSearchPrefixes(`\v\Cfoo`, false, search.CaseSmart)
+	if cleaned != "foo" {
+		t.Errorf("cleaned: got %q want foo", cleaned)
+	}
+	if !regex {
+		t.Errorf("stacked \\v\\C: regex should be true")
+	}
+	if mode != search.CaseSensitive {
+		t.Errorf("stacked \\v\\C: case mode should be CaseSensitive; got %v", mode)
+	}
+}
+
+func TestStripSearchPrefixes_NoPrefix(t *testing.T) {
+	t.Parallel()
+	cleaned, regex, mode := stripSearchPrefixes("plain query", true, search.CaseSensitive)
+	if cleaned != "plain query" {
+		t.Errorf("cleaned: got %q want %q", cleaned, "plain query")
+	}
+	if !regex {
+		t.Errorf("regex should be unchanged when no prefix; got %v", regex)
+	}
+	if mode != search.CaseSensitive {
+		t.Errorf("case mode should be unchanged; got %v", mode)
+	}
+}
+
+func TestStripSearchPrefixes_UnknownEscapeStops(t *testing.T) {
+	t.Parallel()
+	// `\x` is not a recognised toggle — the function leaves it intact
+	// so the regex engine (or literal matcher) sees the original query.
+	cleaned, _, _ := stripSearchPrefixes(`\xfoo`, false, search.CaseSmart)
+	if cleaned != `\xfoo` {
+		t.Errorf("unknown escape should be left intact; got %q", cleaned)
+	}
+}
+
+func TestCaseModeFromConfig_RecognisedValues(t *testing.T) {
+	t.Parallel()
+	cases := map[string]search.CaseMode{
+		"smart":       search.CaseSmart,
+		"sensitive":   search.CaseSensitive,
+		"insensitive": search.CaseInsensitive,
+		"SMART":       search.CaseSmart, // case-insensitive parse
+		"  smart  ":   search.CaseSmart, // whitespace-tolerant
+	}
+	for in, want := range cases {
+		got := caseModeFromConfig(in, search.CaseInsensitive)
+		if got != want {
+			t.Errorf("caseModeFromConfig(%q) = %v want %v", in, got, want)
+		}
+	}
+}
+
+func TestCaseModeFromConfig_UnknownFallsBack(t *testing.T) {
+	t.Parallel()
+	got := caseModeFromConfig("garbage", search.CaseSmart)
+	if got != search.CaseSmart {
+		t.Errorf("unknown spec should fall back to fallback; got %v", got)
+	}
+	got = caseModeFromConfig("", search.CaseSensitive)
+	if got != search.CaseSensitive {
+		t.Errorf("empty spec should fall back; got %v", got)
+	}
+}
+
+func TestSearch_CaseModeFromConfigOverridesSmartDefault(t *testing.T) {
+	t.Parallel()
+	cfg := config.Defaults()
+	cfg.CaseMode = "sensitive"
+	src := &fakeSource{body: "Foo\nfoo\n", kind: source.KindText}
+	stream, err := loader.Open(context.Background(), src, loader.Config{})
+	if err != nil {
+		t.Fatalf("loader.Open: %v", err)
+	}
+	m := NewModel(ModelOptions{
+		Source:       src,
+		Stream:       stream,
+		Capabilities: term.Capabilities{Cols: 80, Rows: 24},
+		Config:       cfg,
+		Theme:        render.ThemeDark(),
+		KeyMap:       keys.Default(),
+	})
+	m, _ = applyResize(m, 80, 24)
+	m = drainStream(t, m)
+	// Lowercase query "foo" with cfg.CaseMode = "sensitive" should
+	// only match the lowercase line, not "Foo".
+	for _, r := range "/foo" {
+		updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}})
+		m = updated.(Model)
+	}
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = updated.(Model)
+	if len(m.search.Matches) != 1 {
+		t.Errorf("cfg.CaseMode=sensitive should yield 1 match for 'foo'; got %d", len(m.search.Matches))
+	}
+}
+
+func TestSearch_PrefixOverridesCaseSensitivity(t *testing.T) {
+	t.Parallel()
+	cfg := config.Defaults() // CaseMode = "smart" by default
+	src := &fakeSource{body: "Foo\nfoo\nFOO\n", kind: source.KindText}
+	stream, err := loader.Open(context.Background(), src, loader.Config{})
+	if err != nil {
+		t.Fatalf("loader.Open: %v", err)
+	}
+	m := NewModel(ModelOptions{
+		Source:       src,
+		Stream:       stream,
+		Capabilities: term.Capabilities{Cols: 80, Rows: 24},
+		Config:       cfg,
+		Theme:        render.ThemeDark(),
+		KeyMap:       keys.Default(),
+	})
+	m, _ = applyResize(m, 80, 24)
+	m = drainStream(t, m)
+	// `\Cfoo`: literal, case-sensitive. Only "foo" matches.
+	for _, r := range `/\Cfoo` {
+		updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}})
+		m = updated.(Model)
+	}
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = updated.(Model)
+	if len(m.search.Matches) != 1 {
+		t.Errorf(`\C prefix should yield 1 match; got %d`, len(m.search.Matches))
+	}
+	if m.search.CaseMode != search.CaseSensitive {
+		t.Errorf("CaseMode after \\C: got %v want CaseSensitive", m.search.CaseMode)
+	}
+	if m.search.Query != "foo" {
+		t.Errorf("Query should be cleaned of prefix; got %q want foo", m.search.Query)
+	}
+}
+
+func TestSearch_InitialJumpDoesNotSetWrappedAdvisory(t *testing.T) {
+	t.Parallel()
+	// Forward search from the top finds matches before any wrap, so
+	// "search wrapped" must not be the advisory after the first jump
+	// (Copilot review PR#9 #4).
+	m := newTestModel(t, "alpha\nfoo bar\nbaz\nfoo qux\n")
+	m, _ = applyResize(m, 80, 24)
+	m = drainStream(t, m)
+	for _, r := range "/foo" {
+		updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}})
+		m = updated.(Model)
+	}
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = updated.(Model)
+	if m.search.Wrapped {
+		t.Errorf("initial forward jump should not set Wrapped; got true")
+	}
+	if strings.Contains(m.statusAdvisory, "wrapped") {
+		t.Errorf("initial forward jump should not surface 'wrapped' advisory; got %q", m.statusAdvisory)
+	}
+}
+
+func TestSearch_InitialJumpFromMidFileDoesSetWrappedWhenNeeded(t *testing.T) {
+	t.Parallel()
+	// Forward search from a position past every match — the only hit
+	// is found after wrap, so the advisory should fire.
+	// Body must be large enough for the viewport to actually scroll
+	// past the only match (line 1) so the scan has to wrap.
+	var b strings.Builder
+	b.WriteString("foo only here\n")
+	for i := 2; i <= 200; i++ {
+		b.WriteString("filler line ")
+		b.WriteString(itoa(i))
+		b.WriteByte('\n')
+	}
+	m := newTestModel(t, b.String())
+	m, _ = applyResize(m, 80, 24)
+	m = drainStream(t, m)
+	m.viewport.SetYOffset(100)
+	for _, r := range "/foo" {
+		updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}})
+		m = updated.(Model)
+	}
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = updated.(Model)
+	if !m.search.Wrapped {
+		t.Errorf("post-wrap initial jump should set Wrapped=true; got %+v", m.search)
+	}
+	if !strings.Contains(m.statusAdvisory, "wrapped") {
+		t.Errorf("post-wrap initial jump should surface 'wrapped' advisory; got %q", m.statusAdvisory)
+	}
+}
+
+func TestSearch_BackwardInitialPicksFirstHitInTraversalOrder(t *testing.T) {
+	t.Parallel()
+	// Backward search emits matches in descending line order; the
+	// first emitted hit (index 0) is the one closest to `from` going
+	// backwards, which is what the user expects to land on after the
+	// initial jump (Copilot review PR#9 #5).
+	m := newTestModel(t, "foo\nbar\nfoo\nbaz\nfoo\n")
+	m, _ = applyResize(m, 80, 24)
+	m = drainStream(t, m)
+	m.viewport.SetYOffset(4) // anchor near the end
+	for _, r := range "?foo" {
+		updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}})
+		m = updated.(Model)
+	}
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = updated.(Model)
+	if len(m.search.Matches) == 0 {
+		t.Fatalf("expected matches for backward search")
+	}
+	if m.search.CurrentMatch != 0 {
+		t.Errorf("backward initial jump should pick index 0; got %d", m.search.CurrentMatch)
+	}
+}
+
 // bindingMatches reports whether any of the bindings for an action
 // includes the supplied key string.
 func bindingMatches(bindings []key.Binding, want string) bool {

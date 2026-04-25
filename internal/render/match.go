@@ -11,10 +11,10 @@ import (
 )
 
 // matchesForLine returns the matches whose Line field equals `line`,
-// in source-position order, plus a flag for whether the currently-active
-// match falls on this line and at which Match-slice index. The returned
-// slice indexes back into ctx.Search.Matches so the caller can decide
-// which range gets the active style.
+// in source-position order. Callers compose the result with
+// [activeMatch] to decide which range — if any — gets the SearchActive
+// style; the (Line, Start, End) triple of the active match is used
+// directly so we don't need a slice index back-reference here.
 func matchesForLine(state search.State, line int64) []search.Match {
 	if state.Query == "" || len(state.Matches) == 0 {
 		return nil
