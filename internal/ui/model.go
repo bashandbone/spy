@@ -54,6 +54,11 @@ type Model struct {
 	width    int
 	height   int
 
+	// showFooter mirrors the onResize decision: when the terminal is
+	// too short for both viewport + footer (height <= 1), the footer
+	// is suppressed so we don't overflow into a phantom row.
+	showFooter bool
+
 	// streaming flips false on the first chunkLoadedMsg with EOF=true;
 	// before then the footer advertises "loading..." instead of the
 	// final line count.

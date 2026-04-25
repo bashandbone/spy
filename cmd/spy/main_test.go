@@ -129,6 +129,19 @@ func TestRun_NoColorFlag(t *testing.T) {
 	}
 }
 
+func TestRun_NoTTYExitsWith5(t *testing.T) {
+	// In go test, stdout is rarely a TTY, so a successful path through
+	// source/loader will land at the TTY gate and exit 5.
+	p := filepath.Join(t.TempDir(), "real.txt")
+	if err := os.WriteFile(p, []byte("hello\n"), 0o644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	got := run([]string{"--no-config", p})
+	if got != exitTTYError {
+		t.Errorf("non-TTY stdout with file arg: got exit %d want %d", got, exitTTYError)
+	}
+}
+
 func TestApplyGraphicsOverride(t *testing.T) {
 	detected := term.GraphicsKitty
 	// "" / "auto" leaves the auto-detected protocol alone.

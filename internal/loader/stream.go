@@ -116,7 +116,13 @@ func Open(ctx context.Context, src source.Source, cfg Config) (*Stream, error) {
 
 	if readErr != nil {
 		_ = rc.Close()
-		errs <- fmt.Errorf("loader.Open: %w", readErr)
+		// Non-blocking send so a buffer that's already full of
+		// truncation warnings from readChunk doesn't deadlock Open()
+		// (Copilot review PR#7 #25).
+		select {
+		case errs <- fmt.Errorf("loader.Open: %w", readErr):
+		default:
+		}
 		close(updates)
 		close(errs)
 		return stream, nil

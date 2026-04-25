@@ -7,6 +7,7 @@ package render
 import (
 	"fmt"
 	"strings"
+	"unicode/utf8"
 )
 
 // textRenderer is the foundational pass-through renderer for [Kind]Text
@@ -81,6 +82,14 @@ func (t *textRenderer) Render(ctx RenderContext) string {
 // blank gutter of the same width on continuation rows, breaking at
 // `total - len(prefix)` runes per row. Empty `raw` still emits a single
 // row (with prefix only) so blank source lines don't collapse.
+//
+// Phase 2 limitation: width here is rune-count, not terminal cell
+// width — wide-character runs (CJK, emoji) over-fill rows by one
+// cell per wide rune, and any embedded ANSI escapes count toward
+// the rune budget despite consuming zero cells. KindText itself has
+// no ANSI in Phase 2 (no syntax highlighting); US1's KindCode renderer
+// (T043) replaces this with a chroma/lipgloss-aware wrapper that
+// honours [lipgloss.Width] (Copilot review PR#7 #26 deferred).
 func writeWrappedLine(b *strings.Builder, prefix, raw string, total int) {
 	contentWidth := total - len(prefix)
 	if contentWidth <= 0 {
@@ -111,6 +120,93 @@ func writeWrappedLine(b *strings.Builder, prefix, raw string, total int) {
 		b.WriteString(string(runes[start:end]))
 		b.WriteByte('\n')
 	}
+}
+
+// RowToLine walks the rendered output's visual rows and returns the
+// source-line number whose content occupies row `visualRow`. With
+// wrap on, one source line can span multiple visual rows; this method
+// keeps the footer's "Line N" consistent with the gutter the renderer
+// printed (Copilot review PR#7 #24).
+//
+// Width and prefix are computed identically to [textRenderer.Render]
+// so the row → line mapping matches the actual frame.
+//
+// Phase 2 limitation: width here is rune-width, not terminal cell
+// width — wide-character / ANSI runs may give an off-by-one mapping.
+// US1's chroma-aware renderer replaces this with a cell-aware version
+// (Copilot review PR#7 #26 deferred).
+func (t *textRenderer) RowToLine(ctx RenderContext, visualRow int) int64 {
+	if ctx.Buffer == nil {
+		return 0
+	}
+	total := ctx.Buffer.Total()
+	if total <= 0 {
+		return 0
+	}
+	lines := ctx.Buffer.Slice(0, total)
+	if len(lines) == 0 {
+		return 0
+	}
+	if visualRow < 0 {
+		return lines[0].Number
+	}
+
+	// No-wrap fast path: each source line is one visual row.
+	width := ctx.Viewport.Width
+	if width <= 0 {
+		width = ctx.Capabilities.Cols
+	}
+	if !t.deps.WordWrap || width <= 0 {
+		if visualRow >= len(lines) {
+			return lines[len(lines)-1].Number
+		}
+		return lines[visualRow].Number
+	}
+
+	prefixWidth := 0
+	if t.deps.LineNumbers {
+		prefixWidth = lineNumberWidth(total) + 2 // "%*d  "
+	}
+	contentWidth := width - prefixWidth
+	if contentWidth <= 0 {
+		// Pathologically narrow viewport — fall back to one row per line
+		// to avoid an infinite mapping loop.
+		if visualRow >= len(lines) {
+			return lines[len(lines)-1].Number
+		}
+		return lines[visualRow].Number
+	}
+
+	consumed := 0
+	for _, l := range lines {
+		rows := visualRowsForLine(l.Raw, contentWidth)
+		if visualRow < consumed+rows {
+			return l.Number
+		}
+		consumed += rows
+	}
+	return lines[len(lines)-1].Number
+}
+
+// visualRowsForLine returns the number of wrapped rows `raw` will
+// occupy at content-width `width`. Empty lines still occupy one row
+// so blanks don't collapse — matches [writeWrappedLine].
+func visualRowsForLine(raw string, width int) int {
+	if width <= 0 {
+		return 1
+	}
+	if raw == "" {
+		return 1
+	}
+	n := utf8.RuneCountInString(raw)
+	rows := n / width
+	if n%width != 0 {
+		rows++
+	}
+	if rows == 0 {
+		return 1
+	}
+	return rows
 }
 
 // lineNumberWidth returns the digit-width needed to display every line

@@ -131,6 +131,81 @@ func TestKindBinary_StubFrame(t *testing.T) {
 	}
 }
 
+func TestKindText_RowToLine_NoWrap(t *testing.T) {
+	deps := Dependencies{Theme: ThemeDark(), LineNumbers: true, WordWrap: false}
+	r := ForKind(source.KindText, deps)
+	buf := loader.NewLineBuffer(0, 0, nil)
+	buf.Append([]source.Line{
+		{Number: 1, Raw: "alpha"},
+		{Number: 2, Raw: "beta"},
+		{Number: 3, Raw: "gamma"},
+	})
+	ctx := RenderContext{
+		Buffer:       buf,
+		Theme:        deps.Theme,
+		Capabilities: term.Capabilities{Cols: 80, Rows: 24},
+	}
+	cases := []struct {
+		row  int
+		want int64
+	}{
+		{0, 1}, {1, 2}, {2, 3},
+		// Out-of-range rows clamp to the last source line.
+		{99, 3},
+	}
+	for _, tc := range cases {
+		if got := r.RowToLine(ctx, tc.row); got != tc.want {
+			t.Errorf("no-wrap RowToLine(row=%d): got %d want %d",
+				tc.row, got, tc.want)
+		}
+	}
+}
+
+func TestKindText_RowToLine_WrapsCountVisualRows(t *testing.T) {
+	deps := Dependencies{Theme: ThemeDark(), LineNumbers: false, WordWrap: true}
+	r := ForKind(source.KindText, deps)
+	buf := loader.NewLineBuffer(0, 0, nil)
+	buf.Append([]source.Line{
+		{Number: 1, Raw: strings.Repeat("a", 100)}, // wraps at width 40 → 3 rows
+		{Number: 2, Raw: "short"},                  // 1 row
+		{Number: 3, Raw: strings.Repeat("b", 80)},  // 2 rows
+	})
+	ctx := RenderContext{
+		Buffer:       buf,
+		Theme:        deps.Theme,
+		Capabilities: term.Capabilities{Cols: 40, Rows: 24},
+	}
+	// Visual row layout (no gutter): rows 0-2 = line 1, row 3 = line 2,
+	// rows 4-5 = line 3.
+	cases := []struct {
+		row  int
+		want int64
+	}{
+		{0, 1}, {1, 1}, {2, 1},
+		{3, 2},
+		{4, 3}, {5, 3},
+	}
+	for _, tc := range cases {
+		if got := r.RowToLine(ctx, tc.row); got != tc.want {
+			t.Errorf("wrap RowToLine(row=%d): got %d want %d",
+				tc.row, got, tc.want)
+		}
+	}
+}
+
+func TestKindText_RowToLine_EmptyBufferReturnsZero(t *testing.T) {
+	deps := Dependencies{Theme: ThemeDark(), LineNumbers: true, WordWrap: true}
+	r := ForKind(source.KindText, deps)
+	if got := r.RowToLine(RenderContext{}, 0); got != 0 {
+		t.Errorf("empty ctx: RowToLine should return 0, got %d", got)
+	}
+	buf := loader.NewLineBuffer(0, 0, nil)
+	got := r.RowToLine(RenderContext{Buffer: buf}, 0)
+	if got != 0 {
+		t.Errorf("empty buffer: RowToLine should return 0, got %d", got)
+	}
+}
+
 func TestKindText_WordWrapWraps(t *testing.T) {
 	deps := Dependencies{Theme: ThemeDark(), LineNumbers: true, WordWrap: true}
 	r := ForKind(source.KindText, deps)

@@ -57,6 +57,7 @@ func (m Model) onResize(msg tea.WindowSizeMsg) (tea.Model, tea.Cmd) {
 	if m.height < footerRows+1 {
 		footerRows = 0
 	}
+	m.showFooter = footerRows > 0
 	prevYOffset := m.viewport.YOffset
 	first := m.viewport.Width == 0 && m.viewport.Height == 0
 	if first {

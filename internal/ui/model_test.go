@@ -249,6 +249,15 @@ func TestModel_InitReturnsCmd(t *testing.T) {
 	}
 }
 
+func TestView_FooterDroppedInOneRowTerminal(t *testing.T) {
+	m := newTestModel(t, "alpha\nbeta\n")
+	m, _ = applyResize(m, 80, 1)
+	view := m.View()
+	if strings.Contains(view, "Line ") {
+		t.Errorf("1-row terminal should not render footer; got %q", view)
+	}
+}
+
 func TestUpdate_ResizePreservesYOffset(t *testing.T) {
 	body := strings.Repeat("line\n", 200)
 	m := newTestModel(t, body)

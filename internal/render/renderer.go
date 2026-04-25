@@ -51,6 +51,14 @@ type RenderContext struct {
 // and stateless apart from explicit [RenderContext] inputs.
 type Renderer interface {
 	Render(ctx RenderContext) string
+	// RowToLine maps a 0-based visual row offset (relative to the
+	// rendered frame's first row) to the source line number visible
+	// at that row. Used by the status bar to report a line number
+	// that stays consistent with the rendered gutter once word-wrap
+	// inflates one source line into multiple visual rows. Returns 0
+	// when the buffer is empty or the row is out of range; the caller
+	// uses 0 as the "Line 0" footer sentinel for empty input.
+	RowToLine(ctx RenderContext, visualRow int) int64
 }
 
 // Dependencies bundles the cross-package collaborators a Renderer is
@@ -104,6 +112,8 @@ func (s *stubRenderer) Render(_ RenderContext) string {
 	return fmt.Sprintf("[%s renderer is pending — see %s]\n", s.name, s.pending)
 }
 
+func (s *stubRenderer) RowToLine(_ RenderContext, _ int) int64 { return 0 }
+
 // binaryRenderer is what we emit when content was rejected as binary
 // content. The user already saw a stderr error from main; the in-app
 // frame is a polite reminder rather than a crash.
@@ -114,3 +124,5 @@ type binaryRenderer struct {
 func (b *binaryRenderer) Render(_ RenderContext) string {
 	return "[binary content — refusing to display]\n"
 }
+
+func (b *binaryRenderer) RowToLine(_ RenderContext, _ int) int64 { return 0 }

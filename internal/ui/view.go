@@ -12,14 +12,20 @@ import (
 )
 
 // View produces the full frame for tea.Program. Phase 2 emits the
-// viewport plus a single-line footer; the full status bar (US6) lands
-// in T098–T100.
+// viewport plus a single-line footer when there's space for one; the
+// full status bar (US6) lands in T098–T100.
+//
+// In very tight terminals (height <= 1) onResize sets m.showFooter =
+// false and we drop the footer rather than overflow the row budget
+// (Copilot review PR#7 #23).
 func (m Model) View() string {
 	if m.width == 0 || m.height == 0 {
 		return ""
 	}
-	footer := m.footerLine()
-	return m.viewport.View() + "\n" + footer
+	if !m.showFooter {
+		return m.viewport.View()
+	}
+	return m.viewport.View() + "\n" + m.footerLine()
 }
 
 // footerLine renders the foundational footer: <displayname> | <total>
@@ -31,21 +37,18 @@ func (m Model) footerLine() string {
 		name = filepath.Base(m.source.DisplayName())
 	}
 	total := int64(0)
-	residentStart := int64(1)
 	if m.stream != nil && m.stream.Buffer != nil {
 		total = m.stream.Buffer.Total()
-		residentStart = m.stream.Buffer.ResidentStartLine()
 	}
-	// The viewport's YOffset is relative to the rendered content, which
-	// starts at the buffer's resident first line — not at file line 1
-	// once the buffer has flipped to windowed mode. Mapping through
-	// ResidentStartLine keeps the footer line number consistent with
-	// the gutter the renderer emits (Copilot review PR#7 #15).
-	current := residentStart + int64(m.viewport.YOffset)
-	// 0-byte input renders as "Line 0" per contracts/cli.md "Empty
-	// input"; non-empty buffers number from 1 (Copilot review PR#7 #6).
-	if total == 0 {
-		current = 0
+	// Ask the renderer to map the viewport's visual row at top to the
+	// matching source line; that's the only path that stays consistent
+	// across windowed-mode eviction (Copilot review PR#7 #15) and
+	// word-wrap inflation (Copilot review PR#7 #24). For empty input
+	// the renderer returns 0 which doubles as the contracts/cli.md
+	// "Line 0" footer sentinel (Copilot review PR#7 #6).
+	current := int64(0)
+	if m.renderer != nil {
+		current = m.renderer.RowToLine(m.renderContext(), m.viewport.YOffset)
 	}
 
 	totalDisplay := fmt.Sprintf("%d", total)

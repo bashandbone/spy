@@ -157,6 +157,18 @@ func run(args []string) int {
 		Cancel:       cancel,
 	})
 
+	// Alt-screen rendering needs a TTY on stdout; without one the escape
+	// sequences would corrupt whatever pipe / file is attached. The
+	// implicit-stdin pipe path uses degenerate-cat (US5); reaching here
+	// without a TTY in Phase 2 means the user explicitly gave a FILE
+	// arg from a non-TTY context, so exit 5 per contracts/cli.md
+	// (Copilot review PR#7 #27).
+	if !caps.IsTTY {
+		cancel()
+		fmt.Fprintf(os.Stderr, "spy: stdout is not a TTY: alt-screen viewer requires a terminal\n")
+		return exitTTYError
+	}
+
 	// tea.WithMouseCellMotion is deferred to US1 (T046) — Phase 2 has no
 	// mouse handlers and enabling tracking sequences without a consumer
 	// can disrupt terminal selection / scrollback (Copilot review PR#7
