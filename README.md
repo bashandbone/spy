@@ -1,3 +1,9 @@
+<!--
+SPDX-FileCopyrightText: 2026 Adam Poulemanos
+
+SPDX-License-Identifier: MIT OR Apache-2.0
+-->
+
 # spy - GUI File Viewer
 
 A beautiful, keyboard-driven file viewer for the terminal. Think "GUI `bat`" with syntax highlighting, PDF support, and image preview capabilities.

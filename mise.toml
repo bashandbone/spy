@@ -2,5 +2,10 @@
 #
 # SPDX-License-Identifier: MIT OR Apache-2.0
 
-/cache
-/project.local.yml
+[tools]
+go = "1.26.2"
+"pipx:reuse" = "latest"
+typos = "latest"
+
+[deps]
+go = { auto = true }

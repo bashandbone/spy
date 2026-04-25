@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Adam Poulemanos
+//
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
 module github.com/knitli/spy
 
 go 1.26.2

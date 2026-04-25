@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2026 Adam Poulemanos
+#
+# SPDX-License-Identifier: MIT OR Apache-2.0
+
 .PHONY: build clean run test help
 
 help:

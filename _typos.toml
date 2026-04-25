@@ -1,0 +1,36 @@
+# SPDX-FileCopyrightText: 2026 Adam Poulemanos
+#
+# SPDX-License-Identifier: MIT OR Apache-2.0
+
+#:schema https://raw.githubusercontent.com/crate-ci/typos/master/config.schema.json
+#:tombi schema.strict = false
+
+[files]
+extend-exclude = [
+]
+
+[default]
+binary = false
+check-file = true
+check-filename = true
+extend-ignore-identifiers-re = []
+extend-ignore-re = [
+  # Ignore lines that end with `# spellchecker:disable-line`
+  "(?Rm)^.*(#|//)\\s*spellchecker:disable-line$",
+  # Ignore the line after `# spellchecker:ignore-next-line`:
+  "(#|//)\\s*spellchecker:ignore-next-line\\n.*",
+  # Ignore blocks between `# spellchecker:off` and `# spellchecker:on`
+  "(?s)(#|//|/\*)\\s*spellchecker:off.*?\\n\\s*(#|//|/\*)\\s*spellchecker:on",
+]
+extend-ignore-words-re = []
+identifier-leading-digits = false
+ignore-hex = true
+locale = "en-us"
+unicode = true
+
+[default.extend-words]
+# Python package names that look like typos but aren't
+certifi = "certifi"
+
+[default.extend-identifiers]
+
