@@ -19,12 +19,23 @@ Each step lists which `FR-` / `SC-` / acceptance scenario it covers.
 - A modern terminal (xterm-compatible, ≥ 80×24).
 - For graphics tests (steps 6–7): Kitty, iTerm2, or WezTerm (or a terminal
   with sixel support such as `foot`).
-- A scratch directory with sample assets:
+- A scratch directory with sample assets. The repo ships a setup script
+  (T005) that materializes everything below from local fixtures under
+  `tests/e2e/fixtures/`, so the walkthrough does not require network
+  access:
+
+```bash
+bash tests/e2e/setup.sh   # populates /tmp/spy-fixtures from local fixtures
+```
+
+If that script is unavailable (e.g., before T005 lands), the equivalent
+manual setup is:
 
 ```bash
 mkdir -p /tmp/spy-fixtures
 echo 'package main\nfunc main(){println("hi")}' > /tmp/spy-fixtures/hello.go
 seq 1 10000 > /tmp/spy-fixtures/big.txt
+# Network fallback for PDF/image fixtures (use only if local copies are absent):
 curl -sL https://www.w3.org/WAI/ER/tests/xhtml/testfiles/resources/pdf/dummy.pdf \
   -o /tmp/spy-fixtures/dummy.pdf
 curl -sL https://www.w3.org/Graphics/PNG/iso_8859-1.png \
