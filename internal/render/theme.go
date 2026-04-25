@@ -25,17 +25,33 @@ type Theme struct {
 	Footer lipgloss.Style
 	Status lipgloss.Style
 	Error  lipgloss.Style
+
+	// SearchHit highlights a non-current search match (US2). The default
+	// uses reverse-video so the chroma syntax foreground stays readable
+	// underneath; renderers fall back to inserting raw ANSI when the
+	// theme is Mono so even no-colour terminals see a visible marker.
+	SearchHit lipgloss.Style
+	// SearchActive highlights the currently-selected search match
+	// (driven by `n`/`N` cycling). Brighter than SearchHit so the user
+	// can find the cursor at a glance.
+	SearchActive lipgloss.Style
+	// PromptLine is the inline `:` / `/` / `?` command-line strip drawn
+	// at the bottom of the viewer when a prompt is active.
+	PromptLine lipgloss.Style
 }
 
 // ThemeDark returns the built-in dark theme: monokai chroma styling
 // plus high-contrast chrome.
 func ThemeDark() Theme {
 	return Theme{
-		Name:        "dark",
-		ChromaStyle: "monokai",
-		Footer:      lipgloss.NewStyle().Foreground(lipgloss.Color("#9B9B9B")),
-		Status:      lipgloss.NewStyle().Foreground(lipgloss.Color("#FFFFFF")).Background(lipgloss.Color("#1E1E1E")),
-		Error:       lipgloss.NewStyle().Foreground(lipgloss.Color("#FF5555")).Bold(true),
+		Name:         "dark",
+		ChromaStyle:  "monokai",
+		Footer:       lipgloss.NewStyle().Foreground(lipgloss.Color("#9B9B9B")),
+		Status:       lipgloss.NewStyle().Foreground(lipgloss.Color("#FFFFFF")).Background(lipgloss.Color("#1E1E1E")),
+		Error:        lipgloss.NewStyle().Foreground(lipgloss.Color("#FF5555")).Bold(true),
+		SearchHit:    lipgloss.NewStyle().Background(lipgloss.Color("#444B53")).Foreground(lipgloss.Color("#FFFFFF")),
+		SearchActive: lipgloss.NewStyle().Background(lipgloss.Color("#FFB454")).Foreground(lipgloss.Color("#000000")).Bold(true),
+		PromptLine:   lipgloss.NewStyle().Foreground(lipgloss.Color("#FFFFFF")).Background(lipgloss.Color("#3A3A3A")),
 	}
 }
 
@@ -43,11 +59,14 @@ func ThemeDark() Theme {
 // plus a softer chrome palette.
 func ThemeLight() Theme {
 	return Theme{
-		Name:        "light",
-		ChromaStyle: "github",
-		Footer:      lipgloss.NewStyle().Foreground(lipgloss.Color("#444444")),
-		Status:      lipgloss.NewStyle().Foreground(lipgloss.Color("#000000")).Background(lipgloss.Color("#EEEEEE")),
-		Error:       lipgloss.NewStyle().Foreground(lipgloss.Color("#D32F2F")).Bold(true),
+		Name:         "light",
+		ChromaStyle:  "github",
+		Footer:       lipgloss.NewStyle().Foreground(lipgloss.Color("#444444")),
+		Status:       lipgloss.NewStyle().Foreground(lipgloss.Color("#000000")).Background(lipgloss.Color("#EEEEEE")),
+		Error:        lipgloss.NewStyle().Foreground(lipgloss.Color("#D32F2F")).Bold(true),
+		SearchHit:    lipgloss.NewStyle().Background(lipgloss.Color("#FFE082")).Foreground(lipgloss.Color("#000000")),
+		SearchActive: lipgloss.NewStyle().Background(lipgloss.Color("#FFA726")).Foreground(lipgloss.Color("#000000")).Bold(true),
+		PromptLine:   lipgloss.NewStyle().Foreground(lipgloss.Color("#000000")).Background(lipgloss.Color("#DCDCDC")),
 	}
 }
 

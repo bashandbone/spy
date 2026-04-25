@@ -147,9 +147,7 @@ func run(args []string) int {
 	theme := render.ResolveTheme(cfg.Theme, caps, cfg.NoColor)
 	keyMap := keys.Default()
 	if cfg.VimMode {
-		// US2 (T055) supplies the actual additive bindings; the
-		// foundational keymap is identical to default.
-		keyMap = keys.Default()
+		keyMap = keys.WithVim(keyMap)
 	}
 	if len(cfg.Keys) > 0 {
 		mergedKM, kerrs := keys.ApplyOverrides(keyMap, cfg.Keys)

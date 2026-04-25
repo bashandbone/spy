@@ -11,13 +11,14 @@ import (
 	"github.com/charmbracelet/lipgloss"
 )
 
-// View produces the full frame for tea.Program. Phase 2 emits the
-// viewport plus a single-line footer when there's space for one; the
-// full status bar (US6) lands in T098–T100.
+// View produces the full frame for tea.Program. The viewport claims
+// the height minus one footer row; when a `:` / `/` / `?` prompt is
+// active, the footer row is replaced with the prompt line so the user
+// sees what they're typing without losing the file context.
 //
 // In very tight terminals (height <= 1) onResize sets m.showFooter =
-// false and we drop the footer rather than overflow the row budget
-// (Copilot review PR#7 #23).
+// false and we drop the footer/prompt rather than overflow the row
+// budget (Copilot review PR#7 #23).
 func (m Model) View() string {
 	if m.width == 0 || m.height == 0 {
 		return ""
@@ -25,7 +26,23 @@ func (m Model) View() string {
 	if !m.showFooter {
 		return m.viewport.View()
 	}
+	if m.commandLine.Active {
+		return m.viewport.View() + "\n" + m.promptLine()
+	}
 	return m.viewport.View() + "\n" + m.footerLine()
+}
+
+// promptLine renders the active `:` / `/` / `?` prompt buffer with the
+// theme's PromptLine style. The prefix sigil is always shown so the
+// user can tell which prompt is active without watching the keymap.
+func (m Model) promptLine() string {
+	line := string(m.commandLine.Prefix) + m.commandLine.Buffer
+	style := m.theme.PromptLine
+	pad := m.width - lipgloss.Width(line)
+	if pad > 0 {
+		line += pads(pad)
+	}
+	return style.Render(line)
 }
 
 // footerLine renders the foundational footer: <displayname> | <total>
@@ -55,7 +72,11 @@ func (m Model) footerLine() string {
 	if m.streaming {
 		totalDisplay = fmt.Sprintf("%d…", total)
 	}
-	line := fmt.Sprintf(" %s | %s lines | Line %d ", name, totalDisplay, current)
+	advisory := ""
+	if m.statusAdvisory != "" {
+		advisory = " | " + m.statusAdvisory
+	}
+	line := fmt.Sprintf(" %s | %s lines | Line %d%s ", name, totalDisplay, current, advisory)
 	style := m.theme.Footer
 	// Pad to full width; lipgloss Width() handles ANSI / wide chars.
 	pad := m.width - lipgloss.Width(line)

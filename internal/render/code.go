@@ -57,10 +57,22 @@ func (r *codeRenderer) Render(ctx RenderContext) string {
 		width = ctx.Capabilities.Cols
 	}
 
+	active, hasActive := activeMatch(ctx.Search)
 	for _, l := range lines {
 		prefix := ""
 		if r.deps.LineNumbers {
 			prefix = fmt.Sprintf("%*d  ", gutter, l.Number)
+		}
+		// Lines with search matches use the dedicated overlay path so
+		// the highlight wraps tightly around the match span. The
+		// documented limitation: matched lines lose chroma syntax
+		// colour; the caret/active match is still visible.
+		lineMatches := matchesForLine(ctx.Search, l.Number)
+		if len(lineMatches) > 0 {
+			b.WriteString(prefix)
+			b.WriteString(applyMatchHighlights(l.Raw, lineMatches, active, hasActive, ctx.Theme.SearchHit, ctx.Theme.SearchActive))
+			b.WriteByte('\n')
+			continue
 		}
 		if !r.deps.WordWrap || width <= 0 || lineExceedsWidth(l.Raw, len(prefix), width) {
 			if r.deps.WordWrap && width > 0 {

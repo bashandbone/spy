@@ -1,0 +1,581 @@
+// SPDX-FileCopyrightText: 2026 Adam Poulemanos
+//
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
+package ui
+
+import (
+	"context"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+
+	"github.com/charmbracelet/bubbles/key"
+	tea "github.com/charmbracelet/bubbletea"
+
+	"github.com/knitli/spy/internal/config"
+	"github.com/knitli/spy/internal/keys"
+	"github.com/knitli/spy/internal/loader"
+	"github.com/knitli/spy/internal/render"
+	"github.com/knitli/spy/internal/search"
+	"github.com/knitli/spy/internal/source"
+	"github.com/knitli/spy/internal/term"
+)
+
+// numberedBody returns N lines numbered 1..N.
+func numberedBody(n int) string {
+	var b strings.Builder
+	for i := 1; i <= n; i++ {
+		b.WriteString("line ")
+		b.WriteString(itoa(i))
+		b.WriteByte('\n')
+	}
+	return b.String()
+}
+
+func itoa(n int) string {
+	if n == 0 {
+		return "0"
+	}
+	neg := false
+	if n < 0 {
+		neg = true
+		n = -n
+	}
+	var buf [20]byte
+	i := len(buf)
+	for n > 0 {
+		i--
+		buf[i] = byte('0' + n%10)
+		n /= 10
+	}
+	if neg {
+		i--
+		buf[i] = '-'
+	}
+	return string(buf[i:])
+}
+
+// drainStream pushes every chunk through the model so search has a full
+// resident buffer to scan.
+func drainStream(t *testing.T, m Model) Model {
+	t.Helper()
+	for c := range m.stream.Updates {
+		updated, _ := m.Update(chunkLoadedMsg{chunk: c, stream: m.stream})
+		m = updated.(Model)
+	}
+	return m
+}
+
+func TestCommandLine_OpenColon(t *testing.T) {
+	t.Parallel()
+	m := newTestModel(t, numberedBody(20))
+	m, _ = applyResize(m, 80, 24)
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{':'}})
+	mm := updated.(Model)
+	if !mm.commandLine.Active {
+		t.Fatal(": should activate the command-line prompt")
+	}
+	if mm.commandLine.Prefix != ':' {
+		t.Errorf("prompt prefix: got %q want :", mm.commandLine.Prefix)
+	}
+}
+
+func TestCommandLine_AppendsRunes(t *testing.T) {
+	t.Parallel()
+	m := newTestModel(t, numberedBody(20))
+	m, _ = applyResize(m, 80, 24)
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{':'}})
+	m = updated.(Model)
+	for _, r := range "42" {
+		updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}})
+		m = updated.(Model)
+	}
+	if m.commandLine.Buffer != "42" {
+		t.Errorf("buffer: got %q want 42", m.commandLine.Buffer)
+	}
+}
+
+func TestCommandLine_BackspaceErasesRune(t *testing.T) {
+	t.Parallel()
+	m := newTestModel(t, numberedBody(20))
+	m, _ = applyResize(m, 80, 24)
+	for _, r := range ":abc" {
+		updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}})
+		m = updated.(Model)
+	}
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyBackspace})
+	m = updated.(Model)
+	if m.commandLine.Buffer != "ab" {
+		t.Errorf("after backspace: got %q want ab", m.commandLine.Buffer)
+	}
+}
+
+func TestCommandLine_EscCancelsPrompt(t *testing.T) {
+	t.Parallel()
+	m := newTestModel(t, numberedBody(20))
+	m, _ = applyResize(m, 80, 24)
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{':'}})
+	m = updated.(Model)
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	m = updated.(Model)
+	if m.commandLine.Active {
+		t.Errorf("Esc should close the prompt")
+	}
+}
+
+func TestCommand_JumpToLineN(t *testing.T) {
+	t.Parallel()
+	// Body must be large enough that the target line stays within the
+	// viewport's clampable scroll range.
+	m := newTestModel(t, numberedBody(300))
+	m, _ = applyResize(m, 80, 24)
+	m = drainStream(t, m)
+	// `:42` jumps to line 42.
+	for _, r := range ":42" {
+		updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}})
+		m = updated.(Model)
+	}
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = updated.(Model)
+	if got := m.viewport.YOffset; got != 41 {
+		t.Errorf(":42 should set YOffset=41 (line 42, 0-indexed); got %d", got)
+	}
+}
+
+func TestCommand_JumpToZeroAlias(t *testing.T) {
+	t.Parallel()
+	m := newTestModel(t, numberedBody(300))
+	m, _ = applyResize(m, 80, 24)
+	m = drainStream(t, m)
+	m.viewport.SetYOffset(50)
+	for _, r := range ":0" {
+		updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}})
+		m = updated.(Model)
+	}
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = updated.(Model)
+	if got := m.viewport.YOffset; got != 0 {
+		t.Errorf(":0 should jump to line 1 (YOffset=0); got %d", got)
+	}
+}
+
+func TestCommand_JumpToDollarAlias(t *testing.T) {
+	t.Parallel()
+	m := newTestModel(t, numberedBody(300))
+	m, _ = applyResize(m, 80, 24)
+	m = drainStream(t, m)
+	for _, r := range ":$" {
+		updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}})
+		m = updated.(Model)
+	}
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = updated.(Model)
+	// Bubble Tea's viewport clamps the requested YOffset to the
+	// content-bound maximum (totalRows - height). For a 300-line body
+	// with viewport height ~23, YOffset ends near 277. Assert we
+	// scrolled well past the start without pinning the exact value.
+	if m.viewport.YOffset < 200 {
+		t.Errorf(":$ should jump near the bottom; got YOffset=%d", m.viewport.YOffset)
+	}
+}
+
+func TestCommand_JumpOutOfRangeClamps(t *testing.T) {
+	t.Parallel()
+	m := newTestModel(t, numberedBody(300))
+	m, _ = applyResize(m, 80, 24)
+	m = drainStream(t, m)
+	for _, r := range ":99999" {
+		updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}})
+		m = updated.(Model)
+	}
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = updated.(Model)
+	// Out-of-range jump clamps to the last line; viewport then clamps
+	// to its content-height max. The exact YOffset varies with
+	// rendering chrome, so we just assert we scrolled near the end.
+	if m.viewport.YOffset < 200 {
+		t.Errorf("out-of-range jump should clamp near the end; got YOffset=%d", m.viewport.YOffset)
+	}
+	if !strings.Contains(m.statusAdvisory, "99999") {
+		t.Errorf("expected advisory mentioning 99999; got %q", m.statusAdvisory)
+	}
+}
+
+func TestCommand_SetVimToggle(t *testing.T) {
+	t.Parallel()
+	m := newTestModel(t, numberedBody(20))
+	m, _ = applyResize(m, 80, 24)
+	for _, r := range ":set vim" {
+		updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}})
+		m = updated.(Model)
+	}
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = updated.(Model)
+	if !m.vim {
+		t.Errorf(":set vim should enable vim mode")
+	}
+	// j should now scroll down (vim binding present).
+	if !bindingMatches(m.keyMap[keys.ActionScrollDown], "j") {
+		t.Errorf(":set vim should add j as scroll-down binding")
+	}
+	// :set novim disables.
+	for _, r := range ":set novim" {
+		updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}})
+		m = updated.(Model)
+	}
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = updated.(Model)
+	if m.vim {
+		t.Errorf(":set novim should disable vim mode")
+	}
+}
+
+func TestCommand_SetTheme(t *testing.T) {
+	t.Parallel()
+	m := newTestModel(t, numberedBody(20))
+	m, _ = applyResize(m, 80, 24)
+	for _, r := range ":set theme light" {
+		updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}})
+		m = updated.(Model)
+	}
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = updated.(Model)
+	if m.theme.Name != "light" {
+		t.Errorf(":set theme light: got theme %q want light", m.theme.Name)
+	}
+}
+
+func TestCommand_QuitAlias(t *testing.T) {
+	t.Parallel()
+	m := newTestModel(t, numberedBody(20))
+	m, _ = applyResize(m, 80, 24)
+	for _, r := range ":q" {
+		updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}})
+		m = updated.(Model)
+	}
+	_, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	if cmd == nil {
+		t.Fatal(":q should produce a quit cmd")
+	}
+	if _, ok := cmd().(tea.QuitMsg); !ok {
+		t.Errorf("expected tea.QuitMsg, got %T", cmd())
+	}
+}
+
+func TestCommand_UnknownReportsAdvisory(t *testing.T) {
+	t.Parallel()
+	m := newTestModel(t, numberedBody(20))
+	m, _ = applyResize(m, 80, 24)
+	for _, r := range ":noSuchThing" {
+		updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}})
+		m = updated.(Model)
+	}
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = updated.(Model)
+	if !strings.Contains(m.statusAdvisory, "unknown") {
+		t.Errorf("expected 'unknown' in advisory; got %q", m.statusAdvisory)
+	}
+}
+
+func TestCommand_OpenSwapsSource(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	body := "alpha\nbeta\ngamma\n"
+	path := filepath.Join(dir, "fixture.txt")
+	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+
+	m := newTestModel(t, "original\n")
+	m, _ = applyResize(m, 80, 24)
+	for _, r := range ":open " + path {
+		updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}})
+		m = updated.(Model)
+	}
+	_, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	if cmd == nil {
+		t.Fatal(":open <path> should return a cmd")
+	}
+	msg := cmd()
+	open, ok := msg.(openResultMsg)
+	if !ok {
+		t.Fatalf("expected openResultMsg, got %T", msg)
+	}
+	if open.err != nil {
+		t.Fatalf(":open returned error: %v", open.err)
+	}
+	updated, _ := m.Update(open)
+	m = updated.(Model)
+	if m.source.DisplayName() == "fake.txt" {
+		t.Errorf(":open did not swap the source")
+	}
+	// Drain the new stream so search etc. has content; verify body line shows.
+	m = drainStream(t, m)
+	view := m.View()
+	if !strings.Contains(view, "alpha") {
+		t.Errorf("post-:open view missing fixture content; got %q", view)
+	}
+}
+
+func TestSearch_ForwardJumpsToFirstMatch(t *testing.T) {
+	t.Parallel()
+	m := newTestModel(t, numberedBody(300))
+	m, _ = applyResize(m, 80, 24)
+	m = drainStream(t, m)
+	for _, r := range "/line 42" {
+		updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}})
+		m = updated.(Model)
+	}
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = updated.(Model)
+	if len(m.search.Matches) == 0 {
+		t.Fatalf("/line 42 should produce matches")
+	}
+	if m.viewport.YOffset != 41 {
+		t.Errorf("viewport should jump to match at line 42 (YOffset=41); got %d", m.viewport.YOffset)
+	}
+}
+
+func TestSearch_NoMatchSurfacesAdvisory(t *testing.T) {
+	t.Parallel()
+	m := newTestModel(t, numberedBody(20))
+	m, _ = applyResize(m, 80, 24)
+	m = drainStream(t, m)
+	for _, r := range "/zzznotthere" {
+		updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}})
+		m = updated.(Model)
+	}
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = updated.(Model)
+	if !strings.Contains(m.statusAdvisory, "no match") {
+		t.Errorf("expected 'no match' advisory; got %q", m.statusAdvisory)
+	}
+}
+
+func TestSearch_NextMatchAdvancesAndWraps(t *testing.T) {
+	t.Parallel()
+	m := newTestModel(t, "alpha\nfoo bar\nbaz\nfoo qux\n")
+	m, _ = applyResize(m, 80, 24)
+	m = drainStream(t, m)
+	for _, r := range "/foo" {
+		updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}})
+		m = updated.(Model)
+	}
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = updated.(Model)
+	if len(m.search.Matches) != 2 {
+		t.Fatalf("expected 2 matches, got %d", len(m.search.Matches))
+	}
+	if m.search.CurrentMatch != 0 {
+		t.Errorf("first match: CurrentMatch should be 0; got %d", m.search.CurrentMatch)
+	}
+	// `n` advances to the next match.
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'n'}})
+	m = updated.(Model)
+	if m.search.CurrentMatch != 1 {
+		t.Errorf("after n: CurrentMatch should be 1; got %d", m.search.CurrentMatch)
+	}
+	// `n` again wraps to 0 and sets the wrapped advisory.
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'n'}})
+	m = updated.(Model)
+	if m.search.CurrentMatch != 0 {
+		t.Errorf("after second n (wrap): CurrentMatch should be 0; got %d", m.search.CurrentMatch)
+	}
+	if !strings.Contains(m.statusAdvisory, "wrapped") {
+		t.Errorf("expected 'wrapped' advisory after n wrap; got %q", m.statusAdvisory)
+	}
+}
+
+func TestSearch_PrevMatch(t *testing.T) {
+	t.Parallel()
+	m := newTestModel(t, "alpha\nfoo bar\nbaz\nfoo qux\n")
+	m, _ = applyResize(m, 80, 24)
+	m = drainStream(t, m)
+	for _, r := range "/foo" {
+		updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}})
+		m = updated.(Model)
+	}
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = updated.(Model)
+	// `N` goes back: from index 0 wraps to last index (1).
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'N'}})
+	m = updated.(Model)
+	if m.search.CurrentMatch != 1 {
+		t.Errorf("N should wrap from 0 to last (1); got %d", m.search.CurrentMatch)
+	}
+}
+
+func TestSearch_BackwardOpensWithQuestion(t *testing.T) {
+	t.Parallel()
+	m := newTestModel(t, "alpha\nfoo bar\nbaz\nfoo qux\n")
+	m, _ = applyResize(m, 80, 24)
+	m = drainStream(t, m)
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'?'}})
+	m = updated.(Model)
+	if m.commandLine.Prefix != '?' {
+		t.Errorf("? should open backward search prompt; got prefix %q", m.commandLine.Prefix)
+	}
+}
+
+func TestSearch_RegexCompileErrorSurfaces(t *testing.T) {
+	t.Parallel()
+	cfg := config.Defaults()
+	cfg.RegexDefault = true
+	src := &fakeSource{body: "foo\nbar\n", kind: source.KindText}
+	stream, err := loader.Open(context.Background(), src, loader.Config{})
+	if err != nil {
+		t.Fatalf("loader.Open: %v", err)
+	}
+	m := NewModel(ModelOptions{
+		Source:       src,
+		Stream:       stream,
+		Capabilities: term.Capabilities{Cols: 80, Rows: 24},
+		Config:       cfg,
+		Theme:        render.ThemeDark(),
+		KeyMap:       keys.Default(),
+	})
+	m, _ = applyResize(m, 80, 24)
+	m = drainStream(t, m)
+	for _, r := range "/[invalid" {
+		updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}})
+		m = updated.(Model)
+	}
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = updated.(Model)
+	if !strings.Contains(m.statusAdvisory, "invalid pattern") {
+		t.Errorf("expected 'invalid pattern' advisory; got %q", m.statusAdvisory)
+	}
+}
+
+func TestVim_GgSequenceJumpsToTop(t *testing.T) {
+	t.Parallel()
+	m := newTestModel(t, numberedBody(50))
+	m.keyMap = keys.WithVim(keys.Default())
+	m.vim = true
+	m, _ = applyResize(m, 80, 10)
+	m = drainStream(t, m)
+	m.viewport.SetYOffset(40)
+	// First g arms the pending flag without scrolling.
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'g'}})
+	m = updated.(Model)
+	if m.viewport.YOffset != 40 {
+		t.Errorf("single g should not jump (pending state); YOffset=%d", m.viewport.YOffset)
+	}
+	if !m.vimPendingG {
+		t.Errorf("first g should set vimPendingG")
+	}
+	// Second g fires GoToTop.
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'g'}})
+	m = updated.(Model)
+	if m.viewport.YOffset != 0 {
+		t.Errorf("gg should jump to top (YOffset=0); got %d", m.viewport.YOffset)
+	}
+	if m.vimPendingG {
+		t.Errorf("vimPendingG should be cleared after gg")
+	}
+}
+
+func TestVim_PendingGCancelledByOtherKey(t *testing.T) {
+	t.Parallel()
+	m := newTestModel(t, numberedBody(50))
+	m.keyMap = keys.WithVim(keys.Default())
+	m.vim = true
+	m, _ = applyResize(m, 80, 10)
+	m = drainStream(t, m)
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'g'}})
+	m = updated.(Model)
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'j'}})
+	m = updated.(Model)
+	if m.vimPendingG {
+		t.Errorf("non-g key should clear vimPendingG")
+	}
+}
+
+func TestVim_GUppercaseGoesToBottom(t *testing.T) {
+	t.Parallel()
+	m := newTestModel(t, numberedBody(50))
+	m.keyMap = keys.WithVim(keys.Default())
+	m.vim = true
+	m, _ = applyResize(m, 80, 10)
+	m = drainStream(t, m)
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'G'}})
+	m = updated.(Model)
+	if m.viewport.YOffset == 0 {
+		t.Errorf("G should jump to bottom; YOffset=%d", m.viewport.YOffset)
+	}
+}
+
+func TestPromptHistory_RecallPreviousCommand(t *testing.T) {
+	t.Parallel()
+	m := newTestModel(t, numberedBody(20))
+	m, _ = applyResize(m, 80, 24)
+	m = drainStream(t, m)
+	// Submit ":5" once.
+	for _, r := range ":5" {
+		updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}})
+		m = updated.(Model)
+	}
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = updated.(Model)
+	// Open another `:` prompt; ↑ should recall "5".
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{':'}})
+	m = updated.(Model)
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyUp})
+	m = updated.(Model)
+	if m.commandLine.Buffer != "5" {
+		t.Errorf("history recall: got %q want 5", m.commandLine.Buffer)
+	}
+}
+
+func TestSearch_StateInRenderContext(t *testing.T) {
+	t.Parallel()
+	m := newTestModel(t, "foo\nbar\nfoo\n")
+	m, _ = applyResize(m, 80, 24)
+	m = drainStream(t, m)
+	for _, r := range "/foo" {
+		updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}})
+		m = updated.(Model)
+	}
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = updated.(Model)
+	ctx := m.renderContext()
+	if ctx.Search.Query != "foo" {
+		t.Errorf("renderContext().Search.Query: got %q want foo", ctx.Search.Query)
+	}
+	if len(ctx.Search.Matches) != 2 {
+		t.Errorf("renderContext().Search.Matches count: got %d want 2", len(ctx.Search.Matches))
+	}
+}
+
+func TestPromptView_ShowsBuffer(t *testing.T) {
+	t.Parallel()
+	m := newTestModel(t, numberedBody(5))
+	m, _ = applyResize(m, 80, 10)
+	for _, r := range ":42" {
+		updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}})
+		m = updated.(Model)
+	}
+	view := m.View()
+	if !strings.Contains(view, ":42") {
+		t.Errorf("View should show :42 prompt while active; got %q", view)
+	}
+}
+
+// bindingMatches reports whether any of the bindings for an action
+// includes the supplied key string.
+func bindingMatches(bindings []key.Binding, want string) bool {
+	for _, b := range bindings {
+		for _, k := range b.Keys() {
+			if k == want {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// Ensure search.SentinelWrapped is referenced by at least one test in
+// this file so an accidental rename in package search shows up here.
+var _ = search.SentinelWrapped

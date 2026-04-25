@@ -60,16 +60,36 @@ func (t *textRenderer) Render(ctx RenderContext) string {
 		width = ctx.Capabilities.Cols
 	}
 
+	active, hasActive := activeMatch(ctx.Search)
 	for _, l := range lines {
 		prefix := ""
 		if t.deps.LineNumbers {
 			prefix = fmt.Sprintf("%*d  ", gutter, l.Number)
 		}
+		lineMatches := matchesForLine(ctx.Search, l.Number)
 		// --no-wrap, no width signal, or wrap disabled: emit verbatim.
 		// The viewport widget handles horizontal scrolling.
 		if !t.deps.WordWrap || width <= 0 {
 			b.WriteString(prefix)
-			b.WriteString(l.Raw)
+			if len(lineMatches) > 0 {
+				b.WriteString(applyMatchHighlights(l.Raw, lineMatches, active, hasActive, ctx.Theme.SearchHit, ctx.Theme.SearchActive))
+			} else {
+				b.WriteString(l.Raw)
+			}
+			b.WriteByte('\n')
+			continue
+		}
+		// Wrap on: the wrap helper still owns rune-bound layout; if the
+		// line has matches we splice them in over the raw text *before*
+		// wrapping so each visual row carries its own highlight ANSI.
+		if len(lineMatches) > 0 {
+			styled := applyMatchHighlights(l.Raw, lineMatches, active, hasActive, ctx.Theme.SearchHit, ctx.Theme.SearchActive)
+			// writeWrappedLine wraps by rune count, which counts the
+			// embedded ANSI bytes — for wrapped + match-highlighted
+			// lines we therefore emit unwrapped to keep the highlight
+			// intact (documented Phase 4 limitation).
+			b.WriteString(prefix)
+			b.WriteString(styled)
 			b.WriteByte('\n')
 			continue
 		}

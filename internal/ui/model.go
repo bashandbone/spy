@@ -20,6 +20,7 @@ import (
 	"github.com/knitli/spy/internal/keys"
 	"github.com/knitli/spy/internal/loader"
 	"github.com/knitli/spy/internal/render"
+	"github.com/knitli/spy/internal/search"
 	"github.com/knitli/spy/internal/source"
 	"github.com/knitli/spy/internal/term"
 )
@@ -86,6 +87,20 @@ type Model struct {
 	// the footer (e.g. "highlighting disabled"). Empty when no
 	// advisory is active.
 	statusAdvisory string
+
+	// search holds the current search engine state. Inactive when
+	// search.Query == "". US2 (T056).
+	search search.State
+	// commandLine is the live `:` / `/` / `?` prompt state machine.
+	commandLine CommandLineState
+	// vimPendingG carries the "first g" of a vim "gg" sequence. The
+	// next key resolves it: another `g` fires ActionGoToTop, anything
+	// else cancels and falls through to the regular dispatch path.
+	vimPendingG bool
+	// vim mirrors cfg.VimMode at construction; runtime `:set vim` /
+	// `:set novim` toggles flip this so the UI's prompt-mode + nav
+	// dispatch picks up the new keymap and `gg` sequencing.
+	vim bool
 }
 
 // NewModel constructs the viewer's Bubble Tea model. The first frame
@@ -122,6 +137,8 @@ func NewModel(opts ModelOptions) Model {
 		renderer:    render.ForKind(kind, deps),
 		streaming:   true,
 		status:      render.StatusStreaming,
+		commandLine: CommandLineState{HistoryCursor: -1},
+		vim:         opts.Config != nil && opts.Config.VimMode,
 	}
 	if opts.Stream != nil && opts.Stream.First.EOF {
 		m.streaming = false
@@ -171,6 +188,22 @@ type reloadResultMsg struct {
 	stream *loader.Stream
 	cancel context.CancelFunc
 	err    error
+}
+
+// openResultMsg carries the outcome of an in-flight `:open <path>`
+// command. On success the model swaps in the new source, stream, and
+// renderer; on failure the prior session is retained and the error is
+// surfaced via statusAdvisory.
+type openResultMsg struct {
+	stream      *loader.Stream
+	cancel      context.CancelFunc
+	src         source.Source
+	cfg         *config.Config
+	caps        term.Capabilities
+	highlighter *highlight.Highlighter
+	theme       render.Theme
+	keymap      keys.KeyMap
+	err         error
 }
 
 // highlightLines runs the highlighter against `lines` in place. Exists

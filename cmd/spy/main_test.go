@@ -251,3 +251,16 @@ func TestBoolPtr(t *testing.T) {
 		t.Errorf("boolPtr(true): got %v", got)
 	}
 }
+
+func TestRun_VimFlagDegenerateCat(t *testing.T) {
+	// --vim flag should parse cleanly and the non-TTY path should still
+	// degenerate-cat the file (the keymap only matters on a TTY). Pair
+	// with a real file so the run reaches the non-TTY branch.
+	p := filepath.Join(t.TempDir(), "real.txt")
+	if err := os.WriteFile(p, []byte("alpha\nbeta\n"), 0o644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	if got := run([]string{"--no-config", "--vim", p}); got != exitOK {
+		t.Errorf("--vim: got exit %d want %d", got, exitOK)
+	}
+}
