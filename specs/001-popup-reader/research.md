@@ -298,21 +298,38 @@ canonical Bubble Tea component for exactly this use case.
 
 **Decision**: Bubble Tea's `tea.Program.Run()` already installs SIGINT / SIGTERM
 handlers, restores the terminal on panic, and exits the alt-screen on `tea.Quit`.
-Two additional measures are needed:
+Two additional measures are needed, and **both must run from the same `defer`
+chain in `main()` so they fire on panic, not just on graceful `tea.Quit`**:
 
-1. Wrap `Run()` in a `defer` that calls `term.Restore(int(os.Stdout.Fd()), oldState)`
-   captured at startup. Belt-and-suspenders for the case where the program
-   crashes inside a third-party renderer (cgo fitz panic, etc.).
-2. Send Kitty graphics "delete all images" sequence (`\x1b_Ga=d,d=A;\x1b\\`)
-   on shutdown if any images were rendered, otherwise the terminal can leave
-   ghost images behind under tmux. iTerm2 cleans up automatically.
+1. Capture terminal state at startup with `term.Restore()` (returns a closure).
+2. Capture a `cleanupGraphics func()` at startup that, when invoked, writes
+   the protocol-specific "delete all images" sequence to stdout — Kitty
+   (`\x1b_Ga=d,d=A;\x1b\\`) is the load-bearing case; iTerm2 and sixel
+   self-clean and the closure is a no-op for them; `GraphicsNone` is also a
+   no-op. The closure is idempotent.
+3. In `main()` after capability detection but before any rendering:
+   ```go
+   restore := term.Restore()
+   cleanupGraphics := graphics.CleanupFunc(caps.Graphics)
+   defer restore()           // outer: terminal modes/cursor/echo
+   defer cleanupGraphics()   // inner: graphics cleanup runs first (LIFO)
+   ```
+   Both fire on `tea.Quit`, on `os.Exit` from a signal, and — critically —
+   on panic, including a cgo `go-fitz` panic mid-render that bypasses Bubble
+   Tea's normal teardown. Re-emitting the cleanup escapes from `tea.Quit` is
+   redundant and harmless once these defers are in place.
 
 **Rationale**: FR-015 demands clean exit on signals; the stock Bubble Tea
-behavior covers 95% of cases, and the explicit graphics-cleanup is a known
-gotcha not handled by the framework.
+behavior covers `tea.Quit` and the SIGINT/SIGTERM happy path, but a panic
+inside a third-party renderer skips `tea.Quit` entirely. Routing graphics
+cleanup through `defer` (not through `tea.Cmd`) is the only way to guarantee
+it runs in every exit path. Ghost Kitty images persisting across sessions
+under tmux is a real, observable failure mode users will report as a bug.
 
 **Alternatives considered**:
 - *Implement our own signal loop*: rejected — fights Bubble Tea's runtime.
+- *Cleanup only on `tea.Quit`*: rejected — silently fails on panic; the very
+  case where users notice and complain.
 
 ---
 

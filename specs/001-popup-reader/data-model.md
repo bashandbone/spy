@@ -53,9 +53,13 @@ process invocation.
 | `Search` | `SearchState` | Inactive when `Query == ""`. |
 | `CommandLine` | `CommandLineState` | `:` / `/` / `?` prompt buffer. |
 | `Config` | `*Config` | Snapshot of resolved config (CLI > env > file > defaults). |
-| `Status` | `Status` | Idle / Loading / Streaming / Error. |
+| `Status` | `render.Status` | Idle / Loading / Streaming / Error. Defined in `internal/render` so renderers can consume it without an `internal/ui` import. |
 | `LastError` | `error` | Set when `Status == Error`; rendered in status bar. |
 | `Quitting` | `bool` | Set true by `tea.Quit`; final frame uses it. |
+
+**Renderer integration**: `ui.Model.View` builds a `render.RenderContext`
+(see `contracts/internal-apis.md`) from the fields above on every frame and
+calls `Renderer.Render(ctx)`. The renderer never imports `internal/ui`.
 
 **Lifecycle**:
 

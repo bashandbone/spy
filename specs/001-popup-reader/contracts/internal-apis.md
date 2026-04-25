@@ -159,8 +159,16 @@ package graphics
 func Render(proto term.Graphics, img image.Image, cols, rows int) (string, error)
 
 // Cleanup emits any escape sequences needed to clear residual images
-// (e.g., Kitty "delete all images"). Idempotent.
+// (e.g., Kitty "delete all images"). Idempotent. Returns the bytes to write;
+// the caller decides where (used for in-session cleanup via tea.Cmd, e.g.,
+// on `:open` replacing the current source).
 func Cleanup(proto term.Graphics) string
+
+// CleanupFunc returns a closure that writes the cleanup sequence directly
+// to os.Stdout. Safe to use as `defer cleanupGraphics()` in main(); fires on
+// tea.Quit, signals, AND panic — the only path that survives a cgo go-fitz
+// panic. No-op for GraphicsNone, GraphicsITerm2, GraphicsSixel. Idempotent.
+func CleanupFunc(proto term.Graphics) func()
 
 // PDFPage rasterizes page n (1-indexed) of an open PDF into an image.Image.
 // Built only when the `fitz` build tag is present; the no-fitz stub returns
@@ -173,8 +181,31 @@ func PDFPage(path string, n int, dpi float64) (image.Image, error)
 ```go
 package render
 
+// RenderContext carries the per-frame state a Renderer needs.
+// It is populated by `internal/ui` on every Update tick and passed into
+// Render(). Defining it here (rather than reaching into ui.ViewerSession)
+// keeps the dependency direction acyclic: ui → render, never render → ui.
+type RenderContext struct {
+    Buffer       *source.LineBuffer  // resident lines + windowing state
+    Viewport     viewport.Model      // scroll position + dimensions
+    Theme        Theme
+    Capabilities term.Capabilities
+    Search       search.State        // query, matches, current selection
+    Status       Status              // Idle | Loading | Streaming | Error
+    LastError    error               // populated when Status == Error
+    Page         int                 // 1-indexed; non-zero only for KindPDF
+}
+
+type Status int
+const (
+    StatusIdle Status = iota
+    StatusLoading
+    StatusStreaming
+    StatusError
+)
+
 type Renderer interface {
-    Render(state ui.ViewerSession, viewport viewport.Model) string
+    Render(ctx RenderContext) string
 }
 
 func ForKind(k source.Kind, deps Dependencies) Renderer
@@ -186,6 +217,11 @@ type Dependencies struct {
     Highlighter  *highlight.Highlighter
 }
 ```
+
+**Dependency direction**: `render` imports `source`, `term`, `graphics`,
+`highlight`, `search`, and the upstream `bubbles/viewport` type. It does NOT
+import `internal/ui`. `internal/ui` constructs a `RenderContext` from its
+`ViewerSession` on each frame and passes it in.
 
 ## `internal/search`
 

@@ -44,7 +44,7 @@ compile, run tests with `-race`, and meet REUSE/SPDX requirements.
 
 - [ ] T001 Add new dependencies to `go.mod` and `go.sum`: `github.com/charmbracelet/bubbles`, `github.com/BurntSushi/toml`, `github.com/mattn/go-sixel`, `github.com/gen2brain/go-fitz`, `github.com/muesli/termenv`, `golang.org/x/term`. Run `go mod tidy` and verify pure-Go default build still compiles without `-tags fitz`.
 - [ ] T002 [P] Create new package skeleton directories with SPDX-headed `doc.go` for each: `internal/term/doc.go`, `internal/source/doc.go`, `internal/loader/doc.go`, `internal/highlight/doc.go`, `internal/graphics/doc.go`, `internal/render/doc.go`, `internal/search/doc.go`, `internal/keys/doc.go`. Each `doc.go` carries the dual-license SPDX header and a one-paragraph package summary.
-- [ ] T003 [P] Update `Makefile` with targets: `test` (`go test ./...`), `test-race` (`go test ./... -race`), `cover` (`go test ./... -race -coverprofile=coverage.out`), `lint` (`gofmt -l . && goimports -l .`), `vet` (`go vet ./...`), `build` (default), `build-fitz` (`-tags fitz`), `reuse` (`reuse lint`).
+- [ ] T003 [P] Update `Makefile` with targets: `test` (`go test ./...`), `test-race` (`go test ./... -race`), `cover-default` (`go test ./... -race -coverprofile=cov-default.out`), `cover-fitz` (`go test -tags fitz ./... -race -coverprofile=cov-fitz.out`), `cover` (depends on `cover-default` and `cover-fitz`; merges via `gocovmerge cov-default.out cov-fitz.out > coverage.out`), `lint` (`gofmt -l . && goimports -l .`), `vet` (`go vet ./...` and `go vet -tags fitz ./...`), `build` (default), `build-fitz` (`-tags fitz`), `reuse` (`reuse lint`). The merged `coverage.out` is the single source of truth for the ≥ 80 %/package gate so neither `pdf_fitz.go` nor `pdf_nofitz.go` is invisible to the threshold check. Add `gocovmerge` (or equivalent) to dev-tooling install instructions in `DEVELOPMENT.md` (T102).
 - [ ] T004 [P] Create PTY harness skeleton in `tests/integration/pty.go` and `tests/integration/helpers.go` exposing `NewPTYProgram(t, args, env)` and golden-file diffing helpers; mark with SPDX header.
 - [ ] T005 [P] Create `tests/e2e/` directory with `tests/e2e/run.sh` shell harness that builds the binary and runs each `tests/e2e/NN_*.sh` script, plus `tests/e2e/fixtures/` and a `tests/e2e/setup.sh` that materializes `quickstart.md` Section 0 fixtures locally.
 - [ ] T006 [P] Author `examples/config.toml` matching the schema in `specs/001-popup-reader/contracts/config.md`, with all keys commented out at their default values plus three commented sample profiles (`theme = "dark"`; vim+regex+tight memory; per-language overrides).
@@ -111,7 +111,7 @@ completes. Each task pair below puts the failing test first.
 
 - [ ] T030 [P] Write failing tests for flag parsing in `cmd/spy/flags_test.go` — every flag from `contracts/cli.md` (long + short forms), env var fallback, `--help` / `--version` exits, `--config` vs `--no-config` mutual exclusion, unknown flag → exit 2.
 - [ ] T031 Extract flag definitions into `cmd/spy/flags.go` exposing `ParseFlags([]string) (*ParsedFlags, error)`; pure (no side effects) so it's testable.
-- [ ] T032 Replace `cmd/spy/main.go` with the foundational wiring: `term.Detect` → `config.Load` → `source.FromArgs` → `loader.Open` → `ui.NewModel` → `tea.NewProgram(model, tea.WithAltScreen()).Run()`. Implement FR-013 stderr error path with the documented exit codes (0/1/2/3/4/5/130/143) and the `spy: <reason>: <detail>` format from `contracts/cli.md`. `defer term.Restore()` belt-and-suspenders.
+- [ ] T032 Replace `cmd/spy/main.go` with the foundational wiring: `term.Detect` → `config.Load` → `source.FromArgs` → `loader.Open` → `ui.NewModel` → `tea.NewProgram(model, tea.WithAltScreen()).Run()`. Implement FR-013 stderr error path with the documented exit codes (0/1/2/3/4/5/130/143) and the `spy: <reason>: <detail>` format from `contracts/cli.md`. Defer order (LIFO, panic-safe per research R10): `defer restore := term.Restore()` first, then `defer graphics.CleanupFunc(caps.Graphics)()` second so graphics cleanup runs *before* terminal restore. The graphics-cleanup defer is a no-op until US4 lands but the wiring is added here so panic-safety is correct from the foundational phase.
 
 ### `internal/ui` rewiring
 
@@ -252,7 +252,10 @@ graphics-capable terminal *and* one non-graphics terminal.
 - [ ] T080 [US4] Replace the `KindImage` stub in `internal/render/image.go`: capable terminals → `graphics.Render`; otherwise the metadata fallback block. Re-open the file at render time (per `research.md` R2) to keep memory under SC-005.
 - [ ] T081 [US4] Replace the `KindPDF` stub in `internal/render/pdf.go`: pdfcpu page-text extraction by default; on graphics-capable terminals AND `fitz` build, rasterize the current page and render via `graphics.Render`. Track `Page` index in the renderer state.
 - [ ] T082 [US4] Wire `]` / `[` page navigation when `source.Kind == KindPDF` and `:N` for page-jump (re-using the command-line state from T056) in `internal/ui/update.go`.
-- [ ] T083 [US4] Wire Kitty "delete all images" cleanup on `tea.Quit` and on source replacement (`:open`) in `internal/ui/update.go` — call `graphics.Cleanup(caps.Graphics)` and write its output via a `tea.Cmd` before the model exits.
+- [ ] T083 [US4] Wire panic-safe graphics cleanup in **two** places (per `research.md` R10):
+      (a) `cmd/spy/main.go`: after capability detection, capture `cleanupGraphics := graphics.CleanupFunc(caps.Graphics)` and `defer cleanupGraphics()` *inside* the existing `defer term.Restore()` chain (LIFO ordering: graphics cleanup runs first, then terminal restore). This fires on `tea.Quit`, signals, AND panic — including cgo `go-fitz` panics that skip Bubble Tea's normal teardown.
+      (b) `internal/ui/update.go`: on source replacement (`:open`), invoke `graphics.Cleanup(caps.Graphics)` via a `tea.Cmd` so the previous source's images are cleared before the new ones render. The cleanup func must be idempotent.
+      Add a `graphics.CleanupFunc(proto term.Graphics) func()` constructor in `internal/graphics/graphics.go` returning a closure that writes the appropriate escape sequence to `os.Stdout` (no-op for `GraphicsNone`, `GraphicsITerm2`, `GraphicsSixel`).
 - [ ] T084 [US4] Honour `--graphics` flag and `SPY_GRAPHICS` env via the merge order from T024 (CLI > env > config > auto-detect). `--graphics none` short-circuits all encoding.
 
 **Checkpoint**: User Story 4 is functional. Steps 7 and 8 of `quickstart.md`
@@ -330,7 +333,7 @@ and close residual constitution TODOs.
 - [ ] T108 [P] Manual quickstart.md walkthrough on Linux/xterm; record results in `specs/001-popup-reader/checklists/quickstart-validation.md`.
 - [ ] T109 [P] Manual quickstart.md walkthrough on macOS/iTerm2 + Kitty; same checklist.
 - [ ] T110 Add a `CHANGELOG.md` `0.1.0` entry summarizing US1–US6.
-- [ ] T111 Final gate: `make lint vet test-race cover` clean, per-package coverage ≥ 80 %, `reuse lint` clean, default and `-tags fitz` builds both succeed.
+- [ ] T111 Final gate: `make lint vet test-race cover` clean, per-package coverage ≥ 80 % computed against the **merged** profile from `cover-default` + `cover-fitz` (so build-tag-gated files in `internal/graphics` are not silently excluded), `reuse lint` clean, default and `-tags fitz` builds both succeed.
 
 ---
 

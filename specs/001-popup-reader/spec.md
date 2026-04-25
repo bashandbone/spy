@@ -125,7 +125,7 @@ A developer using the tool wants to know which file they're viewing, how many li
 - **FR-010**: System MUST support detection and inline rendering of image files in compatible terminals (Kitty, iTerm2, WezTerm)
 - **FR-011**: System MUST support PDF preview/rendering in compatible terminals with graceful fallback in unsupported terminals
 - **FR-012**: System MUST handle very large files gracefully via progressive loading (load initial viewport immediately, stream remaining content in background using concurrent goroutines)
-- **FR-013**: System MUST output error messages to stdout and exit without launching the viewer if file is inaccessible, binary, or unsupported format
+- **FR-013**: System MUST output error messages to stderr (single-line, prefixed `spy: <reason>: <detail>`) and exit without launching the viewer if file is inaccessible, binary, or unsupported format. Exit codes follow `contracts/cli.md` (3 = I/O, 4 = unsupported, 2 = usage)
 - **FR-014**: System MUST handle terminal resize events and reflow content appropriately
 - **FR-015**: System MUST exit cleanly on signals (SIGINT, SIGTERM) without corrupting terminal state
 
@@ -157,10 +157,11 @@ A developer using the tool wants to know which file they're viewing, how many li
   - No blocking on initial display; user sees content immediately
   - Graceful scrolling within loaded region; degradation only if scrolling ahead of stream
 
-- **Q2: Error Handling & Fallback UX** → **A: Errors to stdout, no viewer display (minimal Unix approach)**
-  - If file cannot be accessed, is binary, or format unsupported: print error message to stdout and exit
+- **Q2: Error Handling & Fallback UX** → **A: Errors to stderr, no viewer display (minimal Unix approach)**
+  - If file cannot be accessed, is binary, or format unsupported: print error message to stderr (`spy: <reason>: <detail>`) and exit with the matching code from `contracts/cli.md`
   - Viewer only launches if there is displayable content
   - No error dialogs or fallback rendering; fail fast and cleanly
+  - *Note*: original Q2 wording said "stdout"; corrected here to match Unix convention and `contracts/cli.md`. Stdout is reserved for the alt-screen TUI (TTY) or verbatim content (degenerate-cat mode).
 
 - **Q3: Accessibility & Keybinding Scope** → **A: Arrow keys primary with optional vim mode (inverted approach)**
   - Default keybindings use arrow keys (↑↓←→) for maximum accessibility
