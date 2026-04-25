@@ -612,13 +612,16 @@ func (m Model) runSetCommand(rest string) (tea.Model, tea.Cmd) {
 	rest = strings.TrimSpace(rest)
 	switch rest {
 	case "vim":
+		// Layer vim bindings on the *preserved* non-vim base so any
+		// user `[keys]` overrides survive the toggle (Copilot review
+		// PR#9 round-3 #5).
 		m.vim = true
-		m.keyMap = keys.WithVim(keys.Default())
+		m.keyMap = keys.WithVim(m.baseKeyMap)
 		m.statusAdvisory = "vim mode on"
 		return m, nil
 	case "novim":
 		m.vim = false
-		m.keyMap = keys.Default()
+		m.keyMap = m.baseKeyMap
 		m.statusAdvisory = "vim mode off"
 		return m, nil
 	}

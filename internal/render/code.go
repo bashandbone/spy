@@ -58,6 +58,12 @@ func (r *codeRenderer) Render(ctx RenderContext) string {
 	}
 
 	active, hasActive := activeMatch(ctx.Search)
+	// In mono mode (`--no-color` / NO_COLOR=1 / TERM=dumb), the match
+	// overlay must not emit ANSI — even via lipgloss styles applied
+	// post-chroma — or the rendered output becomes a contract
+	// violation (Copilot review PR#9 round-3 #1). When mono is active
+	// we still mark matched lines but as raw text without colouring.
+	mono := ctx.Theme.Mono || ctx.Capabilities.ColorDepth == term.ColorMono
 	for _, l := range lines {
 		prefix := ""
 		if r.deps.LineNumbers {
@@ -70,7 +76,13 @@ func (r *codeRenderer) Render(ctx RenderContext) string {
 		lineMatches := matchesForLine(ctx.Search, l.Number)
 		if len(lineMatches) > 0 {
 			b.WriteString(prefix)
-			b.WriteString(applyMatchHighlights(l.Raw, lineMatches, active, hasActive, ctx.Theme.SearchHit, ctx.Theme.SearchActive))
+			if mono {
+				// Mono mode: bypass lipgloss styling — emit the raw
+				// match line verbatim so no ANSI leaks.
+				b.WriteString(l.Raw)
+			} else {
+				b.WriteString(applyMatchHighlights(l.Raw, lineMatches, active, hasActive, ctx.Theme.SearchHit, ctx.Theme.SearchActive))
+			}
 			b.WriteByte('\n')
 			continue
 		}

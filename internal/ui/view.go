@@ -9,6 +9,8 @@ import (
 	"path/filepath"
 
 	"github.com/charmbracelet/lipgloss"
+
+	"github.com/knitli/spy/internal/term"
 )
 
 // View produces the full frame for tea.Program. The viewport claims
@@ -35,14 +37,20 @@ func (m Model) View() string {
 // promptLine renders the active `:` / `/` / `?` prompt buffer with the
 // theme's PromptLine style. The prefix sigil is always shown so the
 // user can tell which prompt is active without watching the keymap.
+//
+// In mono mode (`--no-color` / NO_COLOR=1 / TERM=dumb) the lipgloss
+// style is bypassed so no ANSI leaks into the rendered frame
+// (Copilot review PR#9 round-3 #3).
 func (m Model) promptLine() string {
 	line := string(m.commandLine.Prefix) + m.commandLine.Buffer
-	style := m.theme.PromptLine
 	pad := m.width - lipgloss.Width(line)
 	if pad > 0 {
 		line += pads(pad)
 	}
-	return style.Render(line)
+	if m.isMono() {
+		return line
+	}
+	return m.theme.PromptLine.Render(line)
 }
 
 // footerLine renders the foundational footer: <displayname> | <total>
@@ -77,13 +85,27 @@ func (m Model) footerLine() string {
 		advisory = " | " + m.statusAdvisory
 	}
 	line := fmt.Sprintf(" %s | %s lines | Line %d%s ", name, totalDisplay, current, advisory)
-	style := m.theme.Footer
 	// Pad to full width; lipgloss Width() handles ANSI / wide chars.
 	pad := m.width - lipgloss.Width(line)
 	if pad > 0 {
 		line += pads(pad)
 	}
-	return style.Render(line)
+	if m.isMono() {
+		// Mono mode: bypass lipgloss styling so the footer stays
+		// ANSI-free (Copilot review PR#9 round-3 #3).
+		return line
+	}
+	return m.theme.Footer.Render(line)
+}
+
+// isMono reports whether the active session is in mono / no-color
+// mode. Used by the chrome-rendering helpers (footer, prompt) to
+// suppress lipgloss styling when ANSI must not be emitted.
+func (m Model) isMono() bool {
+	if m.theme.Mono {
+		return true
+	}
+	return m.caps.ColorDepth == term.ColorMono
 }
 
 func pads(n int) string {

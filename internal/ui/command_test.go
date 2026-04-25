@@ -232,6 +232,91 @@ func TestCommand_SetVimToggle(t *testing.T) {
 	}
 }
 
+func TestCommand_SetVimPreservesUserOverrides(t *testing.T) {
+	t.Parallel()
+	// User has remapped ActionQuit to "x" (instead of the default
+	// q/esc/ctrl+c). Toggling :set vim then :set novim must not
+	// silently drop that remap (Copilot review PR#9 round-3 #5).
+	src := &fakeSource{body: numberedBody(20), kind: source.KindText}
+	stream, err := loader.Open(context.Background(), src, loader.Config{})
+	if err != nil {
+		t.Fatalf("loader.Open: %v", err)
+	}
+	base, _ := keys.ApplyOverrides(keys.Default(), map[string][]string{
+		"quit": {"x"},
+	})
+	m := NewModel(ModelOptions{
+		Source:       src,
+		Stream:       stream,
+		Capabilities: term.Capabilities{Cols: 80, Rows: 24},
+		Config:       config.Defaults(),
+		Theme:        render.ThemeDark(),
+		KeyMap:       base,
+		BaseKeyMap:   base,
+	})
+	m, _ = applyResize(m, 80, 24)
+	// Sanity: x is bound to quit before any toggle.
+	if !bindingMatches(m.keyMap[keys.ActionQuit], "x") {
+		t.Fatalf("setup: 'x' should bind ActionQuit before vim toggle")
+	}
+	// :set vim then :set novim — the override must still be in place.
+	for _, cmd := range []string{":set vim", ":set novim"} {
+		for _, r := range cmd {
+			updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}})
+			m = updated.(Model)
+		}
+		updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+		m = updated.(Model)
+	}
+	if !bindingMatches(m.keyMap[keys.ActionQuit], "x") {
+		t.Errorf(":set vim → :set novim dropped user override 'x' for quit (have %v)",
+			bindingKeyList(m.keyMap[keys.ActionQuit]))
+	}
+}
+
+func TestPromptLine_SuppressesAnsiInMonoTheme(t *testing.T) {
+	t.Parallel()
+	m := newTestModel(t, numberedBody(5))
+	m.theme.Mono = true
+	m, _ = applyResize(m, 80, 10)
+	for _, r := range ":42" {
+		updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}})
+		m = updated.(Model)
+	}
+	out := m.View()
+	if strings.Contains(out, "\x1b[") {
+		t.Errorf("mono theme + active prompt: View must be ANSI-free; got %q", out)
+	}
+	if !strings.Contains(out, ":42") {
+		t.Errorf("mono prompt should still show buffer; got %q", out)
+	}
+}
+
+func TestFooter_SuppressesAnsiInColorMonoCaps(t *testing.T) {
+	t.Parallel()
+	// ColorMono caps (TERM=dumb / NO_COLOR=1) must suppress chrome
+	// ANSI even when Theme.Mono is false (Copilot review PR#9
+	// round-3 #3).
+	src := &fakeSource{body: numberedBody(5), kind: source.KindText}
+	stream, err := loader.Open(context.Background(), src, loader.Config{})
+	if err != nil {
+		t.Fatalf("loader.Open: %v", err)
+	}
+	m := NewModel(ModelOptions{
+		Source:       src,
+		Stream:       stream,
+		Capabilities: term.Capabilities{Cols: 80, Rows: 24, ColorDepth: term.ColorMono},
+		Config:       config.Defaults(),
+		Theme:        render.ThemeDark(), // not Mono
+		KeyMap:       keys.Default(),
+	})
+	m, _ = applyResize(m, 80, 10)
+	out := m.View()
+	if strings.Contains(out, "\x1b[") {
+		t.Errorf("ColorMono caps: View must be ANSI-free even when Theme.Mono is false; got %q", out)
+	}
+}
+
 func TestCommand_SetTheme(t *testing.T) {
 	t.Parallel()
 	m := newTestModel(t, numberedBody(20))
@@ -830,6 +915,16 @@ func bindingMatches(bindings []key.Binding, want string) bool {
 		}
 	}
 	return false
+}
+
+// bindingKeyList flattens the keys across every binding for an action.
+// Used to surface the actual keymap state when an assertion fails.
+func bindingKeyList(bindings []key.Binding) []string {
+	var out []string
+	for _, b := range bindings {
+		out = append(out, b.Keys()...)
+	}
+	return out
 }
 
 // Ensure search.SentinelWrapped is referenced by at least one test in

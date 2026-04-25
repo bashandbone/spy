@@ -35,6 +35,15 @@ type ModelOptions struct {
 	Theme        render.Theme
 	KeyMap       keys.KeyMap
 
+	// BaseKeyMap is the non-vim keymap (defaults + user [keys]
+	// overrides). The Model retains this so a runtime `:set novim`
+	// can restore it verbatim and `:set vim` can layer
+	// [keys.WithVim] on top without losing user overrides (Copilot
+	// review PR#9 round-3 #5). When zero/nil, NewModel uses KeyMap as
+	// the base — matches pre-existing call sites that don't toggle
+	// vim mode at runtime.
+	BaseKeyMap keys.KeyMap
+
 	// Highlighter is the per-session syntax highlighter. nil disables
 	// highlighting (used by the foundational text path and tests).
 	Highlighter *highlight.Highlighter
@@ -55,6 +64,7 @@ type Model struct {
 	cfg         *config.Config
 	theme       render.Theme
 	keyMap      keys.KeyMap
+	baseKeyMap  keys.KeyMap // non-vim base; preserved for :set novim
 	cancel      context.CancelFunc
 	highlighter *highlight.Highlighter
 	renderer    render.Renderer
@@ -125,6 +135,10 @@ func NewModel(opts ModelOptions) Model {
 		WordWrap:     opts.Config != nil && opts.Config.WordWrap,
 		Language:     lang,
 	}
+	baseKM := opts.BaseKeyMap
+	if baseKM == nil {
+		baseKM = opts.KeyMap
+	}
 	m := Model{
 		source:      opts.Source,
 		stream:      opts.Stream,
@@ -132,6 +146,7 @@ func NewModel(opts ModelOptions) Model {
 		cfg:         opts.Config,
 		theme:       opts.Theme,
 		keyMap:      opts.KeyMap,
+		baseKeyMap:  baseKM,
 		cancel:      opts.Cancel,
 		highlighter: opts.Highlighter,
 		renderer:    render.ForKind(kind, deps),

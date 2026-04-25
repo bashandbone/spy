@@ -84,14 +84,27 @@ func compileRegex(query string, caseSensitive bool) (Matcher, error) {
 	return &regexMatcher{re: re}, nil
 }
 
-// compileLiteral builds the literal substring matcher. We pre-fold the
-// query when case-insensitive so per-line scanning only does one lookup
-// per Find() rather than re-folding the haystack every call.
+// compileLiteral builds the literal substring matcher.
+//
+// Case-sensitive uses a tight strings.Index loop. Case-insensitive
+// delegates to the regex engine with `(?i)` + [regexp.QuoteMeta] so
+// match offsets reference the *original* haystack — not a folded
+// copy. Folding via [strings.ToLower] is unsafe for highlight offsets
+// because some Unicode characters change byte length under case
+// folding (e.g. `İ` (U+0130, 2 bytes) → `i̇` (U+0069 U+0307, 3 bytes)),
+// which would shift Start/End past the matched substring in the
+// original line (Copilot review PR#9 round-3 #4). [regexp.QuoteMeta]
+// escapes every regex metacharacter, so the resulting pattern is
+// always a valid regex and [regexp.Compile] cannot fail here.
 func compileLiteral(query string, caseSensitive bool) Matcher {
 	if caseSensitive {
 		return &literalMatcher{needle: query}
 	}
-	return &literalFoldedMatcher{needle: strings.ToLower(query)}
+	// Cannot return an error: QuoteMeta + (?i) is always a valid Go
+	// regex; [regexp.MustCompile] would also be safe but we keep the
+	// non-panicking form for symmetry with [compileRegex].
+	re, _ := regexp.Compile("(?i)" + regexp.QuoteMeta(query))
+	return &regexMatcher{re: re}
 }
 
 // literalMatcher does case-sensitive substring scanning.
@@ -115,35 +128,6 @@ func (m *literalMatcher) Find(line string) []Match {
 		out = append(out, Match{Start: start, End: end})
 		off = end
 		if off > len(line) {
-			return out
-		}
-	}
-}
-
-// literalFoldedMatcher does case-insensitive substring scanning by
-// lowercasing the haystack on the fly. The needle is pre-folded by
-// [compileLiteral].
-type literalFoldedMatcher struct {
-	needle string
-}
-
-func (m *literalFoldedMatcher) Find(line string) []Match {
-	if m.needle == "" {
-		return nil
-	}
-	folded := strings.ToLower(line)
-	var out []Match
-	off := 0
-	for {
-		i := strings.Index(folded[off:], m.needle)
-		if i < 0 {
-			return out
-		}
-		start := off + i
-		end := start + len(m.needle)
-		out = append(out, Match{Start: start, End: end})
-		off = end
-		if off > len(folded) {
 			return out
 		}
 	}

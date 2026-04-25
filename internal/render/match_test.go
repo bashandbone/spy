@@ -124,3 +124,85 @@ func TestActiveMatch_ZeroIndexNoMatchReturnsFalse(t *testing.T) {
 		t.Errorf("activeMatch with empty matches should return ok=false")
 	}
 }
+
+func TestMatchHighlight_TextRendererSuppressesAnsiInMonoTheme(t *testing.T) {
+	t.Parallel()
+	deps := Dependencies{
+		Theme:        Theme{Mono: true, SearchHit: lipgloss.NewStyle().Background(lipgloss.Color("#FFFF00"))},
+		Capabilities: term.Capabilities{Cols: 80, Rows: 24, ColorDepth: term.ColorANSI256},
+		WordWrap:     false,
+	}
+	r := ForKind(source.KindText, deps)
+	buf := makeBufferWithLines(t, "alpha foo beta")
+	out := r.Render(RenderContext{
+		Buffer:       buf,
+		Theme:        deps.Theme,
+		Capabilities: deps.Capabilities,
+		Search: search.State{
+			Query:        "foo",
+			Matches:      []search.Match{{Line: 1, Start: 6, End: 9}},
+			CurrentMatch: -1,
+		},
+	})
+	if strings.Contains(out, "\x1b[") {
+		t.Errorf("mono theme + match: rendered output must not contain ANSI escapes; got %q", out)
+	}
+	if !strings.Contains(out, "alpha foo beta") {
+		t.Errorf("mono mode should still emit raw line content; got %q", out)
+	}
+}
+
+func TestMatchHighlight_TextRendererSuppressesAnsiInColorMonoCaps(t *testing.T) {
+	t.Parallel()
+	// ColorDepth = ColorMono represents NO_COLOR/TERM=dumb at the
+	// capability layer; even if Theme.Mono is false we must not emit
+	// ANSI (Copilot review PR#9 round-3 #2).
+	deps := Dependencies{
+		Theme:        Theme{SearchHit: lipgloss.NewStyle().Background(lipgloss.Color("#FFFF00"))},
+		Capabilities: term.Capabilities{Cols: 80, Rows: 24, ColorDepth: term.ColorMono},
+		WordWrap:     false,
+	}
+	r := ForKind(source.KindText, deps)
+	buf := makeBufferWithLines(t, "alpha foo beta")
+	out := r.Render(RenderContext{
+		Buffer:       buf,
+		Theme:        deps.Theme,
+		Capabilities: deps.Capabilities,
+		Search: search.State{
+			Query:        "foo",
+			Matches:      []search.Match{{Line: 1, Start: 6, End: 9}},
+			CurrentMatch: -1,
+		},
+	})
+	if strings.Contains(out, "\x1b[") {
+		t.Errorf("ColorMono caps + match: rendered output must not contain ANSI escapes; got %q", out)
+	}
+}
+
+func TestMatchHighlight_CodeRendererSuppressesAnsiInMonoMode(t *testing.T) {
+	t.Parallel()
+	// Code renderer's match-overlay path also has to suppress ANSI in
+	// mono mode (Copilot review PR#9 round-3 #1).
+	deps := Dependencies{
+		Theme:        Theme{Mono: true, SearchHit: lipgloss.NewStyle().Background(lipgloss.Color("#FFFF00"))},
+		Capabilities: term.Capabilities{Cols: 80, Rows: 24, ColorDepth: term.ColorANSI256},
+	}
+	r := ForKind(source.KindCode, deps)
+	buf := makeBufferWithLines(t, "package main")
+	out := r.Render(RenderContext{
+		Buffer:       buf,
+		Theme:        deps.Theme,
+		Capabilities: deps.Capabilities,
+		Search: search.State{
+			Query:        "main",
+			Matches:      []search.Match{{Line: 1, Start: 8, End: 12}},
+			CurrentMatch: -1,
+		},
+	})
+	if strings.Contains(out, "\x1b[") {
+		t.Errorf("mono code render with match: must not emit ANSI; got %q", out)
+	}
+	if !strings.Contains(out, "package main") {
+		t.Errorf("mono code render: should still emit raw content; got %q", out)
+	}
+}

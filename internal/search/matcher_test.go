@@ -6,6 +6,7 @@ package search
 
 import (
 	"errors"
+	"strings"
 	"testing"
 )
 
@@ -128,6 +129,44 @@ func TestMatcher_OverlappingNonGreedy(t *testing.T) {
 	got := m.Find("aaaa")
 	if len(got) != 2 {
 		t.Errorf("expected 2 non-overlapping matches; got %d (%+v)", len(got), got)
+	}
+}
+
+func TestCompile_LiteralCaseInsensitiveUnicodeOffsets(t *testing.T) {
+	t.Parallel()
+	// The bug we fixed: the previous case-insensitive literal matcher
+	// folded the haystack via strings.ToLower then ran strings.Index
+	// against the folded copy, returning indices in the *folded*
+	// coordinate system. For lines that contain Unicode characters
+	// whose case folding changes byte length (e.g. `İ`/U+0130 which
+	// Go's strings.ToLower maps to `i`/U+0069 — 2 bytes → 1 byte),
+	// those indices are off-by-N when sliced back into the original.
+	//
+	// After the fix the matcher delegates to the regex engine with
+	// `(?i)` + regexp.QuoteMeta, so byte offsets reference the
+	// original line. The strongest invariant we can assert without
+	// pinning Go's exact case-folding rules is: returned offsets are
+	// in range AND the slice they refer to case-folds to the query
+	// (Copilot review PR#9 round-3 #4).
+	m, err := Compile("foo", false, CaseInsensitive)
+	if err != nil {
+		t.Fatalf("Compile: %v", err)
+	}
+	// Line contains the multi-byte `İ` ahead of the substring that
+	// should match — exercising the byte-offset arithmetic the bug
+	// fix protects.
+	line := "İstanbul Foo bar"
+	matches := m.Find(line)
+	if len(matches) != 1 {
+		t.Fatalf("expected 1 match in %q; got %d (%+v)", line, len(matches), matches)
+	}
+	got := matches[0]
+	if got.Start < 0 || got.End > len(line) || got.Start >= got.End {
+		t.Fatalf("match offsets out of range for %q: %+v", line, got)
+	}
+	span := line[got.Start:got.End]
+	if !strings.EqualFold(span, "foo") {
+		t.Errorf("span %q at [%d,%d] does not case-fold to %q", span, got.Start, got.End, "foo")
 	}
 }
 
