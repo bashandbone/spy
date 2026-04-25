@@ -1,0 +1,420 @@
+# Instincts generated from https://github.com/bashandbone/spy
+# Generated: 2026-04-25T17:05:48.010Z
+# Version: 2.0
+# NOTE: This file supplements (does not replace) any existing curated instincts.
+# High-confidence manually curated instincts should be preserved alongside these.
+
+---
+id: spy-commit-length
+trigger: "when writing a commit message"
+confidence: 0.6
+domain: git
+source: repo-analysis
+source_repo: https://github.com/bashandbone/spy
+---
+
+# Spy Commit Length
+
+## Action
+
+Keep commit messages concise (~49 characters)
+
+## Evidence
+
+- Average commit message length: 49 chars
+- Based on 9 commits
+
+---
+id: spy-naming-files
+trigger: "when creating a new file"
+confidence: 0.8
+domain: code-style
+source: repo-analysis
+source_repo: https://github.com/bashandbone/spy
+---
+
+# Spy Naming Files
+
+## Action
+
+Use camelCase naming convention
+
+## Evidence
+
+- Analyzed file naming patterns in repository
+- Dominant pattern: camelCase
+
+---
+id: spy-import-relative
+trigger: "when importing modules"
+confidence: 0.75
+domain: code-style
+source: repo-analysis
+source_repo: https://github.com/bashandbone/spy
+---
+
+# Spy Import Relative
+
+## Action
+
+Use relative imports for project files
+
+## Evidence
+
+- Import analysis shows relative import pattern
+- Example: import { x } from '../lib/x'
+
+---
+id: spy-export-style
+trigger: "when exporting from a module"
+confidence: 0.7
+domain: code-style
+source: repo-analysis
+source_repo: https://github.com/bashandbone/spy
+---
+
+# Spy Export Style
+
+## Action
+
+Prefer named exports
+
+## Evidence
+
+- Export pattern analysis
+- Dominant style: named
+
+---
+id: spy-test-separate
+trigger: "when writing tests"
+confidence: 0.8
+domain: testing
+source: repo-analysis
+source_repo: https://github.com/bashandbone/spy
+---
+
+# Spy Test Separate
+
+## Action
+
+Place tests in the tests/ or __tests__/ directory, mirroring src structure
+
+## Evidence
+
+- Separate test directory pattern detected
+- Tests live in dedicated test folders
+
+---
+id: spy-workflow-spec-panel-feedback-implementation
+trigger: "when doing spec panel feedback implementation"
+confidence: 0.7
+domain: workflow
+source: repo-analysis
+source_repo: https://github.com/bashandbone/spy
+---
+
+# Spy Workflow Spec Panel Feedback Implementation
+
+## Action
+
+Follow the spec-panel-feedback-implementation workflow:
+1. Review spec-panel findings (CRITICAL/HIGH/MEDIUM/LOW).
+2. Update specs/feature/contracts/*.md to clarify or correct contracts.
+3. Update specs/feature/data-model.md to reflect new or changed data structures.
+4. Update specs/feature/spec.md to resolve contradictions, clarify requirements, or add edge cases.
+5. Update specs/feature/research.md with new findings or rationale.
+6. Update specs/feature/quickstart.md if user-facing steps change.
+7. Update specs/feature/tasks.md to add, update, or close implementation tasks.
+
+## Evidence
+
+- Workflow detected from commit patterns
+- Frequency: ~4x per month
+- Files: specs/*/contracts/*.md, specs/*/data-model.md, specs/*/spec.md
+
+---
+id: spy-workflow-specification-initialization-for-new-feature
+trigger: "when doing specification initialization for new feature"
+confidence: 0.55
+domain: workflow
+source: repo-analysis
+source_repo: https://github.com/bashandbone/spy
+---
+
+# Spy Workflow Specification Initialization For New Feature
+
+## Action
+
+Follow the specification-initialization-for-new-feature workflow:
+1. Create or update .specify/feature.json to register the new feature.
+2. Add specs/feature/spec.md with clarified requirements.
+3. Add specs/feature/plan.md outlining implementation steps.
+4. Add specs/feature/research.md summarizing relevant research.
+5. Add specs/feature/data-model.md describing data structures.
+6. Add specs/feature/quickstart.md for user onboarding.
+7. Add specs/feature/contracts/*.md for CLI, config, internal APIs, keys, etc.
+8. Add specs/feature/checklists/requirements.md for requirement tracking.
+9. Update CLAUDE.md or other project-level markers to reference the new feature.
+
+## Evidence
+
+- Workflow detected from commit patterns
+- Frequency: ~1x per month
+- Files: .specify/feature.json, CLAUDE.md, specs/*/spec.md
+
+---
+id: spy-workflow-specification-maintenance-and-refinement
+trigger: "when doing specification maintenance and refinement"
+confidence: 0.65
+domain: workflow
+source: repo-analysis
+source_repo: https://github.com/bashandbone/spy
+---
+
+# Spy Workflow Specification Maintenance And Refinement
+
+## Action
+
+Follow the specification-maintenance-and-refinement workflow:
+1. Identify inconsistencies, ambiguities, or areas for improvement in the spec or related docs.
+2. Update specs/feature/spec.md to clarify requirements or correct errors.
+3. Update specs/feature/contracts/*.md and data-model.md as needed.
+4. Update specs/feature/research.md and tasks.md to reflect new insights or actions.
+5. Document rationale for changes in commit messages.
+
+## Evidence
+
+- Workflow detected from commit patterns
+- Frequency: ~3x per month
+- Files: specs/*/spec.md, specs/*/contracts/*.md, specs/*/data-model.md
+
+---
+id: spy-instinct-file-naming-camelCase
+trigger: "When creating or renaming a file in the codebase"
+confidence: 0.9
+domain: code-style
+source: repo-analysis
+source_repo: bashandbone/spy
+---
+
+# Spy Instinct File Naming CamelCase
+
+## Action
+
+Use camelCase for file names
+
+## Evidence
+
+- Pattern in namingConventions.files: camelCase
+
+---
+id: spy-instinct-function-naming-camelCase
+trigger: "When defining a function in TypeScript"
+confidence: 0.9
+domain: code-style
+source: repo-analysis
+source_repo: bashandbone/spy
+---
+
+# Spy Instinct Function Naming CamelCase
+
+## Action
+
+Use camelCase for function names
+
+## Evidence
+
+- Pattern in namingConventions.functions: camelCase
+
+---
+id: spy-instinct-class-naming-PascalCase
+trigger: "When defining a class in TypeScript"
+confidence: 0.9
+domain: code-style
+source: repo-analysis
+source_repo: bashandbone/spy
+---
+
+# Spy Instinct Class Naming PascalCase
+
+## Action
+
+Use PascalCase for class names
+
+## Evidence
+
+- Pattern in namingConventions.classes: PascalCase
+
+---
+id: spy-instinct-constant-naming-SCREAMING_SNAKE_CASE
+trigger: "When defining a constant in TypeScript"
+confidence: 0.9
+domain: code-style
+source: repo-analysis
+source_repo: bashandbone/spy
+---
+
+# Spy Instinct Constant Naming SCREAMING_SNAKE_CASE
+
+## Action
+
+Use SCREAMING_SNAKE_CASE for constant names
+
+## Evidence
+
+- Pattern in namingConventions.constants: SCREAMING_SNAKE_CASE
+
+---
+id: spy-instinct-import-style-relative
+trigger: "When importing modules in TypeScript files"
+confidence: 0.9
+domain: code-style
+source: repo-analysis
+source_repo: bashandbone/spy
+---
+
+# Spy Instinct Import Style Relative
+
+## Action
+
+Use relative import paths
+
+## Evidence
+
+- Pattern in importStyle: relative
+
+---
+id: spy-instinct-export-style-named
+trigger: "When exporting modules or functions in TypeScript"
+confidence: 0.9
+domain: code-style
+source: repo-analysis
+source_repo: bashandbone/spy
+---
+
+# Spy Instinct Export Style Named
+
+## Action
+
+Use named exports
+
+## Evidence
+
+- Pattern in exportStyle: named
+
+---
+id: spy-instinct-test-location-separate
+trigger: "When adding or organizing tests"
+confidence: 0.8
+domain: testing
+source: repo-analysis
+source_repo: bashandbone/spy
+---
+
+# Spy Instinct Test Location Separate
+
+## Action
+
+Place tests in a separate location from source files
+
+## Evidence
+
+- Pattern in architecture.testLocation: separate
+
+---
+id: spy-instinct-git-commit-freeform
+trigger: "When writing a commit message"
+confidence: 0.8
+domain: git
+source: repo-analysis
+source_repo: bashandbone/spy
+---
+
+# Spy Instinct Git Commit Freeform
+
+## Action
+
+Use a freeform commit message, optionally prefixed with context (e.g., [Spec Kit]) and concise description
+
+## Evidence
+
+- Seen in commits: '[Spec Kit] Add 001-popup-reader specification and implementation plan', '[Spec Kit] Address spec-panel CRITICAL findings (4)'
+
+---
+id: spy-instinct-git-commit-average-length
+trigger: "When composing a commit message"
+confidence: 0.7
+domain: git
+source: repo-analysis
+source_repo: bashandbone/spy
+---
+
+# Spy Instinct Git Commit Average Length
+
+## Action
+
+Keep commit messages concise, around 49 characters on average
+
+## Evidence
+
+- Pattern in commits.averageLength: 49
+
+---
+id: spy-instinct-workflow-spec-panel-feedback
+trigger: "When a spec-panel review produces findings that must be addressed in the documentation/specification"
+confidence: 0.95
+domain: workflow
+source: repo-analysis
+source_repo: bashandbone/spy
+---
+
+# Spy Instinct Workflow Spec Panel Feedback
+
+## Action
+
+Update all relevant spec, contract, data model, research, quickstart, and task files to address the findings
+
+## Evidence
+
+- Workflow: spec-panel-feedback-implementation
+- Commits: '[Spec Kit] Address spec-panel CRITICAL findings (4)'
+
+---
+id: spy-instinct-workflow-spec-initialization
+trigger: "When a new feature is being planned and its specification is to be captured"
+confidence: 0.9
+domain: workflow
+source: repo-analysis
+source_repo: bashandbone/spy
+---
+
+# Spy Instinct Workflow Spec Initialization
+
+## Action
+
+Create all foundational spec and planning documents for the new feature
+
+## Evidence
+
+- Workflow: specification-initialization-for-new-feature
+- Commits: '[Spec Kit] Add 001-popup-reader specification and implementation plan'
+
+---
+id: spy-instinct-workflow-spec-maintenance
+trigger: "When inconsistencies, ambiguities, or improvements are identified in the specification or related docs outside formal panel reviews"
+confidence: 0.85
+domain: workflow
+source: repo-analysis
+source_repo: bashandbone/spy
+---
+
+# Spy Instinct Workflow Spec Maintenance
+
+## Action
+
+Update and refine spec, contract, data model, research, and task files as needed
+
+## Evidence
+
+- Workflow: specification-maintenance-and-refinement
+
