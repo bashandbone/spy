@@ -100,7 +100,7 @@ from.
 Validation:
 
 - `FileSource.Path` must resolve to a regular file readable by the process.
-  Symlinks are followed; broken symlinks raise FR-013 stdout error.
+  Symlinks are followed; broken symlinks raise FR-013 stderr error.
 - Binary detection: first 8KiB scanned for null bytes; if > 1% of bytes are
   control characters outside `\t\r\n\x1b`, treated as binary → FR-013 error.
 - `StdinSource` is only constructed when `os.Stdin` is not a TTY.
@@ -290,8 +290,8 @@ Subset of bindings (full list in [contracts/keys.md](./contracts/keys.md)):
 
 | Rule | Source spec | Enforcement |
 |------|-------------|-------------|
-| Reject binary input with stdout error | FR-013 | `loader.Open` returns sentinel before viewer launch |
-| Reject inaccessible files with stdout error | FR-013 | `os.Stat` failure surfaces stderr message and `os.Exit(2)` |
+| Reject binary input with stderr error | FR-013 | `loader.Open` returns sentinel before viewer launch; `cmd/spy/main.go` emits `spy: binary file: …` to stderr and exits 4 |
+| Reject inaccessible files with stderr error | FR-013 | `os.Stat` failure surfaces stderr message and `os.Exit(3)` (I/O error per `contracts/cli.md`) |
 | Restore terminal on signal | FR-015 | `defer term.Restore` in `main`; Bubble Tea's signal handlers |
 | Resize handling | FR-014 | `tea.WindowSizeMsg` → viewport `SetWidth/Height` and wrapped-line cache invalidated |
 | Minimum terminal `80 × 24` | Q4 / Assumptions | Below threshold: hide footer, single-column status, no graphics; never error |

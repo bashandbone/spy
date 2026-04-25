@@ -85,35 +85,22 @@ invocation. Up to ~1 GB inputs via windowed mode. Config file ≤ a few KiB.
 
 *GATE: Must pass before Phase 0 research. Re-check after Phase 1 design.*
 
-The project's `.specify/memory/constitution.md` is an unmodified template
-(`[PROJECT_NAME] Constitution`, all principles still placeholders). The
-`/speckit-constitution` workflow has not been run, so there are no ratified
-principles to gate against.
+**Constitution version evaluated**: v1.0.0 (ratified 2026-04-25). Principles I–VI.
 
-This plan instead aligns with the user's global Go rules
-(`~/.claude/rules/golang/*` — coding-style, testing, security, hooks,
-patterns) and the existing in-repo `DEVELOPMENT.md`. Specifically:
+| Principle | Plan compliance |
+|-----------|-----------------|
+| I. Spec-Driven Development (NON-NEGOTIABLE) | This plan plus `spec.md`, `research.md`, `data-model.md`, `contracts/`, and `tasks.md` together satisfy the workflow. |
+| II. Test-First Discipline (NON-NEGOTIABLE) | `tasks.md` preamble enforces failing-test-first per implementation task; `-race` and ≥ 80 % per-package coverage are PR gates (T003, T111). PTY harness for capability paths (T004). |
+| III. Unix Philosophy & Composability | Errors → stderr (FR-013, `contracts/cli.md`); stable documented exit codes; stdin is first-class (FR-002, US5); no temp files for piped input (research R5); composes via flags/pipes only. |
+| IV. Pure-Go by Default, cgo Opt-In | Default build is pure-Go (T001); cgo features (`go-fitz` PDF rasterization) gated behind the `fitz` build tag with a pure-Go text-extraction fallback (research R3, T079). Cross-compile targets supported without a cgo toolchain. |
+| V. Capability-Aware Graceful Degradation | `internal/term.Detect` covers TTY/color/graphics/luminance probes (T011–T014, T064–T065); image/PDF metadata fallback (T080–T081); 80×24 graceful degradation (Q4, T098); panic-safe terminal restore + graphics cleanup (research R10, T032/T083). |
+| VI. REUSE-Compliant Licensing | Every new file carries the SPDX dual-license header (T002, T107); `reuse lint` is a CI gate (T003, T111). No GPL/AGPL transitive deps in production paths. |
 
-| Default principle (from rules) | Plan compliance |
-|--------------------------------|-----------------|
-| Accept interfaces, return structs | Honored: `source.Source`, `render.Renderer`, `keys.Action` boundaries. |
-| Wrap errors with `%w` | Honored throughout the loader / source / graphics layers. |
-| Run with `-race`, table-driven tests, ≥ 80 % coverage | Adopted as testing baseline. |
-| `gofmt`/`goimports` mandatory | Hooks already configured globally. |
-| Functional options for constructors | Used for `term.Detect(opts...)`, `loader.Open(...)`. |
-| Honor `NO_COLOR` and OSC standards | Wired in `term` and `render` packages. |
-| Reuse-compliant SPDX headers | All new files MUST carry the existing dual-license header. |
-| No cgo unless gated | `go-fitz` is the only cgo dep; behind `fitz` build tag. |
+**Constitution gate result**: **PASS** — all six principles satisfied by the artifacts in this directory.
 
-Constitution gate result: **PASS (with note)** — proceed; raise an issue to
-run `/speckit-constitution` before the next feature so future plans gate
-against ratified principles.
+**Re-evaluation after Phase 1 design**: **PASS (no new violations)**. The contracts in `contracts/internal-apis.md` keep cross-package dependencies acyclic (`term` → leaf; `source` → `term`; `loader` → `source`; `highlight` → `source`; `graphics` → `term`; `render` → all of the above; `ui` → `render` + `keys`).
 
-Re-evaluation after Phase 1 design: **PASS (no new violations)**. The
-contracts in `contracts/internal-apis.md` keep cross-package dependencies
-acyclic (`term` → leaf; `source` → `term`; `loader` → `source`;
-`highlight` → `source`; `graphics` → `term`; `render` → all of the above;
-`ui` → `render` + `keys`).
+Applying this update closes T103 in `tasks.md` (Polish phase).
 
 ## Project Structure
 

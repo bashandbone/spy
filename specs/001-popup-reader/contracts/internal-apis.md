@@ -163,6 +163,7 @@ type Config struct {
     WindowSize       int
     InitialChunkLines int
     UpdatesBuffer     int  // chunk channel capacity; default 4
+    MaxLineBytes      int64 // per-line truncation cap; default 102400 (100 KiB)
 }
 ```
 

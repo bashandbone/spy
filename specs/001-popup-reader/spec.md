@@ -183,16 +183,16 @@ A developer using the tool wants to know which file they're viewing, how many li
 ### Measurable Outcomes
 
 - **SC-001**: Users can open and view a 100-line text file with syntax highlighting in under 100ms from invocation
-- **SC-002**: Navigation through a 10,000-line file is smooth with no perceivable lag when pressing arrow keys
+- **SC-002**: Scrolling a 10 000-line file (`/tmp/spy-fixtures/big.txt`) is smooth. Measured by `tests/perf/scroll_bench_test.go`: 100 sequential ScrollDown actions driven through the PTY harness, p95 per-frame wall-clock ≤ 16 ms (60 fps target) and zero dropped frames.
 - **SC-003**: Text search returns results in under 500ms even in files larger than 1MB
-- **SC-004**: Theme switching between dark/light modes occurs instantly without visual artifacts
+- **SC-004**: Theme switching at runtime (`:set theme dark|light|<style>`) re-renders the visible viewport in ≤ 16 ms p95 without re-tokenizing the in-memory buffer (Chroma styles are applied at format time per research R7). Measured by `tests/perf/theme_swap_bench_test.go` averaging 100 swaps against a 10 000-line file.
 - **SC-005**: The tool successfully handles file sizes up to 1GB without consuming more than 500MB of memory
 - **SC-006**: For a fixed corpus of 50 representative source files (one per language from the GitHub Linguist top-50 by repository count, captured under `tests/fixtures/highlight-corpus/`), Chroma successfully selects a non-`fallback` lexer and produces tokenization where ≤ 1 % of bytes per file land in `chroma.Error` tokens. Pass threshold: ≥ 47/50 files (94 %). Measured by `tests/perf/highlight_corpus_test.go`.
 - **SC-007**: From the user pressing `q`/`Esc`/`Ctrl-C` to `tea.Program.Run()` returning and the alt-screen having been exited (terminal back to main screen, cursor restored), elapsed wall-clock ≤ 500 ms at the 95th percentile across 100 invocations against `/tmp/spy-fixtures/big.txt` (10 000 lines). Measured by `tests/perf/dismiss_bench_test.go` driving the PTY harness.
-- **SC-008**: Terminal resize events are handled without visual corruption or loss of viewport state
-- **SC-009**: Image rendering in Kitty/iTerm2 terminals displays correctly for JPEG, PNG, and GIF files under 50MB
-- **SC-010**: PDF preview/rendering works in supported terminals; fallback message appears clearly in unsupported terminals
-- **SC-011**: Piped input from common commands (cat, git diff, grep, etc.) displays correctly
+- **SC-008**: After a `tea.WindowSizeMsg` arrives, (a) the line previously at viewport row 0 remains at row 0, (b) the wrap cache is invalidated, (c) the next frame paints in ≤ 16 ms p95. Measured by `tests/integration/resize_test.go` driving 50 successive resize events at random widths in `[40, 200]` cols.
+- **SC-009**: For each fixture in `tests/fixtures/img/{small.png 32 KB, medium.jpg 5 MB, large.gif 49 MB}`, `spy <file>` in a Kitty-emulating PTY (a) emits a Kitty payload that round-trips through the harness's reference decoder back to a pixel-identical `image.Image`, (b) exits 0, (c) keeps resident memory ≤ 250 MB. Measured by `tests/integration/graphics_test.go` (extends T073).
+- **SC-010**: For `dummy.pdf` (single-page, known text "Dummy PDF file") and `tests/fixtures/pdf/multi-page.pdf` (3 pages), the renderer (a) rasterizes page 1 via `graphics.PDFPage` under `-tags fitz` in a graphics-capable PTY, and (b) extracts page text via `pdfcpu` in a non-graphics PTY — the extracted text MUST contain the known sentinel string. Measured by `tests/integration/pdf_test.go`.
+- **SC-011**: Three pipeline shapes pass end-to-end in `tests/e2e/05_pipe.sh`: (a) `cat tests/fixtures/hello.go | spy -l go` displays Go-highlighted content with `<stdin>` in the footer; (b) `git diff HEAD~ | spy` displays diff-highlighted content; (c) `grep -n needle tests/fixtures/hello.go | spy` displays plain text with `<stdin>` in the footer. All three exit 0 on `q`.
 - **SC-012**: Three independent reviewers (not the implementer) complete the `quickstart.md` Steps 2, 4, and 12 (open file, search + jump-to-line, resize) using only the in-app help overlay (`F1`/`?`); each reviewer records pass/fail and notes blockers in `specs/001-popup-reader/checklists/quickstart-validation.md`. Pass threshold: 3/3 reviewers pass all three steps without escaping to external docs. *Note*: original SC-012 ("90 % of users without docs") would require a funded user study with N ≥ 20; deferred to a post-v0.1.0 success metric. The reviewer-panel heuristic above is the v0.1.0 gate.
 
 ## Assumptions

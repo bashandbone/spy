@@ -94,6 +94,8 @@ completes. Each task pair below puts the failing test first.
 - [ ] T021 Implement `Chunk`, `Stream`, `Config`, and `Open(ctx, src, cfg)` in `internal/loader/stream.go` using `bufio.Scanner` with a 64 KiB read buffer. The first chunk is sized to ≥ `cfg.InitialChunkLines` (default = 2× viewport height = 80) so the first frame paints inside SC-001.
 - [ ] T022 [P] Write failing tests for windowed mode in `internal/loader/window_test.go`: trigger threshold via `cfg.MaxResidentBytes`, slice access reads-ahead, slice access for non-resident range re-seeks the source, stdin (non-seekable) falls back to "scroll forward only" with the documented warning.
 - [ ] T023 Implement windowing buffer (`Append`, `Slice`) and `MaxResidentBytes`-driven mode switch in `internal/loader/window.go`; emit `loader.WarnStdinNonSeekable` (a wrapped error sent on `Errs`) when stdin needs windowing.
+- [ ] T023b [P] Failing tests in `internal/loader/stream_test.go` for per-line cap (covers spec.md edge case "lines longer than 100 KiB are truncated at 100 KiB"): a synthetic input line of 200 KiB results in `Line.Raw` of exactly 102400 bytes, and the `Stream.Errs` channel emits `loader.WarnLineTruncated{Line int64, OriginalBytes int}` exactly once for that line; cap is configurable via `cfg.MaxLineBytes` (default 102400). Also covers a 5 MiB synthetic line (truncated identically) and an empty line (untouched).
+- [ ] T023c Implement per-line truncation in `internal/loader/stream.go`: pass `cfg.MaxLineBytes` (default 102400) to the `bufio.Scanner.Buffer(...)` setup and post-process tokens longer than the cap by truncating to cap and emitting `WarnLineTruncated` (a wrapped error) on `Stream.Errs`. Add `MaxLineBytes int64` to `loader.Config` (already documented in `contracts/internal-apis.md`). Surface the warning through the standard status-bar advisory pipeline (5 s auto-clear), reusing the same path as `WarnHighlightDisabled`.
 
 ### `internal/config`
 
@@ -118,6 +120,7 @@ completes. Each task pair below puts the failing test first.
 - [ ] T033 [P] Write failing tests for `NewModel`, `Init`, `Update` (handles `tea.WindowSizeMsg`, `chunkLoadedMsg`, key events), and `View` in `internal/ui/model_test.go`. Cover: foundational quit on `q`/Esc/Ctrl-C, scroll up/down with arrow keys, end-of-file indicator on last line, resize reflows viewport.
 - [ ] T034 Replace `internal/ui/model.go` with a `bubbles/viewport`-based `Model`, `NewModel(opts ModelOptions) Model`, `ModelOptions` matching `contracts/internal-apis.md`, and the foundational `Init`/`Update`/`View`. Wire the `internal/keys.Default()` keymap; vim mode is added in US2.
 - [ ] T035 [P] Split UI into `internal/ui/update.go`, `internal/ui/view.go`, `internal/ui/help.go` (help is a stub overlay until later stories add bindings to surface).
+- [ ] T035b [P] Failing integration test in `tests/integration/signal_test.go` driving the PTY harness against `/tmp/spy-fixtures/big.txt` (covers FR-015 / SC-008 signal-handling gate that Constitution Principle II requires): once the alt-screen frame is observed, send SIGINT and assert (a) process exits with code 130 within 1 s, (b) terminal modes restored (echo on, cursor visible, alt-screen exited via the `\x1b[?1049l` sequence), (c) no residual escape sequences trail on stdout. Repeat the run sending SIGTERM and assert exit code 143. Graphics-cleanup assertions deferred to T083; this task only covers the foundational `defer term.Restore()` chain from T032.
 
 ### Cleanup of legacy skeleton
 
@@ -156,6 +159,8 @@ the matching golden-file integration test.
       (b) trigger a re-render frame on `chunkLoadedMsg` so highlighted content appears progressively,
       (c) display "END" indicator (`render.Theme.Footer`) when the viewport reaches the last loaded line and `Status == Ready`.
 - [ ] T046 [US1] Wire alt-screen entry/exit options in `cmd/spy/main.go`: `tea.WithAltScreen()`, `tea.WithMouseCellMotion()`, and a SIGWINCH-aware program option. Confirm `defer term.Restore()` still fires on panic.
+- [ ] T046b [P] [US1] Failing unit tests for ActionReload in `internal/ui/update_test.go` (covers spec.md edge case "What happens when a file is deleted or its permissions change while the viewer is open"): (a) successful reload re-invokes `loader.Open` on the current `Source` and replaces the buffer atomically; (b) reload after the underlying file is deleted retains the prior buffer and emits a status-bar error styled with `Theme.Error`; (c) reload while a previous stream is still draining cancels the previous `context.Context` first.
+- [ ] T046c [US1] Implement `ActionReload` handling in `internal/ui/update.go`: capture the active loader `cancel` func; on reload, call `cancel()`, then `loader.Open(ctx, m.Source, m.Config)` afresh; on success swap `m.Buffer` and clear `m.LastError`; on error keep `m.Buffer` and set `m.Status = StatusError` with the wrapped error in `m.LastError`. Bind `Ctrl-R` and `r` to `ActionReload` in `internal/keys/default.go` (verify T008's "every Action from contracts/keys.md must be present" still holds).
 
 **Checkpoint**: User Story 1 is fully functional. Steps 2 and 12 of
 `quickstart.md` pass. MVP is shippable here.
@@ -279,7 +284,7 @@ language is auto-detected (shebang, hint, Chroma `Analyse`).
 - [ ] T086 [P] [US5] Write failing tests for stdin language inference in `internal/source/detect_test.go`: shebang first line, `--lang` hint override, Chroma `Analyse` fallback, plain text when none match.
 - [ ] T087 [P] [US5] Write failing tests for `FromArgs` stdin construction in `internal/source/source_test.go`: TTY stdin + no file → `ErrNoInput`; non-TTY stdin + no file → `StdinSource`; `-` positional + TTY stdin → `StdinSource` (blocks per contract); both file and stdin → file wins.
 - [ ] T088 [P] [US5] Write a failing integration test in `tests/integration/stdin_test.go`: PTY pair, write a Go diff to stdin, assert highlighted-diff output and `<stdin>` in the footer.
-- [ ] T089 [P] [US5] Add failing E2E script `tests/e2e/05_pipe.sh`: `git diff HEAD~ | spy` (when run inside a git repo), `echo content | spy -`, and the degenerate-cat mode (`echo content | spy | cat`) which must exit 0 and pass content through verbatim with no escape sequences.
+- [ ] T089 [P] [US5] Add failing E2E script `tests/e2e/05_pipe.sh` exercising SC-011's three pipeline shapes: (a) `cat tests/fixtures/hello.go | spy -l go` (Go highlight, `<stdin>` footer); (b) `git diff HEAD~ | spy` when invoked inside the repo (diff highlight); (c) `grep -n needle tests/fixtures/hello.go | spy` (plain text, `<stdin>` footer). Plus the degenerate-cat path: `echo content | spy | cat` exits 0 and passes content through verbatim with no escape sequences.
 
 ### Implementation for User Story 5
 
@@ -326,8 +331,11 @@ and close residual constitution TODOs.
 
 - [ ] T101 [P] Refresh `README.md` to describe `spy` (not the placeholder text), with a quick install + usage section linking to `specs/001-popup-reader/contracts/cli.md`, `keys.md`, and `config.md`.
 - [ ] T102 [P] Update `DEVELOPMENT.md` with `make` target descriptions, the `-tags fitz` build instructions, and a brief on the `tests/integration` PTY harness.
-- [ ] T103 [P] Refresh the Constitution Check section in `specs/001-popup-reader/plan.md` to cite constitution v1.0.0 (closes `TODO(plan-001)` from `.specify/memory/constitution.md`).
+- [x] T103 [P] Refresh the Constitution Check section in `specs/001-popup-reader/plan.md` to cite constitution v1.0.0 (closes `TODO(plan-001)` from `.specify/memory/constitution.md`). *Done 2026-04-25 via speckit-analyze HIGH-fix C1.*
 - [ ] T104 [P] Add SC-001 benchmark in `tests/perf/firstframe_bench_test.go`: load a 100-line file end-to-end and assert ≤ 100 ms.
+- [ ] T104b [P] SC-002 scroll benchmark in `tests/perf/scroll_bench_test.go`: PTY-drive 100 sequential ScrollDown actions on `/tmp/spy-fixtures/big.txt` (10 000 lines); record per-frame wall-clock; assert p95 ≤ 16 ms (60 fps target) and zero dropped frames.
+- [ ] T104c [P] SC-004 theme-swap benchmark in `tests/perf/theme_swap_bench_test.go`: 100 `:set theme dark|light` swaps against a 10 000-line file; assert p95 re-render ≤ 16 ms and that the underlying token buffer is reused (no re-tokenization — verified via a counter on `Highlighter.Highlight` invocations).
+- [ ] T104d [P] SC-008 resize integration test in `tests/integration/resize_test.go`: drive 50 successive `tea.WindowSizeMsg` events at random widths in `[40, 200]` cols against a 10 000-line file; assert (a) the line previously at viewport row 0 remains at row 0, (b) the wrap cache is invalidated on each event, (c) p95 re-paint ≤ 16 ms.
 - [ ] T105 [P] Add SC-003 benchmark in `tests/perf/search_bench_test.go`: search across a 1 MiB synthetic file and assert ≤ 500 ms.
 - [ ] T106 [P] Add SC-005 benchmarks in `tests/perf/large_file_test.go` in **two tiers**:
       (a) `TestLargeFile_PRGate`: 200 MiB synthetic file (just above the 256 MiB windowed-mode threshold's complement — the largest file that *doesn't* trigger windowing), asserts RSS ≤ 250 MiB. Runs on every PR (no build tag); ~5s on commodity CI; gates the PR.
