@@ -1,0 +1,74 @@
+# SPDX-FileCopyrightText: 2026 Adam Poulemanos
+#
+# SPDX-License-Identifier: MIT OR Apache-2.0
+#
+# spy reference configuration.
+#
+# Discovery: spy looks up $XDG_CONFIG_HOME/spy/config.toml (falling back to
+# $HOME/.config/spy/config.toml). Pass --config <path> to load an explicit
+# file or --no-config to ignore both. Precedence is CLI flags > env vars >
+# this file > compiled defaults.
+#
+# Every key below shows the compiled default. Uncomment to override.
+
+# Theme: "auto" detects from terminal background luminance via OSC 11.
+# theme = "auto"                      # "auto" | "dark" | "light" | "<chroma-style>"
+
+# Enable additive vim keybindings (gg / G / Ctrl-D / Ctrl-U / hjkl / 0 / $).
+# vim_mode = false
+
+# Search defaults.
+# regex_default = false               # treat search queries as regex by default
+# case_mode     = "smart"             # "smart" | "sensitive" | "insensitive"
+
+# Display.
+# word_wrap    = true
+# line_numbers = true
+# tab_width    = 4
+
+# Memory and performance limits.
+# max_resident_bytes  = 268435456     # 256 MiB; switch to windowed mode above this
+# window_size         = 8192          # lines kept hot in windowed mode
+# highlight_cap_bytes = 5242880       # 5 MiB; disable syntax highlighting above this
+
+# Graphics protocol selection.
+# graphics = "auto"                   # "auto" | "none" | "kitty" | "iterm2" | "sixel"
+
+# Minimum supported terminal size before degraded layout (Q4 clarification).
+# min_cols = 80
+# min_rows = 24
+
+# Custom key bindings (optional). Each value is a list of key strings.
+# Keys reference: see specs/001-popup-reader/contracts/keys.md.
+# [keys]
+# quit             = ["q", "esc", "ctrl+c"]
+# search_forward   = ["/"]
+# go_to_line       = [":"]
+
+# Per-language overrides. Key is a Chroma lexer name, lowercased. The
+# accepted fields match the top-level schema except [keys].
+# [lang.go]
+# theme = "github"
+# [lang.markdown]
+# word_wrap = true
+
+# ---------------------------------------------------------------------------
+# Sample profiles. Each is fully commented; uncomment a block to apply.
+# ---------------------------------------------------------------------------
+
+# Profile A — always-dark, classic monochrome status bar.
+# theme = "dark"
+
+# Profile B — power-user: vim mode, regex-by-default, tighter memory budget
+# for slim VMs and bastion hosts.
+# vim_mode           = true
+# regex_default      = true
+# max_resident_bytes = 67108864       # 64 MiB
+
+# Profile C — per-language tuning: JSON renders better with horizontal
+# scrolling, Markdown reads better with the github Chroma style.
+# [lang.json]
+# word_wrap = false
+# line_numbers = true
+# [lang.markdown]
+# theme = "github"

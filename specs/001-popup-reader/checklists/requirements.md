@@ -1,3 +1,9 @@
+<!--
+SPDX-FileCopyrightText: 2026 Adam Poulemanos
+
+SPDX-License-Identifier: MIT OR Apache-2.0
+-->
+
 # Specification Quality Checklist: Popup Reader - Focused Text/PDF/Image Viewer
 
 **Purpose**: Validate specification completeness and quality before proceeding to planning  

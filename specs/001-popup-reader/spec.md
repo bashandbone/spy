@@ -1,3 +1,9 @@
+<!--
+SPDX-FileCopyrightText: 2026 Adam Poulemanos
+
+SPDX-License-Identifier: MIT OR Apache-2.0
+-->
+
 # Feature Specification: Popup Reader - Focused Text/PDF/Image Viewer
 
 **Feature Branch**: `001-popup-reader`  
