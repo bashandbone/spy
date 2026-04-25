@@ -33,10 +33,10 @@ const SentinelWrapped int64 = -1
 // (or before close, when there are none).
 //
 // Cancellation: a non-nil ctx that's cancelled mid-scan stops the
-// goroutine on the next iteration. The producer never blocks on a full
-// receiver channel — the channel is unbuffered so the consumer drives
-// the cadence; if no consumer is ready, the producer waits until ctx is
-// cancelled.
+// goroutine on the next iteration. Sends on the unbuffered result
+// channel synchronize with the consumer, so the consumer drives the
+// cadence; when ctx is non-nil, the send/select path also honors
+// ctx.Done() and aborts if cancellation is observed while waiting.
 func Scan(ctx context.Context, provider source.LineProvider, m Matcher, dir Direction, from int64) <-chan Match {
 	out := make(chan Match)
 	go scanLoop(ctx, provider, m, dir, from, out)
