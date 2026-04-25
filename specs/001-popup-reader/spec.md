@@ -204,6 +204,6 @@ A developer using the tool wants to know which file they're viewing, how many li
 - **Binary File Behavior**: Binary files will display a clear "unsupported format" message rather than attempting to render binary data.
 - **Terminal State Preservation**: The tool will restore terminal state (colors, cursor position, echo mode) on exit in all cases, even on error or signal.
 - **Configuration**: User preferences (theme, keybindings) can be configured via a simple config file (~/.spy/config) or environment variables; full config system design is out of scope for v1.
-- **Stdin Handling**: Piped input is read entirely before display; streaming very large piped inputs may require pagination (design detail for planning phase).
+- **Stdin Handling**: Piped input streams into the viewer through the same chunked loader as files (per FR-002 and US5 acceptance #1); content is held only in memory subject to the FR-012 resident-memory bound, and is never persisted to disk. Non-seekable stdin above the windowed-mode threshold falls back to scroll-forward-only mode with a status-bar warning (per FR-012).
 - **Large File Loading**: Large files (>100MB) use progressive/concurrent loading: initial viewport displays immediately while remaining content streams in background. No blocking waits for full file load.
 - **Keyboard Shortcuts**: Default keybindings use arrow keys for navigation (accessible to all users). Optional vim mode (hjkl, /, :) can be enabled via `--vim` flag or config file. Emacs keybindings and full customization out of scope for v1.
