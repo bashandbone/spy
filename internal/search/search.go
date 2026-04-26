@@ -6,8 +6,21 @@ package search
 
 import (
 	"context"
+	"time"
 
 	"github.com/knitli/spy/internal/source"
+)
+
+// totalUnknownPollInterval is the cadence the scan loop polls
+// [source.LineProvider.Total] when the provider hasn't yet reported a
+// concrete line count (Total() returns -1). The poll runs up to
+// `totalUnknownMaxWaits` times before giving up — after that we treat
+// the provider as quiescent and exit cleanly. Both values are tiny so
+// the user-perceived latency for `/` immediately after open stays
+// below one frame.
+const (
+	totalUnknownPollInterval = 5 * time.Millisecond
+	totalUnknownMaxWaits     = 20 // ~100ms total wait budget
 )
 
 // scanChunk is the number of lines we pull from the [source.LineProvider]
@@ -45,12 +58,18 @@ func Scan(ctx context.Context, provider source.LineProvider, m Matcher, dir Dire
 
 // scanLoop is the goroutine body. Extracted for testability and so the
 // returned channel stays close-on-exit guaranteed via defer.
+//
+// The pre-stream race ([loader.LineBuffer.Total] returning -1 while
+// the loader hasn't fed the buffer yet) is mitigated by polling
+// briefly so a user who hits `/` the moment after open doesn't see
+// the search bail silently — see [totalUnknownPollInterval] /
+// [totalUnknownMaxWaits] (Copilot review acceptance M5).
 func scanLoop(ctx context.Context, provider source.LineProvider, m Matcher, dir Direction, from int64, out chan<- Match) {
 	defer close(out)
 	if provider == nil || m == nil {
 		return
 	}
-	total := provider.Total()
+	total := waitForTotal(ctx, provider)
 	if total <= 0 {
 		return
 	}
@@ -259,4 +278,36 @@ func clamp(v, lo, hi int64) int64 {
 		return hi
 	}
 	return v
+}
+
+// waitForTotal returns the provider's current line count, polling
+// briefly while the count is the [loader.LineBuffer] "unknown" sentinel
+// (-1) so a search kicked off the instant the user opens a file
+// doesn't bail before the first chunk lands. Returns 0 when the
+// provider reports a confirmed-empty source, when the wait budget is
+// exhausted, or when ctx is cancelled.
+func waitForTotal(ctx context.Context, provider source.LineProvider) int64 {
+	total := provider.Total()
+	if total >= 0 {
+		return total
+	}
+	timer := time.NewTimer(totalUnknownPollInterval)
+	defer timer.Stop()
+	for waits := 0; waits < totalUnknownMaxWaits; waits++ {
+		if ctx != nil {
+			select {
+			case <-ctx.Done():
+				return 0
+			case <-timer.C:
+			}
+		} else {
+			<-timer.C
+		}
+		total = provider.Total()
+		if total >= 0 {
+			return total
+		}
+		timer.Reset(totalUnknownPollInterval)
+	}
+	return 0
 }

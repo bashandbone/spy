@@ -215,12 +215,15 @@ func TestLineBuffer_SetTokensEmptyInputIsNoOp(t *testing.T) {
 
 func TestLineBuffer_SetTokensOnEmptyBufferIsNoOp(t *testing.T) {
 	buf := NewLineBuffer(0, 0, nil)
-	// No Append; buf is empty.
+	// No Append; buf is empty. With no Append/MarkComplete the buffer
+	// reports the -1 "unknown" sentinel so SetTokens silently skipping
+	// is observable separately from "we know there are zero lines"
+	// (Copilot review acceptance M5).
 	buf.SetTokens([]source.Line{
 		{Number: 1, Tokens: []source.Token{{Type: chroma.Keyword, Value: "x"}}},
 	})
-	if buf.Total() != 0 {
-		t.Errorf("empty buffer Total: got %d want 0", buf.Total())
+	if buf.Total() != -1 {
+		t.Errorf("pre-stream buffer Total: got %d want -1 (unknown sentinel)", buf.Total())
 	}
 }
 
@@ -305,4 +308,52 @@ func TestLineBuffer_ClearWrapCaches(t *testing.T) {
 func TestLineBuffer_ClearWrapCachesEmpty(t *testing.T) {
 	buf := newLineBuffer(0, 0, 0, nil)
 	buf.ClearWrapCaches() // must not panic.
+}
+
+// TestLineBuffer_TotalPreStreamReturnsUnknownSentinel pins the M5
+// contract: until the loader has called either [Append] or
+// [MarkComplete], [Total] returns -1 (the "unknown" sentinel) so the
+// search loop can distinguish "no chunks yet" from "confirmed empty"
+// (Copilot review acceptance M5).
+func TestLineBuffer_TotalPreStreamReturnsUnknownSentinel(t *testing.T) {
+	buf := NewLineBuffer(0, 0, nil)
+	if got := buf.Total(); got != -1 {
+		t.Errorf("pre-stream Total: got %d want -1", got)
+	}
+}
+
+// TestLineBuffer_TotalAfterEmptyAppendIsZero verifies the boundary
+// between -1 and 0: once Append has fired (even with zero lines, as
+// happens when the loader sends a placeholder chunk), Total() flips to
+// the running count rather than staying on the unknown sentinel.
+func TestLineBuffer_TotalAfterEmptyAppendIsZero(t *testing.T) {
+	buf := NewLineBuffer(0, 0, nil)
+	buf.Append(nil) // empty append still counts as "stream started".
+	if got := buf.Total(); got != 0 {
+		t.Errorf("post-empty-Append Total: got %d want 0", got)
+	}
+}
+
+// TestLineBuffer_TotalAfterMarkCompleteZeroIsZero confirms that a
+// confirmed-empty source (loader read EOF on the first chunk and
+// called MarkComplete(0)) reports 0, not the unknown sentinel.
+func TestLineBuffer_TotalAfterMarkCompleteZeroIsZero(t *testing.T) {
+	buf := NewLineBuffer(0, 0, nil)
+	buf.MarkComplete(0)
+	if got := buf.Total(); got != 0 {
+		t.Errorf("post-MarkComplete(0) Total: got %d want 0", got)
+	}
+}
+
+// TestLineBuffer_TotalAfterAppend reports the running count once Append
+// has fed the buffer.
+func TestLineBuffer_TotalAfterAppend(t *testing.T) {
+	buf := NewLineBuffer(0, 0, nil)
+	buf.Append([]source.Line{
+		{Number: 1, Raw: "alpha"},
+		{Number: 2, Raw: "beta"},
+	})
+	if got := buf.Total(); got != 2 {
+		t.Errorf("post-Append Total: got %d want 2", got)
+	}
 }
