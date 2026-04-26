@@ -125,6 +125,28 @@ type Model struct {
 	// the buffer mutex on every paint and gives the metaUpdatedMsg
 	// payload an observable consumer.
 	totalLines int64
+
+	// searchCancel cancels the previous search's background goroutine
+	// when a fresh search starts. Per the acceptance review (H5),
+	// runSearch used to drain the unbuffered [search.Scan] channel
+	// synchronously on the Bubble Tea event-loop goroutine — a
+	// 50 MB / 1 M-line resident buffer froze key/resize events for
+	// seconds. The async path consumes the channel in a tea.Cmd-spawned
+	// goroutine and uses this CancelFunc to abort prior searches when
+	// the user submits a new query (rapid-typing must not pile up
+	// goroutines or let stale results overwrite current state).
+	searchCancel context.CancelFunc
+
+	// searchGen is bumped each time runSearch dispatches a fresh
+	// scan. The async tea.Cmd captures the current value into the
+	// [searchResultMsg.gen] field; on receipt the Update handler
+	// drops any message whose gen doesn't match the live counter
+	// (mirrors the "stale message guard" pattern used for stream
+	// pointers in [chunkLoadedMsg] / [streamErrMsg]). Without this
+	// guard a slow scan that completes after the user has already
+	// started a new search would silently overwrite the new
+	// session's results.
+	searchGen uint64
 }
 
 // NewModel constructs the viewer's Bubble Tea model. The first frame
@@ -266,6 +288,30 @@ type openResultMsg struct {
 	cancel context.CancelFunc
 	src    source.Source
 	err    error
+}
+
+// searchResultMsg carries the outcome of an asynchronous search scan.
+// The scan goroutine, spawned by [Model.runSearch] via a tea.Cmd, drains
+// [search.Scan]'s unbuffered result channel off the event-loop
+// goroutine and yields one of these once the scan completes (or is
+// cancelled). The handler in [Model.Update] applies the matches,
+// computes the initial selection, and clears [search.State.Pending].
+//
+// `gen` tags the message with the searchGen value the dispatching
+// runSearch captured. If a newer search has since started — bumping
+// [Model.searchGen] — the result is stale and the handler ignores it
+// to prevent a slow first scan from clobbering a fresh second scan
+// (acceptance review H5). The pattern mirrors the stale-stream
+// guard on [chunkLoadedMsg] / [streamErrMsg].
+type searchResultMsg struct {
+	gen        uint64
+	query      string
+	dir        search.Direction
+	regex      bool
+	caseMode   search.CaseMode
+	matches    []search.Match
+	scanWrapAt int  // index in `matches` where the wrap section begins (-1 if no wrap)
+	cancelled  bool // true when the scan exited via ctx cancellation
 }
 
 // highlightLines runs the highlighter against `lines` in place. Exists

@@ -77,6 +77,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.onReloadResult(msg)
 	case openResultMsg:
 		return m.onOpenResult(msg)
+	case searchResultMsg:
+		return m.onSearchResult(msg)
 	case metaUpdatedMsg:
 		// Cache the finalized line count on the model so the footer
 		// reads it on subsequent paints without taking the buffer
@@ -106,6 +108,18 @@ func (m Model) onOpenResult(msg openResultMsg) (tea.Model, tea.Cmd) {
 		m.statusAdvisory = fmt.Sprintf("open: %v", msg.err)
 		return m, nil
 	}
+	// Cancel any in-flight async search against the old buffer; its
+	// result would be dropped via the gen guard anyway, but
+	// cancelling lets the goroutine exit promptly rather than
+	// scanning a buffer that's about to be GC'd.
+	if m.searchCancel != nil {
+		m.searchCancel()
+		m.searchCancel = nil
+	}
+	// Bumping searchGen here defensively forces any in-flight result
+	// to be dropped on arrival even if the cancel raced the scan
+	// goroutine's send.
+	m.searchGen++
 	// Swap in the new source/stream/renderer. Clear the advisory and
 	// last-error state so messages from the prior session ("search
 	// wrapped", a previous reload error, etc.) don't bleed into the
@@ -218,6 +232,9 @@ func (m Model) onKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if matchAction(m.keyMap, keys.ActionQuit, msg) {
 		if m.cancel != nil {
 			m.cancel()
+		}
+		if m.searchCancel != nil {
+			m.searchCancel()
 		}
 		return m, tea.Quit
 	}
@@ -405,10 +422,26 @@ func (m Model) submitPrompt() (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-// runSearch compiles the matcher and runs a synchronous full scan
-// against the resident buffer. A full async background scan with
-// progress is a future polish (the Pending flag on search.State); the
-// MVP scope is small enough to scan in-line.
+// runSearch compiles the matcher and dispatches an asynchronous full
+// scan against the resident buffer. Pre-acceptance review (H5) the
+// scan ran synchronously on the Bubble Tea event-loop goroutine —
+// against a 50 MB / 1 M-line resident buffer (`MaxResidentBytes == 0`)
+// the unbuffered [search.Scan] channel forced the loop to block
+// match-by-match for seconds, freezing key and resize handling. The
+// async refactor moves the channel drain into a tea.Cmd-spawned
+// goroutine and yields a [searchResultMsg] on completion.
+//
+// Concurrency invariants:
+//
+//   - Per-search context cancellation: a new search cancels the prior
+//     one (m.searchCancel) so rapid-typing never piles up goroutines.
+//   - Stale-result drop: each dispatch bumps m.searchGen and tags the
+//     resulting [searchResultMsg]; [Model.Update] ignores any message
+//     whose gen doesn't match the live counter so a slow first scan
+//     can't clobber a fresh second scan's state.
+//   - Pending flag set: search.State.Pending=true is observable to the
+//     renderer / footer immediately so the user sees that a scan is
+//     in flight.
 //
 // The prompt buffer can carry vim-style prefix toggles per
 // contracts/keys.md ("Search" section): `\v` forces regex, `\V`
@@ -447,53 +480,135 @@ func (m Model) runSearch(query string, dir search.Direction) (tea.Model, tea.Cmd
 			from = 1
 		}
 	}
-	// Synchronous full scan over the resident range. The scan goroutine
-	// wraps once and closes; we collect everything before returning so
-	// the UI can render the highlights on the next frame.
-	ch := search.Scan(context.Background(), m.stream.Buffer, matcher, dir, from)
-	var matches []search.Match
-	// scanWrapAt is the index in `matches` at which the wrap-around
-	// portion starts (-1 when the scan never wrapped). Tracking it lets
-	// us decide whether the *initially selected* match came from the
-	// post-wrap section, which is the only case that warrants a
-	// "search wrapped" advisory on the first jump (Copilot review PR#9
-	// #4 — bare "scan wrapped" is too noisy when the first hit was
-	// found before wrap).
-	scanWrapAt := -1
-	for hit := range ch {
-		if hit.Line == search.SentinelWrapped {
-			scanWrapAt = len(matches)
-			continue
-		}
-		matches = append(matches, hit)
+	// Cancel any in-flight scan so its goroutine exits before we spawn
+	// a fresh one (rapid-typing pile-up guard).
+	if m.searchCancel != nil {
+		m.searchCancel()
+		m.searchCancel = nil
 	}
+	// Bump the generation BEFORE installing the new state so the
+	// captured value the goroutine ships back is the post-bump gen.
+	m.searchGen++
+	gen := m.searchGen
+	ctx, cancel := context.WithCancel(context.Background())
+	m.searchCancel = cancel
+	// Install the pending state immediately so the renderer / footer
+	// reflect "scan in flight" before the goroutine starts producing
+	// results. CurrentMatch=-1 keeps any prior selection from
+	// rendering against an obsolete match list.
 	m.search = search.State{
 		Query:        cleaned,
 		Direction:    dir,
 		Regex:        regex,
 		CaseMode:     caseMode,
-		Matches:      matches,
+		Matches:      nil,
 		CurrentMatch: -1,
 		Wrapped:      false,
+		Pending:      true,
 	}
-	if len(matches) == 0 {
-		m.statusAdvisory = fmt.Sprintf("no match for %q", cleaned)
+	// Clear any prior "no match" / "wrapped" advisory left over from
+	// the previous search so the user sees a clean slate while the new
+	// scan is in flight.
+	m.statusAdvisory = ""
+	if m.renderer != nil {
 		m.viewport.SetContent(m.renderer.Render(m.renderContext()))
+	}
+	// Snapshot the buffer pointer so the goroutine reads from a
+	// stable [source.LineProvider] even if a concurrent reload swaps
+	// m.stream out (the swap will also bump searchGen via the next
+	// runSearch / state change, so the result is dropped on arrival).
+	provider := m.stream.Buffer
+	cmd := func() tea.Msg {
+		// Always release the context's resources when the goroutine
+		// exits, regardless of whether the channel closed naturally
+		// or m.searchCancel pre-empted us. The on-Model cancel func
+		// is for *external* cancel-on-supersede; this defer is for
+		// context resource hygiene (`go vet` lostcancel rule).
+		defer cancel()
+		ch := search.Scan(ctx, provider, matcher, dir, from)
+		var matches []search.Match
+		scanWrapAt := -1
+		for hit := range ch {
+			if hit.Line == search.SentinelWrapped {
+				scanWrapAt = len(matches)
+				continue
+			}
+			matches = append(matches, hit)
+		}
+		// Surface ctx cancellation so the handler can drop the
+		// result (and any partial matches accumulated before the
+		// cancel landed) without applying it.
+		cancelled := ctx.Err() != nil
+		return searchResultMsg{
+			gen:        gen,
+			query:      cleaned,
+			dir:        dir,
+			regex:      regex,
+			caseMode:   caseMode,
+			matches:    matches,
+			scanWrapAt: scanWrapAt,
+			cancelled:  cancelled,
+		}
+	}
+	return m, cmd
+}
+
+// onSearchResult applies the outcome of an async scan dispatched by
+// [Model.runSearch]. Stale results (gen mismatch) and cancelled scans
+// are dropped without mutating model state — preserves the H5
+// invariant that rapid-typing never lets an older scan overwrite a
+// newer one.
+func (m Model) onSearchResult(msg searchResultMsg) (tea.Model, tea.Cmd) {
+	// Stale: a newer search has since started. Drop without touching
+	// state so the live search continues uninterrupted.
+	if msg.gen != m.searchGen {
 		return m, nil
 	}
-	// search.Scan emits matches in *traversal* order for the requested
-	// direction, so index 0 is always the first hit the user encounters
-	// from `from`. Selecting index 0 for both directions keeps the
-	// initial jump intuitive (Copilot review PR#9 #5).
+	// Cancelled: the goroutine exited via ctx — partial matches are
+	// not authoritative and the next-in-flight scan will produce the
+	// canonical result. Clear Pending defensively in case this was
+	// the only outstanding scan.
+	if msg.cancelled {
+		m.search.Pending = false
+		return m, nil
+	}
+	// Defensive: if the live state's identity drifted from this
+	// message's identity (gen matches but query/direction don't —
+	// shouldn't happen in practice because runSearch installs both
+	// atomically with the gen bump), prefer the message's identity.
+	m.search = search.State{
+		Query:        msg.query,
+		Direction:    msg.dir,
+		Regex:        msg.regex,
+		CaseMode:     msg.caseMode,
+		Matches:      msg.matches,
+		CurrentMatch: -1,
+		Wrapped:      false,
+		Pending:      false,
+	}
+	// The scan owned m.searchCancel; once the result has landed the
+	// goroutine has already exited so the cancel is moot.
+	m.searchCancel = nil
+	if len(msg.matches) == 0 {
+		m.statusAdvisory = fmt.Sprintf("no match for %q", msg.query)
+		if m.renderer != nil {
+			m.viewport.SetContent(m.renderer.Render(m.renderContext()))
+		}
+		return m, nil
+	}
+	// search.Scan emits matches in *traversal* order, so index 0 is
+	// the first hit the user encounters from `from`. Selecting 0
+	// for both directions keeps the initial jump intuitive (Copilot
+	// review PR#9 #5).
 	m.search.CurrentMatch = 0
-	// Only flag "wrapped" on this first jump if the selected match
-	// actually came from the wrap-around section of the scan.
-	if scanWrapAt == 0 {
+	if msg.scanWrapAt == 0 {
 		m.search.Wrapped = true
 		m.statusAdvisory = "search wrapped"
 	}
 	m.jumpToMatch(m.search.CurrentMatch)
-	m.viewport.SetContent(m.renderer.Render(m.renderContext()))
+	if m.renderer != nil {
+		m.viewport.SetContent(m.renderer.Render(m.renderContext()))
+	}
 	return m, nil
 }
 
@@ -616,6 +731,9 @@ func (m Model) runCommand(cmd string) (tea.Model, tea.Cmd) {
 	if cmd == "q" || cmd == "quit" {
 		if m.cancel != nil {
 			m.cancel()
+		}
+		if m.searchCancel != nil {
+			m.searchCancel()
 		}
 		return m, tea.Quit
 	}
@@ -928,6 +1046,15 @@ func (m Model) onReload() (tea.Model, tea.Cmd) {
 		m.cancel()
 		m.cancel = nil
 	}
+	// Cancel any in-flight async search against the old buffer; the
+	// upcoming buffer swap would invalidate its result anyway.
+	if m.searchCancel != nil {
+		m.searchCancel()
+		m.searchCancel = nil
+	}
+	// Bump searchGen so any post-cancel result that races through still
+	// gets dropped by onSearchResult's stale guard.
+	m.searchGen++
 	src := m.source
 	cfg := m.cfg
 	return m, func() tea.Msg {
