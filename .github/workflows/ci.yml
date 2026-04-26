@@ -117,7 +117,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
-      - uses: fsfe/reuse-action@v3
+      - uses: fsfe/reuse-action@v6
 
   no-network:
     name: no accidental network calls in product code
