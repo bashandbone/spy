@@ -49,8 +49,21 @@ type LineBuffer struct {
 	// warningCh is best-effort sink for streaming warnings. After the
 	// producer closes it, post-streaming warnings still accumulate in
 	// `warnings` for callers to inspect via [LineBuffer.Warnings].
-	warningCh chan<- error
-	warnings  []error
+	//
+	// warningSinkClosed coordinates the lifecycle (acceptance review
+	// LOW-4): the loader's producer goroutine calls
+	// [LineBuffer.CloseWarningSink] BEFORE it closes the underlying
+	// channel, flipping this flag under b.mu. Subsequent
+	// [sendWarning] calls observe the flag (also under b.mu) and skip
+	// the send entirely, so the previously-needed `defer recover()`
+	// in sendWarning is no longer the only thing keeping a
+	// send-on-closed-channel panic at bay. The defer recover() stays
+	// as a belt-and-suspenders for the unlikely path where a future
+	// caller invokes sendWarning without holding the mutex, but the
+	// happy path no longer relies on it.
+	warningCh         chan<- error
+	warningSinkClosed bool
+	warnings          []error
 }
 
 // NewLineBuffer constructs an empty buffer. `src` is retained so
@@ -299,7 +312,13 @@ func (b *LineBuffer) Slice(start, end int64) []source.Line {
 			if !warned {
 				b.warnedSeek = true
 				b.warnings = append(b.warnings, ErrStdinNonSeekable)
-				if warningCh != nil {
+				// Only send if the sink is still live. The
+				// warningSinkClosed flag is set by
+				// [LineBuffer.CloseWarningSink] (called by the
+				// producer goroutine before it closes the channel),
+				// so checking under b.mu is race-free with the
+				// producer's lifecycle (LOW-4).
+				if warningCh != nil && !b.warningSinkClosed {
 					sendWarning(warningCh, ErrStdinNonSeekable)
 				}
 			}
@@ -323,12 +342,36 @@ func (b *LineBuffer) Warnings() []error {
 	return out
 }
 
-// sendWarning attempts to push a warning onto the (potentially closed)
-// channel without panicking. The recover path is the only way to avoid
-// a panic on send-to-closed without coordinating producer/consumer
-// shutdown — see the LineBuffer doc comment for the broader design.
+// sendWarning attempts to push a warning onto the channel without
+// blocking. Callers MUST hold the LineBuffer mutex AND verify
+// warningSinkClosed is false before invoking — that combination is
+// what makes the send race-free with the producer's close.
+//
+// The defer recover() is retained as belt-and-suspenders for any
+// future call site that fails to honour the contract; the only
+// expected panic is "send on closed channel" and recovering from it
+// is strictly safer than crashing the loader from a UI-driven
+// Slice() call. Re-panic on anything else so unrelated runtime
+// panics still surface.
 func sendWarning(ch chan<- error, err error) {
-	defer func() { _ = recover() }()
+	defer func() {
+		r := recover()
+		if r == nil {
+			return
+		}
+		// Go panics with a runtime.plainError for "send on closed
+		// channel"; its String() produces exactly that text. Compare
+		// via fmt to avoid depending on the unexported runtime type.
+		if e, ok := r.(error); ok && e.Error() == "send on closed channel" {
+			return
+		}
+		// Some Go runtimes panic with a *runtime.PanicError or a
+		// plain string — fall back to a string match.
+		if s, ok := r.(string); ok && s == "send on closed channel" {
+			return
+		}
+		panic(r) // unrelated panic — propagate
+	}()
 	select {
 	case ch <- err:
 	default:
@@ -338,9 +381,30 @@ func sendWarning(ch chan<- error, err error) {
 // SetWarningSink installs a side-channel for windowed-mode warnings.
 // The loader's [Open] hooks the buffer to Stream.Errs so the UI can
 // surface "scroll-back disabled past resident window" advisories.
+//
+// SetWarningSink also resets the warningSinkClosed flag so a fresh
+// sink (rare in practice — the loader installs once at Open) starts
+// from a live state.
 func (b *LineBuffer) SetWarningSink(ch chan<- error) {
 	b.mu.Lock()
 	b.warningCh = ch
+	b.warningSinkClosed = false
+	b.mu.Unlock()
+}
+
+// CloseWarningSink marks the warning sink as no longer live. The
+// producer goroutine calls this BEFORE closing the underlying
+// channel so subsequent [LineBuffer.Slice] calls observing the flag
+// (under b.mu) skip their send entirely and never reach the
+// channel — eliminating the previously-fragile "rely on
+// recover() to swallow send-on-closed" pattern (LOW-4).
+//
+// Idempotent: safe to call from the producer's defer chain even if
+// the close has already been signalled (e.g. Open's error-path
+// returns before launching the streaming goroutine).
+func (b *LineBuffer) CloseWarningSink() {
+	b.mu.Lock()
+	b.warningSinkClosed = true
 	b.mu.Unlock()
 }
 
