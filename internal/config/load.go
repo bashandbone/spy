@@ -179,7 +179,7 @@ func mergeTOML(cfg *Config, data []byte, _ bool) []error {
 }
 
 // applyEnv layers env vars on top of file-loaded values. Only env vars
-// the contract names are honoured.
+// the contract names are honored.
 func applyEnv(cfg *Config) {
 	if v := os.Getenv("SPY_THEME"); v != "" {
 		cfg.Theme = v

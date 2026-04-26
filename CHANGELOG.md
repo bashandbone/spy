@@ -24,7 +24,7 @@ the project follows [Semantic Versioning](https://semver.org/).
   that runs the `-tags perf` heavyweight tier and files an issue on
   regression.
 - Security-review checklist (`specs/001-popup-reader/checklists/`) and
-  the supporting tests: terminal-escape neutralisation in
+  the supporting tests: terminal-escape neutralization in
   `internal/render/code.go` and a TOML fuzz target in
   `internal/config`.
 
@@ -65,7 +65,7 @@ The first tagged release of `spy` — the spec-driven popup reader.
 
 ### Documented
 
-- Behavioural contracts: CLI surface, keybindings, config schema,
+- Behavioral contracts: CLI surface, keybindings, config schema,
   internal package APIs (`specs/001-popup-reader/contracts/`).
 - Constitution v1.0.0 with 9 non-negotiable principles, anchored to the
   spec via the Constitution Check section in `plan.md`.

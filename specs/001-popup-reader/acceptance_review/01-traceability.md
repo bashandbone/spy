@@ -222,12 +222,12 @@ compile.
     `tasks.md` (T072b, T079) and `spec.md` SC-010 explicitly state. Real
     code: `internal/render/pdf.go:14`. This is a substantive library
     substitution that should at minimum update the spec/tasks language;
-    licensing and behaviour parity should also be confirmed.
+    licensing and behavior parity should also be confirmed.
 
 13. **Security review claims `filepath.Clean`** is applied to the file
     argument (`security-review.md:24-25`), but the code at
     `internal/source/source.go:194` only calls `filepath.EvalSymlinks`. The
-    review's statement is inaccurate; `EvalSymlinks` does normalise `..` for
+    review's statement is inaccurate; `EvalSymlinks` does normalize `..` for
     existing files, so the security property holds, but the doc says
     something the code doesn't do.
 

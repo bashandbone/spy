@@ -6,7 +6,7 @@
 # US1 E2E: open hello.go and confirm spy exits cleanly when stdout is
 # piped to a non-TTY (degenerate-cat path). The full alt-screen
 # verification ships once the PTY harness (T104) lands; for now the
-# script asserts the documented degenerate-cat behaviour from
+# script asserts the documented degenerate-cat behavior from
 # contracts/cli.md "Stdout (non-TTY)".
 #
 # Uses a temp-file capture (not a pipeline) so spy's exit status is

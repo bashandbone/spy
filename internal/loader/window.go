@@ -46,17 +46,17 @@ var storedLineOverheadBytes = int64(unsafe.Sizeof(storedLine{}))
 // renderer access is bursty (one frame at a time), so contention is
 // negligible compared to scan throughput.
 type LineBuffer struct {
-	mu         sync.Mutex
-	lines      []storedLine // index 0 == first resident line; compact repr.
+	mu    sync.Mutex
+	lines []storedLine // index 0 == first resident line; compact repr.
 	// tokens and wrapped are side-channel maps keyed by 1-based line
 	// number. They are nil (zero-allocation) when no line has been
 	// highlighted or word-wrapped, which is the common case during
 	// initial load. Storing them here (rather than in storedLine) is
 	// what lets storedLine stay at 24 bytes.
-	tokens  map[int64][]source.Token
-	wrapped map[int64][]string
-	startLine  int64         // 1-based line number of lines[0]
-	totalLines int64         // last seen total; -1 while streaming
+	tokens     map[int64][]source.Token
+	wrapped    map[int64][]string
+	startLine  int64 // 1-based line number of lines[0]
+	totalLines int64 // last seen total; -1 while streaming
 	// streamStarted flips true on the first [LineBuffer.Append] or
 	// [LineBuffer.MarkComplete] call. While false [LineBuffer.Total]
 	// returns -1 (the "unknown / streaming hasn't begun" sentinel) so
@@ -434,7 +434,7 @@ func (b *LineBuffer) Warnings() []error {
 // what makes the send race-free with the producer's close.
 //
 // The defer recover() is retained as belt-and-suspenders for any
-// future call site that fails to honour the contract; the only
+// future call site that fails to honor the contract; the only
 // expected panic is "send on closed channel" and recovering from it
 // is strictly safer than crashing the loader from a UI-driven
 // Slice() call. Re-panic on anything else so unrelated runtime
@@ -486,7 +486,7 @@ func (b *LineBuffer) SetWarningSink(ch chan<- error) {
 // recover() to swallow send-on-closed" pattern (LOW-4).
 //
 // Idempotent: safe to call from the producer's defer chain even if
-// the close has already been signalled (e.g. Open's error-path
+// the close has already been signaled (e.g. Open's error-path
 // returns before launching the streaming goroutine).
 func (b *LineBuffer) CloseWarningSink() {
 	b.mu.Lock()

@@ -67,6 +67,7 @@ func TestCompile_RegexCaseSensitive(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Compile: %v", err)
 	}
+	// spellchecker:ignore-next-line
 	got := m.Find("foo FoO bar")
 	if len(got) != 1 {
 		t.Errorf("regex case-sensitive: got %d matches (%+v) want 1", len(got), got)

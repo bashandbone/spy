@@ -18,7 +18,7 @@ import "context"
 // /dev/tty, modern Windows terminals (Windows Terminal, ConEmu) handle
 // theme detection differently, and the install base is small enough
 // for v0.1.0 that "auto theme falls back to dark" is acceptable
-// behaviour.
+// behavior.
 func probeOSC11Background(_ context.Context) string {
 	return ""
 }

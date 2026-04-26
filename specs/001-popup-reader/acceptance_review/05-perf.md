@@ -114,7 +114,7 @@ Effect: on every iteration where Bubble Tea's input pipeline does NOT race the f
 
 But both tiers measure `runtime.MemStats.HeapInuse`, not RSS. The function comment is honest: "It's a closer-to-RSS approximation than HeapAlloc." HeapInuse excludes off-heap allocations (mmap'd buffers, cgo allocations from libmupdf, OS page cache mapped via the loader's reader). For this loader the gap is probably small, but for SC-009/SC-010 paths (cgo through fitz) it would understate dramatically. The spec says RSS — read `/proc/self/statm` or use `prometheus/procfs`/`golang.org/x/sys/unix`.
 
-**Fix**: Read actual RSS on Linux via `/proc/self/statm` (multiply field 2 by page size). Document the platform-conditional behaviour. Worst case: keep HeapInuse as a leading indicator on darwin/windows but use real RSS on Linux runners.
+**Fix**: Read actual RSS on Linux via `/proc/self/statm` (multiply field 2 by page size). Document the platform-conditional behavior. Worst case: keep HeapInuse as a leading indicator on darwin/windows but use real RSS on Linux runners.
 
 ---
 
@@ -134,7 +134,7 @@ But both tiers measure `runtime.MemStats.HeapInuse`, not RSS. The function comme
 **Spec**: "≥ 47/50 files (94 %)"
 **Test**: Corpus has 52 fixtures (verified `ls`). Run shows `sample.mm` and `sample.fish` failing extension match. Test scales the threshold (`wantPass = ceil(52*47/50) = 49`) and reports 50/52 passing. This is more permissive in absolute count (49 vs 47) and effectively the same percentage (94.2% vs 94%).
 
-The scaling is documented and reasonable, but it means the spec promise "≥ 47/50" is not literally evaluated — the corpus has grown past 50 with two known-broken fixtures and the test silently accepts. Two failures on `sample.mm` (Objective-C++ extension Chroma doesn't recognise) and `sample.fish` (fish lexer absent) should be either renamed/excluded or fixed.
+The scaling is documented and reasonable, but it means the spec promise "≥ 47/50" is not literally evaluated — the corpus has grown past 50 with two known-broken fixtures and the test silently accepts. Two failures on `sample.mm` (Objective-C++ extension Chroma doesn't recognize) and `sample.fish` (fish lexer absent) should be either renamed/excluded or fixed.
 
 **Fix**: Decide whether `.mm` and `.fish` are part of the Linguist top-50 (they likely are not — pin the corpus to exactly 50 files matching the spec). If they're in, file an issue against Chroma or vendor the lexers.
 
@@ -153,7 +153,7 @@ The scaling is documented and reasonable, but it means the spec promise "≥ 47/
 
 For n=100 and n=50 the formula is correct (or close enough by nearest-rank).
 
-**Fix**: Either use `n=100`+ samples consistently, or compute `idx = int(math.Ceil(0.95*float64(n))) - 1` so the metric is correctly labelled regardless of sample size.
+**Fix**: Either use `n=100`+ samples consistently, or compute `idx = int(math.Ceil(0.95*float64(n))) - 1` so the metric is correctly labeled regardless of sample size.
 
 ---
 
@@ -162,7 +162,7 @@ For n=100 and n=50 the formula is correct (or close enough by nearest-rank).
 **File**: All perf tests draining `stream.Updates` synchronously, e.g. `tests/perf/scroll_bench_test.go:44-46`
 **Spec/Code**: `internal/loader/stream.go:99` defaults `UpdatesBuffer = 4`. The loader goroutine blocks on `case updates <- c:` (line 162) when the channel is full — the documented backpressure contract.
 
-**Issue**: `for range stream.Updates {}` in the same goroutine drains as fast as the producer can send. For any test that wants to measure backpressure or simulate a slow consumer, this is wrong; for the *current* perf tests (which all wait for full drain *before* timing the action under test), it's a correctness non-issue but it does mean these benches will not catch a regression where the producer outruns the consumer by allocating intermediate buffers (since the tight drain loop hides the bound). The bench therefore observes an artificial best-case channel utilisation.
+**Issue**: `for range stream.Updates {}` in the same goroutine drains as fast as the producer can send. For any test that wants to measure backpressure or simulate a slow consumer, this is wrong; for the *current* perf tests (which all wait for full drain *before* timing the action under test), it's a correctness non-issue but it does mean these benches will not catch a regression where the producer outruns the consumer by allocating intermediate buffers (since the tight drain loop hides the bound). The bench therefore observes an artificial best-case channel utilization.
 
 For SC-005 specifically (1 GiB load), the drain loop's tightness means the loader's 4-chunk × 256-line × 256-byte ≈ 256 KiB resident channel buffer never matters — but in production the user is the consumer (no goroutine), so the on-the-wire memory footprint differs.
 

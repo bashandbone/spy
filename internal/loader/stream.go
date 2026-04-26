@@ -263,7 +263,7 @@ func readChunk(r *bufio.Reader, start int64, n int, maxLineBytes int64, errs cha
 // returned slice.
 //
 // buf is an optional scratch buffer whose backing array may be reused;
-// callers should pass the previous return value to amortise the
+// callers should pass the previous return value to amortize the
 // per-line allocation across the chunk.
 func readLine(r *bufio.Reader, maxLineBytes int64, buf []byte) ([]byte, bool, error) {
 	buf = buf[:0] // reset length, reuse backing array

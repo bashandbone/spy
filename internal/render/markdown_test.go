@@ -134,7 +134,7 @@ func TestKindMarkdown_MonoFallsBackToText(t *testing.T) {
 func TestKindMarkdown_ColorMonoCapsFallBackToText(t *testing.T) {
 	// NO_COLOR / TERM=dumb sets caps.ColorDepth = ColorMono even when
 	// the theme isn't explicitly Mono. Glamour must be bypassed in
-	// that case so we don't emit ANSI to a non-colour terminal
+	// that case so we don't emit ANSI to a non-color terminal
 	// (Copilot review PR#8 #4).
 	deps := newMarkdownDeps(t, false)
 	deps.Capabilities.ColorDepth = term.ColorMono

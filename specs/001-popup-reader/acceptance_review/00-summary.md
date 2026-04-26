@@ -24,7 +24,7 @@ Per-agent reports kept verbatim in `/tmp/`:
 
 The build is clean (`go build ./...` and `-tags fitz` both green), `go test ./... -race` passes, every internal package clears the 80% coverage gate, and the security and quickstart checklists were filled out. The architecture and concurrency design (loader pipeline, bounded channels, defer chain in `cmd/spy/main.go`) are solid.
 
-**However, there is a single dominant defect repeated across CRITICAL findings**: when the PTY harness landed in Phase 9 (T104), nobody walked the list of integration tests that had been authored as `t.Skip` stubs with a comment saying "PTY harness not yet implemented — Phase 9 T104 will provide the runtime". **All eight of those tests are still skipped.** They cover FR-015 (signal handling), SC-008 (resize behaviour through PTY), SC-009 (graphics protocol round-trip), SC-010 (PDF), and the user-facing acceptance scenarios for US1, US2, US3, US5, US6.
+**However, there is a single dominant defect repeated across CRITICAL findings**: when the PTY harness landed in Phase 9 (T104), nobody walked the list of integration tests that had been authored as `t.Skip` stubs with a comment saying "PTY harness not yet implemented — Phase 9 T104 will provide the runtime". **All eight of those tests are still skipped.** They cover FR-015 (signal handling), SC-008 (resize behavior through PTY), SC-009 (graphics protocol round-trip), SC-010 (PDF), and the user-facing acceptance scenarios for US1, US2, US3, US5, US6.
 
 Layered on top of this: the `tests/perf/` benchmarks are **not** wired into CI. The PR workflow runs `make test-race` and `make cover`, neither of which touches `tests/perf/`. So the SC-001..SC-008 "PR gate" benchmarks gate nothing in practice.
 
@@ -78,7 +78,7 @@ The implementer's security checklist (T109b.c) claims escape injection is closed
 
 - `internal/render/markdown.go:78`/`86-89` passes raw line bytes to `glamour.Render`. Glamour's goldmark backend does not strip `\x1b`/`\x9b` from non-code-block content. A markdown file with an embedded OSC sequence (e.g., a comment ` <!-- \x1b]2;evil\x07 --> `) reaches the terminal verbatim.
 - `internal/render/pdf.go:186-205` calls `formatTextPage` with bytes from `p.GetPlainText(nil)` (the **default** code path in all no-fitz builds). A crafted PDF with OSC sequences in its content stream is enough.
-- `internal/render/statusbar.go:119,181`, `internal/render/image.go:134,142`, `internal/render/pdf.go:199,201,215`, and `cmd/spy/main.go:295,304,307,310,313` all emit `DisplayName()` / file-path strings without sanitisation. Linux filenames can contain `\x1b`. `spy <evil_filename>` writes the bytes through `theme.Footer.Render` to the terminal — window-title hijack, clipboard write on emulators that honour OSC 52.
+- `internal/render/statusbar.go:119,181`, `internal/render/image.go:134,142`, `internal/render/pdf.go:199,201,215`, and `cmd/spy/main.go:295,304,307,310,313` all emit `DisplayName()` / file-path strings without sanitization. Linux filenames can contain `\x1b`. `spy <evil_filename>` writes the bytes through `theme.Footer.Render` to the terminal — window-title hijack, clipboard write on emulators that honor OSC 52.
 
 **Action**: apply `neutralizeEscapes` to (a) markdown raw input pre-Glamour, (b) PDF text-extraction output, (c) every `DisplayName()` / file-path emission site listed above.
 
@@ -141,7 +141,7 @@ Result: `WarnLineTruncated` (per-line cap, FR-013-adjacent) and `WarnStdinNonSee
 
 `tests/integration/resize_test.go` enforces p95 ≤ 16 ms across 50 random-width resize events on a 10 000-line file. The test passes locally on this machine (0.587 s) but the traceability agent measured `p95 = 23.34 ms` on its run. Likely flaky under CI noise. If C3 ever lands (perf in PR CI), this will be the first to flake.
 
-**Action**: characterise variance over 10 runs, then either widen the budget with documentation, separate the assertion from the benchmark, or pin a runner profile.
+**Action**: characterize variance over 10 runs, then either widen the budget with documentation, separate the assertion from the benchmark, or pin a runner profile.
 
 ### H3. SC-004 PR gate scaled to 60 lines, full-spec case is `t.Logf`
 
@@ -169,9 +169,9 @@ Result: `WarnLineTruncated` (per-line cap, FR-013-adjacent) and `WarnStdinNonSee
 
 ### H7. Filename-driven escape injection (defense-in-depth)
 
-Linux filenames may contain `\x1b]2;...\x07`. The footer/statusbar/error-message paths render `DisplayName()` without sanitisation (covered partly under C4 but worth a separate exploit-level note). `spy '<evil filename>'` modifies the terminal title before the alt-screen even opens, because the early stderr writes in `cmd/spy/main.go:295,304,307,310,313` echo the filename verbatim.
+Linux filenames may contain `\x1b]2;...\x07`. The footer/statusbar/error-message paths render `DisplayName()` without sanitization (covered partly under C4 but worth a separate exploit-level note). `spy '<evil filename>'` modifies the terminal title before the alt-screen even opens, because the early stderr writes in `cmd/spy/main.go:295,304,307,310,313` echo the filename verbatim.
 
-**Action**: sanitise file paths at the stderr boundary in `cmd/spy/main.go` and at every `DisplayName()` emit site (overlaps C4).
+**Action**: sanitize file paths at the stderr boundary in `cmd/spy/main.go` and at every `DisplayName()` emit site (overlaps C4).
 
 ---
 

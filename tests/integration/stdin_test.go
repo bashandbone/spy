@@ -70,7 +70,7 @@ func TestStdinPipe_HighlightedGoSource(t *testing.T) {
 
 	// US5 acceptance #2: highlighting engaged. Chroma emits SGR for
 	// any non-mono theme, so any SGR escape near the rendered content
-	// is sufficient — exact colour is theme-dependent.
+	// is sufficient — exact color is theme-dependent.
 	if !regexp.MustCompile(`\x1b\[[0-9;]+m`).MatchString(frame) {
 		t.Fatalf("first paint emits no SGR escapes — stdin highlighting did not engage")
 	}

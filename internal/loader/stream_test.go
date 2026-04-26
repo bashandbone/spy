@@ -278,7 +278,7 @@ func TestStream_EmptyLineUnaffected(t *testing.T) {
 }
 
 func TestStream_LineLargerThanScannerLimit(t *testing.T) {
-	// Synthesise a single line that would have errored under bufio.Scanner's
+	// Synthesize a single line that would have errored under bufio.Scanner's
 	// 16 MiB ceiling — the bufio.Reader-based readLine truncates and keeps
 	// the stream alive (Copilot review PR#7 #5).
 	bigLine := strings.Repeat("z", 20*1024*1024) // 20 MiB

@@ -19,7 +19,7 @@ const (
 	DirBackward
 )
 
-// CaseMode controls case-sensitivity behaviour. SmartCase lowercases
+// CaseMode controls case-sensitivity behavior. SmartCase lowercases
 // queries to "case-insensitive" and any non-lowercase character forces
 // case-sensitive matching.
 type CaseMode int

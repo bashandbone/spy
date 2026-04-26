@@ -103,7 +103,7 @@ func TestWindowedMode_SliceBeyondResidentTriggersReseek(t *testing.T) {
 func TestWindowedMode_NonSeekableSourceWarns(t *testing.T) {
 	// A source whose Reopen returns ErrNotSeekable triggers
 	// WarnStdinNonSeekable on Errs the first time the buffer would have
-	// re-seeked; subsequent slices fall back to "current resident only".
+	// re-sought; subsequent slices fall back to "current resident only".
 	body := repeatLines(500, strings.Repeat("c", 200))
 	src := &nonSeekableSource{body: body}
 	cfg := Config{
@@ -135,7 +135,7 @@ func TestWindowedMode_NonSeekableSourceWarns(t *testing.T) {
 }
 
 // nonSeekableSource is a [source.Source] whose Reopen returns
-// [source.ErrNotSeekable], modelling stdin in windowed mode.
+// [source.ErrNotSeekable], modeling stdin in windowed mode.
 type nonSeekableSource struct {
 	body string
 }

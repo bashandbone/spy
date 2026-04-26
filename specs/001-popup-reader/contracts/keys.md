@@ -59,7 +59,7 @@ remap automatically updates the help text.
 | Recall previous command | `↑` (in prompt) | — |
 | Recall next command | `↓` (in prompt) | — |
 
-Commands recognised at the `:` prompt:
+Commands recognized at the `:` prompt:
 
 | Command | Effect |
 |---------|--------|
@@ -115,6 +115,6 @@ Unrecognized keys log a warning to `--debug` and are silently dropped.
 
 ## Help overlay
 
-`F1` (or `?` outside a prompt) toggles a centred Lip Gloss-styled overlay
+`F1` (or `?` outside a prompt) toggles a centered Lip Gloss-styled overlay
 listing the active bindings, generated from the `KeyMap`. The overlay
 respects the active theme. `Esc` or any unbound key closes it.

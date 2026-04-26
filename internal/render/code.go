@@ -27,8 +27,8 @@ import (
 // at viewport width using rune-count math (matching the foundational
 // [textRenderer]). The styled (ANSI-tagged) line is emitted verbatim;
 // when wrap is required, the renderer falls back to raw bytes for that
-// line so colour escapes don't straddle wrap boundaries. The mixed
-// behaviour is the documented Phase 3 limitation; an ANSI-aware wrap
+// line so color escapes don't straddle wrap boundaries. The mixed
+// behavior is the documented Phase 3 limitation; an ANSI-aware wrap
 // arrives in Phase 9 polish.
 //
 // The renderer maintains a per-line formatted-output cache (lineNum →
@@ -84,7 +84,7 @@ func (r *codeRenderer) Render(ctx RenderContext) string {
 	// overlay must not emit ANSI — even via lipgloss styles applied
 	// post-chroma — or the rendered output becomes a contract
 	// violation (Copilot review PR#9 round-3 #1). When mono is active
-	// we still mark matched lines but as raw text without colouring.
+	// we still mark matched lines but as raw text without coloring.
 	mono := ctx.Theme.Mono || ctx.Capabilities.ColorDepth == term.ColorMono
 
 	// Prune cache entries for lines that the LineBuffer has already
@@ -108,7 +108,7 @@ func (r *codeRenderer) Render(ctx RenderContext) string {
 		// Lines with search matches use the dedicated overlay path so
 		// the highlight wraps tightly around the match span. The
 		// documented limitation: matched lines lose chroma syntax
-		// colour; the caret/active match is still visible.
+		// color; the caret/active match is still visible.
 		lineMatches := matchesForLine(ctx.Search, l.Number)
 		hasMatches := len(lineMatches) > 0
 
@@ -136,7 +136,7 @@ func (r *codeRenderer) Render(ctx RenderContext) string {
 			if mono {
 				// Mono mode: bypass lipgloss styling — emit the raw
 				// match line verbatim so no ANSI leaks. The line is
-				// still escape-neutralised (T109b.c) so a file whose
+				// still escape-neutralized (T109b.c) so a file whose
 				// bytes contain OSC / DCS sequences cannot drive the
 				// user's terminal.
 				b.WriteString(neutralizeEscapes(l.Raw))
@@ -250,7 +250,7 @@ func (r *codeRenderer) styleLine(l source.Line) string {
 	// entirely when no ESC / CSI byte is present. Allocates only on
 	// the rare line that actually carries an escape (T109b.c).
 	safeTokens := tokens
-	if needsTokenNeutralisation(l.Raw) {
+	if needsTokenNeutralization(l.Raw) {
 		safeTokens = neutralizeTokens(tokens)
 	}
 	iter := chromaIterFromTokens(safeTokens)
@@ -261,7 +261,7 @@ func (r *codeRenderer) styleLine(l source.Line) string {
 	return strings.TrimRight(buf.String(), "\n")
 }
 
-// needsTokenNeutralisation reports whether `raw` contains any byte
+// needsTokenNeutralization reports whether `raw` contains any byte
 // that [neutralizeEscapes] would substitute. Used as a fast pre-scan
 // so the per-token copy in [neutralizeTokens] only runs on lines that
 // actually carry an OSC / DCS / CSI byte. Per-line inputs are typically
@@ -270,7 +270,7 @@ func (r *codeRenderer) styleLine(l source.Line) string {
 // avoid the false positive where a literal U+FFFD in source content
 // would match the rune-decoded form of standalone 0x9b (invalid
 // UTF-8) and force a pointless full re-scan.
-func needsTokenNeutralisation(raw string) bool {
+func needsTokenNeutralization(raw string) bool {
 	return containsRawEscByte(raw)
 }
 
@@ -281,7 +281,7 @@ func needsTokenNeutralisation(raw string) bool {
 // byte-for-byte (see neutralizeEscapes) so the formatter's offset math
 // stays valid.
 //
-// Callers should consult [needsTokenNeutralisation] first; this
+// Callers should consult [needsTokenNeutralization] first; this
 // function unconditionally allocates a fresh slice and is intended for
 // the rare line that does carry an escape.
 func neutralizeTokens(tokens []source.Token) []source.Token {

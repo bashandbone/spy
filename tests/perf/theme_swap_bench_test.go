@@ -126,7 +126,7 @@ func measureThemeSwap(t *testing.T, lines int, limit time.Duration, failOnBudget
 	sort.Slice(durations, func(i, j int) bool {
 		return durations[i] < durations[j]
 	})
-	p95 := durations[(len(durations)*95)/100]
+	p95 := p95Duration(durations)
 	t.Logf("SC-004 (%d lines): theme-swap p95=%v across %d swaps (limit %v); fastest=%v slowest=%v",
 		lines, p95, swaps, limit, durations[0], durations[len(durations)-1])
 	if failOnBudget && p95 > limit {

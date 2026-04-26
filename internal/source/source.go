@@ -34,7 +34,7 @@ const (
 
 // detectionPeekBytes is the up-front read window every detection
 // path uses to classify a Source: 8 KiB chosen to capture shebangs,
-// magic bytes, and Chroma's `Analyse` window in a single read.
+// magic bytes, and Chroma's `Analyze` window in a single read.
 // Shared by [detectKind] (file path) and [StdinSource.detectOnce]
 // (stream path) so both stay in sync without a duplicate literal.
 const detectionPeekBytes = 8192
@@ -121,7 +121,7 @@ type LineProvider interface {
 //   - file argument present (single positional): FileSource (file
 //     always wins; stdin is never read even when piped).
 //   - "-" positional (single): StdinSource (forced — blocks on TTY
-//     stdin until EOF/Ctrl-D, the documented behaviour).
+//     stdin until EOF/Ctrl-D, the documented behavior).
 //   - no args + stdin is non-TTY: StdinSource (the `... | spy` shape).
 //   - no args + stdin is a TTY (or nil): ErrNoInput (exit 2 from main).
 //   - "-" alongside a FILE, or multiple FILEs: ErrAmbiguousArgs

@@ -41,7 +41,7 @@ The current workaround in `dismiss_bench_test.go` is a 10 ms first-pass
 timeout: send `q`, wait 10 ms, retransmit only if exit hasn't already
 fired. The retransmit's elapsed time is then measured. The 10 ms
 ceiling keeps the SC-007 p95 sensitive to real regressions in the 50–
-500 ms range while immunising against the first-`q` race.
+500 ms range while immunizing against the first-`q` race.
 
 `pty_sanity_test.go` uses a coarser 5-iteration loop with 200 ms per
 poll and no separate timing concern.
@@ -115,7 +115,7 @@ compete with Bubble Tea's input reader.
 
 ### H3 — Bubble Tea's input reader hasn't subscribed to stdin yet
 
-**Hypothesis**: Bubble Tea v1's `Program.Run()` initialises its
+**Hypothesis**: Bubble Tea v1's `Program.Run()` initializes its
 cancelreader on stdin in parallel with the renderer goroutine that
 emits the alt-screen prologue. The `\x1b[?2004h` escape (the
 harness's "ready" signal) is emitted by the renderer goroutine
@@ -128,7 +128,7 @@ the NEXT byte arriving — making the first `q` look "lost".
 Bubble Tea v1.x because `tea.Program` does not expose a "input loop
 ready" signal. The alt-screen escape and bracketed-paste escape
 are both renderer-side events that happen concurrently with — not
-after — input reader initialisation.
+after — input reader initialization.
 
 **Evidence against**: epoll-based readers usually surface bytes
 already in the kernel buffer on their first read, not just bytes
@@ -159,7 +159,7 @@ the slave. If the slave-side reader hasn't issued its first
 `read()` yet, the byte sits in the slave's input buffer. When the
 reader does run, it should consume the buffered byte.
 
-**Evidence against**: well-tested Linux behaviour; bytes written
+**Evidence against**: well-tested Linux behavior; bytes written
 to a PTY master are reliably available on the slave after the
 master's write returns.
 

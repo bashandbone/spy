@@ -4,7 +4,7 @@
 module Main (main) where
 
 import qualified Data.Text as T
-import qualified Data.Text.IO as TIO
+import qualified Data.Text.IO as TO
 import System.IO (hPutStrLn, stderr)
 import System.Exit (exitFailure)
 import Control.Exception (try, SomeException)
@@ -22,7 +22,7 @@ countBytes = foldr step (Counter 0) . filter (not . T.null) . T.lines
 
 main :: IO ()
 main = do
-  result <- try (TIO.readFile "input.txt") :: IO (Either SomeException T.Text)
+  result <- try (TO.readFile "input.txt") :: IO (Either SomeException T.Text)
   case result of
     Left err -> hPutStrLn stderr (show err) >> exitFailure
     Right txt -> do

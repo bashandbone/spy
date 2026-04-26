@@ -261,7 +261,7 @@ func TestScan_NilMatcherIsNoOp(t *testing.T) {
 }
 
 // windowedProvider simulates [loader.LineBuffer]'s partial-overlap
-// behaviour: requests for ranges that straddle `residentStart` return
+// behavior: requests for ranges that straddle `residentStart` return
 // only the resident suffix on the *first* call, then the full prefix
 // on a *second* call (the windowed re-seek path). Tracks the call
 // pattern so tests can assert which paths fired.
@@ -310,7 +310,7 @@ func (w *windowedProvider) Slice(start, end int64) []source.Line {
 		return w.copyRange(wantStartNum, wantEndNum)
 	}
 	// Partial overlap → return only the resident slice (the buggy
-	// pre-fix behaviour we're now resilient to).
+	// pre-fix behavior we're now resilient to).
 	if wantStartNum < w.residentFrom && wantEndNum > w.residentFrom {
 		return w.copyRange(w.residentFrom, wantEndNum)
 	}
@@ -343,7 +343,7 @@ func (w *windowedProvider) Total() int64 {
 func TestScan_ForwardFillsWindowedPrefixGap(t *testing.T) {
 	t.Parallel()
 	// 10 lines, but only lines 6..10 are resident; "foo" lives only on
-	// line 2. With the buggy advance-by-len behaviour, scan would see
+	// line 2. With the buggy advance-by-len behavior, scan would see
 	// lines [6..10] for the chunk that straddled the window, advance
 	// past them, and miss line 2 entirely. The fix re-requests
 	// [1, 6) via the entirely-outside path so line 2 is visited.
@@ -394,7 +394,7 @@ func TestScan_BackwardFillsWindowedSuffixGap(t *testing.T) {
 // even when asked for the prefix on a follow-up call. This simulates
 // stdin (non-seekable) where the evicted lines are unrecoverable; the
 // scan must terminate without infinite-looping rather than silently
-// skip — bail on second-attempt failure is the only correct behaviour.
+// skip — bail on second-attempt failure is the only correct behavior.
 type stubbornPartialProvider struct {
 	all          []source.Line
 	residentFrom int64

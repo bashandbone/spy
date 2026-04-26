@@ -59,7 +59,7 @@ func run(args []string, stdin *os.File) int {
 	pf, err := ParseFlags(args)
 	if err != nil {
 		// Flag parse errors can include the user's argv verbatim
-		// (e.g. "unknown flag: --\x1b]2;evil\x07"). Sanitise before
+		// (e.g. "unknown flag: --\x1b]2;evil\x07"). Sanitize before
 		// stderr — acceptance review C4.
 		fmt.Fprintf(os.Stderr, "spy: %s\n", render.Neutralize(err.Error()))
 		return exitUsageError
@@ -115,7 +115,7 @@ func run(args []string, stdin *os.File) int {
 	for _, w := range warnings {
 		// Config warnings can quote user-supplied TOML key/value text
 		// (e.g. "unknown key 'foo\x1b]2;evil\x07' in [keys]").
-		// Sanitise before stderr — acceptance review C4.
+		// Sanitize before stderr — acceptance review C4.
 		safeW := render.Neutralize(w.Error())
 		if errors.Is(w, config.ErrConfigNotFound) {
 			fmt.Fprintf(os.Stderr, "spy: %s\n", safeW)
@@ -192,7 +192,7 @@ func run(args []string, stdin *os.File) int {
 		mergedKM, kerrs := keys.ApplyOverrides(baseKeyMap, cfg.Keys)
 		for _, e := range kerrs {
 			// Keymap-override errors quote user-supplied action /
-			// key strings from cfg.Keys. Sanitise before stderr —
+			// key strings from cfg.Keys. Sanitize before stderr —
 			// acceptance review C4.
 			fmt.Fprintf(os.Stderr, "spy: %s\n", render.Neutralize(e.Error()))
 		}
@@ -293,7 +293,7 @@ func run(args []string, stdin *os.File) int {
 		}
 		// Bubble Tea errors aren't ordinarily user-controlled, but a
 		// rendering error chain can wrap upstream string content
-		// (e.g. file path in a renderer-init failure). Sanitise
+		// (e.g. file path in a renderer-init failure). Sanitize
 		// defensively — acceptance review C4.
 		fmt.Fprintf(os.Stderr, "spy: tea program: %s\n", render.Neutralize(err.Error()))
 		return exitGenericError
@@ -328,8 +328,8 @@ func drainCaughtSignal(caught <-chan os.Signal) syscall.Signal {
 // No alt-screen, no rendering, no graphics — `spy file.go > out.txt`
 // behaves like `cat file.go > out.txt`.
 //
-// The DisplayName passed to exitForSourceError is already sanitised
-// inside that helper. The error is sanitised before reaching stderr.
+// The DisplayName passed to exitForSourceError is already sanitized
+// inside that helper. The error is sanitized before reaching stderr.
 // Acceptance review C4.
 func runDegenerate(src source.Source) int {
 	rc, err := src.Open()
@@ -392,7 +392,7 @@ func applyGraphicsOverride(detected term.Graphics, override string) term.Graphic
 // code from contracts/cli.md. The stderr line uses the
 // "spy: <reason>: <detail>" format the contract requires.
 //
-// `target` is sanitised through [render.Neutralize] before reaching
+// `target` is sanitized through [render.Neutralize] before reaching
 // stderr because it's user-controlled input (the filename arg) and a
 // hostile path containing `\x1b]2;evil\x07` would otherwise drive the
 // terminal title before alt-screen even starts. Same for the wrapped

@@ -19,7 +19,7 @@ import (
 // aliases.
 //
 // The literal "9999" appears exactly once in the buffer (the line
-// that *is* 9999), which makes the wrap behaviour observable: pressing
+// that *is* 9999), which makes the wrap behavior observable: pressing
 // `n` after the first match must wrap and surface the "search wrapped"
 // status.
 func TestSearch_NavigatesAndJumps(t *testing.T) {

@@ -44,7 +44,7 @@ func TestNewFileSource_RejectsFIFO(t *testing.T) {
 func TestNewFileSource_RejectsSocket(t *testing.T) {
 	dir := t.TempDir()
 	sock := filepath.Join(dir, "s.sock")
-	// Bind a Unix-domain socket to materialise a socket inode.
+	// Bind a Unix-domain socket to materialize a socket inode.
 	addr := &syscall.SockaddrUnix{Name: sock}
 	fd, err := syscall.Socket(syscall.AF_UNIX, syscall.SOCK_STREAM, 0)
 	if err != nil {
