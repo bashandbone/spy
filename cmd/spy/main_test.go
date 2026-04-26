@@ -271,6 +271,26 @@ func TestBoolPtr(t *testing.T) {
 	}
 }
 
+func TestRun_AmbiguousArgsExitsUsage(t *testing.T) {
+	// Copilot review PR#12 #1: contracts/cli.md row "present yes — yes"
+	// is a usage error — `-` alongside a FILE positional is rejected at
+	// the source layer and surfaced as exit 2.
+	p := filepath.Join(t.TempDir(), "real.txt")
+	if err := os.WriteFile(p, []byte("hi"), 0o644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	cases := [][]string{
+		{"--no-config", p, "-"},
+		{"--no-config", "-", p},
+		{"--no-config", p, p},
+	}
+	for _, args := range cases {
+		if got := run(args, nil); got != exitUsageError {
+			t.Errorf("run(%v): got exit %d want %d", args, got, exitUsageError)
+		}
+	}
+}
+
 func TestRun_StdinPipeDegenerateCats(t *testing.T) {
 	// US5: no FILE, non-TTY stdin (pipe) → run() picks StdinSource and,
 	// because go-test stdout is also a pipe, falls through to the

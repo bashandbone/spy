@@ -291,6 +291,11 @@ func exitForSourceError(err error, args []string) int {
 		// Exit 2 matches contracts/cli.md.
 		fmt.Fprintf(os.Stderr, "spy: no input: missing FILE; pipe content via stdin or pass a path\n")
 		return exitUsageError
+	case errors.Is(err, source.ErrAmbiguousArgs):
+		// `-` alongside FILE, or multiple FILEs — the contract row
+		// "present yes — yes" is a usage error mapped to exit 2.
+		fmt.Fprintf(os.Stderr, "spy: usage: %v\n", err)
+		return exitUsageError
 	case errors.Is(err, source.ErrNotFound):
 		fmt.Fprintf(os.Stderr, "spy: cannot open: %s: not found\n", target)
 		return exitIOError

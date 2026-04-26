@@ -38,7 +38,6 @@ type StdinSource struct {
 	kind       Kind
 	lexerName  string
 	peekedHead []byte
-	peekErr    error // io.EOF / io.ErrUnexpectedEOF — used to suppress double-peeks
 
 	// consumed flips on the first successful [Open] to enforce the
 	// "stdin is single-use" contract from T085.
@@ -134,7 +133,6 @@ func (s *StdinSource) detectOnce() error {
 		// All three are expected — the stream may be shorter than the
 		// peek window or close to it. detectKind handles the empty case.
 	default:
-		s.peekErr = err
 		s.detectErr = fmt.Errorf("stdin: peek: %w", err)
 		return s.detectErr
 	}

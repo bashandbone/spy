@@ -121,6 +121,47 @@ func TestFromArgs_FileWinsOverStdin(t *testing.T) {
 	}
 }
 
+// Mutually-exclusive positional combinations (Copilot review PR#12 #1).
+// contracts/cli.md row "present yes — yes" is a usage error: `-` and
+// FILE may not be combined; multiple FILE arguments are also rejected.
+// All three forms wrap [ErrAmbiguousArgs] so main maps them to exit 2.
+func TestFromArgs_DashWithFileIsAmbiguous(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "x.txt")
+	if err := os.WriteFile(p, []byte("hi"), 0o644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	cases := [][]string{
+		{p, "-"},
+		{"-", p},
+	}
+	for _, args := range cases {
+		_, err := FromArgs(args, pipeFile(t), "")
+		if err == nil {
+			t.Fatalf("FromArgs(%v): expected ambiguous error", args)
+		}
+		if !errors.Is(err, ErrAmbiguousArgs) {
+			t.Errorf("FromArgs(%v): want ErrAmbiguousArgs, got %v", args, err)
+		}
+	}
+}
+
+func TestFromArgs_MultipleFilesAreAmbiguous(t *testing.T) {
+	p1 := filepath.Join(t.TempDir(), "a.txt")
+	p2 := filepath.Join(t.TempDir(), "b.txt")
+	for _, p := range []string{p1, p2} {
+		if err := os.WriteFile(p, []byte("hi"), 0o644); err != nil {
+			t.Fatalf("write: %v", err)
+		}
+	}
+	_, err := FromArgs([]string{p1, p2}, nil, "")
+	if err == nil {
+		t.Fatal("expected ambiguous error for two FILE positionals")
+	}
+	if !errors.Is(err, ErrAmbiguousArgs) {
+		t.Errorf("want ErrAmbiguousArgs, got %v", err)
+	}
+}
+
 func TestFromArgs_FileMissing(t *testing.T) {
 	_, err := FromArgs([]string{filepath.Join(t.TempDir(), "nope")}, nil, "")
 	if err == nil {

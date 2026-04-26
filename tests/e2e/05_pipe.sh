@@ -22,7 +22,10 @@
 # For now the script keeps US5 from regressing the `-` positional, the
 # auto-stdin pickup, and the verbatim-cat exit-0 contract.
 
-set -eu
+# pipefail is critical here: shape (d) (`printf | spy | cat`) would
+# otherwise mask a non-zero spy exit because `cat` succeeds (Copilot
+# review PR#12 #4).
+set -euo pipefail
 
 here="$(cd "$(dirname "$0")" && pwd)"
 fixtures="${SPY_FIXTURES_DIR:-${here}/fixtures}"

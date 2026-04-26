@@ -43,6 +43,10 @@ var (
 	ErrPermission      = errors.New("permission denied")
 	ErrNotSeekable     = errors.New("source does not support seeking")
 	ErrAlreadyConsumed = errors.New("source already consumed")
+	// ErrAmbiguousArgs covers mutually-exclusive positional
+	// combinations from contracts/cli.md: `-` alongside a FILE
+	// argument, or multiple FILE arguments. Maps to exit 2 in main.
+	ErrAmbiguousArgs = errors.New("ambiguous arguments")
 )
 
 // Source is the producer-side abstraction for the byte stream a viewer
@@ -107,20 +111,41 @@ type LineProvider interface {
 //
 // Resolution rules:
 //
-//   - file argument present: FileSource (file always wins; stdin is
-//     never read even when piped).
-//   - "-" positional: StdinSource (forced — blocks on TTY stdin until
-//     EOF/Ctrl-D, the documented behaviour).
+//   - file argument present (single positional): FileSource (file
+//     always wins; stdin is never read even when piped).
+//   - "-" positional (single): StdinSource (forced — blocks on TTY
+//     stdin until EOF/Ctrl-D, the documented behaviour).
 //   - no args + stdin is non-TTY: StdinSource (the `... | spy` shape).
 //   - no args + stdin is a TTY (or nil): ErrNoInput (exit 2 from main).
+//   - "-" alongside a FILE, or multiple FILEs: ErrAmbiguousArgs
+//     (also exit 2). Per contracts/cli.md row "present yes — yes".
 //
 // `stdin` is normally `os.Stdin`; tests pass an `os.Pipe` read end to
 // drive the non-TTY path without a real PTY.
 func FromArgs(args []string, stdin *os.File, hint string) (Source, error) {
-	if len(args) > 0 && args[0] != "-" {
+	if len(args) > 1 {
+		// Two positionals are always wrong: either "-" + FILE
+		// (mutually exclusive per contract) or multiple FILEs (the
+		// synopsis only allows one).
+		dashCount := 0
+		for _, a := range args {
+			if a == "-" {
+				dashCount++
+			}
+		}
+		switch {
+		case dashCount > 0 && dashCount < len(args):
+			return nil, fmt.Errorf("%w: '-' and FILE are mutually exclusive", ErrAmbiguousArgs)
+		case dashCount > 1:
+			return nil, fmt.Errorf("%w: '-' positional given more than once", ErrAmbiguousArgs)
+		default:
+			return nil, fmt.Errorf("%w: only one FILE may be given (got %d)", ErrAmbiguousArgs, len(args))
+		}
+	}
+	if len(args) == 1 && args[0] != "-" {
 		return newFileSourceWithHint(args[0], hint)
 	}
-	if len(args) > 0 && args[0] == "-" {
+	if len(args) == 1 && args[0] == "-" {
 		// `-` always picks stdin, regardless of TTY status. A nil
 		// stdin pointer still surfaces as ErrNoInput because there's
 		// nothing to read.

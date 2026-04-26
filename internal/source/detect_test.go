@@ -215,6 +215,35 @@ func TestDetectKind_ShebangBash(t *testing.T) {
 	}
 }
 
+// Versioned shebang interpreters must resolve via the documented
+// "try-verbatim-then-trim" fallback. `python3` is a chroma alias of
+// the Python lexer (verbatim hit); `python3.11` isn't, but the trim
+// fallback strips the digits and lands on `python` (Copilot review
+// PR#12 #2).
+func TestDetectKind_ShebangVersionedInterpreter(t *testing.T) {
+	cases := []struct {
+		name string
+		body string
+	}{
+		{"python3", "#!/usr/bin/env python3\nprint('hi')\n"},
+		{"python3.11", "#!/usr/local/bin/python3.11\nprint('hi')\n"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got, lex, err := detectKind(strings.NewReader(tc.body), "")
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if got != KindCode {
+				t.Errorf("got %v want %v", got, KindCode)
+			}
+			if !strings.EqualFold(lex, "python") {
+				t.Errorf("lexer: got %q want %q", lex, "python")
+			}
+		})
+	}
+}
+
 func TestDetectKind_HintOverridesShebang(t *testing.T) {
 	// Hint always wins, even when the shebang would have classified
 	// differently. Mirrors `--lang go` over a piped Python script.
