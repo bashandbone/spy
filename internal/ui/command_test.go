@@ -69,6 +69,34 @@ func drainStream(t *testing.T, m Model) Model {
 	return m
 }
 
+// submitSearchAndApply submits the active prompt buffer (Enter), runs
+// the resulting async search tea.Cmd to completion, and feeds the
+// produced [searchResultMsg] back through Update. Existing test cases
+// were written when search ran synchronously on the event-loop
+// goroutine; H5 moved the scan off-goroutine and gated result
+// application on a [searchResultMsg]. This helper keeps those tests
+// expressing the same end-state assertion (Matches populated /
+// advisory set / etc.) without each test re-implementing the cmd
+// drive loop.
+//
+// Callers that specifically need to observe the *interim* state
+// (Pending=true, empty Matches before the result arrives) should
+// drive the cmd manually rather than calling this helper.
+func submitSearchAndApply(t *testing.T, m Model) Model {
+	t.Helper()
+	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = updated.(Model)
+	if cmd == nil {
+		return m
+	}
+	msg := cmd()
+	if msg == nil {
+		return m
+	}
+	updated, _ = m.Update(msg)
+	return updated.(Model)
+}
+
 func TestCommandLine_OpenColon(t *testing.T) {
 	t.Parallel()
 	m := newTestModel(t, numberedBody(20))
@@ -486,8 +514,7 @@ func TestSearch_ForwardJumpsToFirstMatch(t *testing.T) {
 		updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}})
 		m = updated.(Model)
 	}
-	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
-	m = updated.(Model)
+	m = submitSearchAndApply(t, m)
 	if len(m.search.Matches) == 0 {
 		t.Fatalf("/line 42 should produce matches")
 	}
@@ -505,8 +532,7 @@ func TestSearch_NoMatchSurfacesAdvisory(t *testing.T) {
 		updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}})
 		m = updated.(Model)
 	}
-	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
-	m = updated.(Model)
+	m = submitSearchAndApply(t, m)
 	if !strings.Contains(m.statusAdvisory, "no match") {
 		t.Errorf("expected 'no match' advisory; got %q", m.statusAdvisory)
 	}
@@ -521,8 +547,7 @@ func TestSearch_NextMatchAdvancesAndWraps(t *testing.T) {
 		updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}})
 		m = updated.(Model)
 	}
-	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
-	m = updated.(Model)
+	m = submitSearchAndApply(t, m)
 	if len(m.search.Matches) != 2 {
 		t.Fatalf("expected 2 matches, got %d", len(m.search.Matches))
 	}
@@ -530,7 +555,7 @@ func TestSearch_NextMatchAdvancesAndWraps(t *testing.T) {
 		t.Errorf("first match: CurrentMatch should be 0; got %d", m.search.CurrentMatch)
 	}
 	// `n` advances to the next match.
-	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'n'}})
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'n'}})
 	m = updated.(Model)
 	if m.search.CurrentMatch != 1 {
 		t.Errorf("after n: CurrentMatch should be 1; got %d", m.search.CurrentMatch)
@@ -555,10 +580,9 @@ func TestSearch_PrevMatch(t *testing.T) {
 		updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}})
 		m = updated.(Model)
 	}
-	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
-	m = updated.(Model)
+	m = submitSearchAndApply(t, m)
 	// `N` goes back: from index 0 wraps to last index (1).
-	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'N'}})
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'N'}})
 	m = updated.(Model)
 	if m.search.CurrentMatch != 1 {
 		t.Errorf("N should wrap from 0 to last (1); got %d", m.search.CurrentMatch)
@@ -696,8 +720,7 @@ func TestSearch_StateInRenderContext(t *testing.T) {
 		updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}})
 		m = updated.(Model)
 	}
-	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
-	m = updated.(Model)
+	m = submitSearchAndApply(t, m)
 	ctx := m.renderContext()
 	if ctx.Search.Query != "foo" {
 		t.Errorf("renderContext().Search.Query: got %q want foo", ctx.Search.Query)
@@ -857,8 +880,7 @@ func TestSearch_CaseModeFromConfigOverridesSmartDefault(t *testing.T) {
 		updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}})
 		m = updated.(Model)
 	}
-	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
-	m = updated.(Model)
+	m = submitSearchAndApply(t, m)
 	if len(m.search.Matches) != 1 {
 		t.Errorf("cfg.CaseMode=sensitive should yield 1 match for 'foo'; got %d", len(m.search.Matches))
 	}
@@ -887,8 +909,7 @@ func TestSearch_PrefixOverridesCaseSensitivity(t *testing.T) {
 		updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}})
 		m = updated.(Model)
 	}
-	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
-	m = updated.(Model)
+	m = submitSearchAndApply(t, m)
 	if len(m.search.Matches) != 1 {
 		t.Errorf(`\C prefix should yield 1 match; got %d`, len(m.search.Matches))
 	}
@@ -912,8 +933,7 @@ func TestSearch_InitialJumpDoesNotSetWrappedAdvisory(t *testing.T) {
 		updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}})
 		m = updated.(Model)
 	}
-	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
-	m = updated.(Model)
+	m = submitSearchAndApply(t, m)
 	if m.search.Wrapped {
 		t.Errorf("initial forward jump should not set Wrapped; got true")
 	}
@@ -943,8 +963,7 @@ func TestSearch_InitialJumpFromMidFileDoesSetWrappedWhenNeeded(t *testing.T) {
 		updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}})
 		m = updated.(Model)
 	}
-	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
-	m = updated.(Model)
+	m = submitSearchAndApply(t, m)
 	if !m.search.Wrapped {
 		t.Errorf("post-wrap initial jump should set Wrapped=true; got %+v", m.search)
 	}
@@ -967,8 +986,7 @@ func TestSearch_BackwardInitialPicksFirstHitInTraversalOrder(t *testing.T) {
 		updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}})
 		m = updated.(Model)
 	}
-	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
-	m = updated.(Model)
+	m = submitSearchAndApply(t, m)
 	if len(m.search.Matches) == 0 {
 		t.Fatalf("expected matches for backward search")
 	}
