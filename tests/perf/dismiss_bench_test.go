@@ -46,8 +46,26 @@ func measureDismiss(t *testing.T, iterations int, limit time.Duration, failOnBud
 
 	durations := make([]time.Duration, 0, iterations)
 	for i := 0; i < iterations; i++ {
-		p := integration.NewPTYProgram(t, []string{"--no-config", bigPath}, nil)
+		// SkipCleanup so the PTY's FD + drain buffer don't pile up
+		// across iterations; we Close explicitly at the end of each
+		// pass. The 100-iteration nightly tier would otherwise leak
+		// 100 master/slave fd pairs and 100 byte buffers until the
+		// test returned.
+		p := integration.NewPTYProgramOpts(t,
+			[]string{"--no-config", bigPath}, nil,
+			integration.PTYOptions{SkipCleanup: true})
+		iterationDone := false
+		closeOnce := func() {
+			if iterationDone {
+				return
+			}
+			iterationDone = true
+			_ = p.Close()
+		}
+		// Best-effort cleanup if the iteration t.Fatal's mid-flight.
+		t.Cleanup(closeOnce)
 		if !p.WaitFor(integration.AltScreenEnter, 5*time.Second) {
+			closeOnce()
 			t.Fatalf("iteration %d: alt-screen entry not observed", i)
 		}
 		// Wait for Bubble Tea's raw-mode handlers to be installed
@@ -56,6 +74,7 @@ func measureDismiss(t *testing.T, iterations int, limit time.Duration, failOnBud
 		// but before the first content paint, so it's a stable signal
 		// that the input pipeline is live.
 		if !p.WaitFor("\x1b[?2004h", 2*time.Second) {
+			closeOnce()
 			t.Fatalf("iteration %d: bracketed-paste setup not observed", i)
 		}
 		// Wait for the streaming-complete footer ("N lines" with no
@@ -63,6 +82,7 @@ func measureDismiss(t *testing.T, iterations int, limit time.Duration, failOnBud
 		// the input loop is unambiguously live. The wait is not part
 		// of the SC-007 measurement — the timer starts after it.
 		if !p.WaitFor("10000 lines", 5*time.Second) {
+			closeOnce()
 			t.Fatalf("iteration %d: streaming-complete footer never painted", i)
 		}
 		// Small additional buffer so the very first key isn't lost on
@@ -92,11 +112,15 @@ func measureDismiss(t *testing.T, iterations int, limit time.Duration, failOnBud
 			elapsed = time.Since(start)
 		}
 		if !exited {
-			t.Logf("iteration %d snapshot at hang: %q", i, string(p.Snapshot()))
+			snap := string(p.Snapshot())
+			closeOnce()
+			t.Logf("iteration %d snapshot at hang: %q", i, snap)
 			t.Fatalf("iteration %d: process did not exit after `q`", i)
 		}
 		durations = append(durations, elapsed)
-		if exit := p.ExitCode(); exit != 0 {
+		exit := p.ExitCode()
+		closeOnce()
+		if exit != 0 {
 			t.Fatalf("iteration %d: exit code %d (want 0)", i, exit)
 		}
 	}

@@ -158,12 +158,30 @@ func (r *codeRenderer) styleLine(l source.Line) string {
 	if fm == nil {
 		return neutralizeEscapes(l.Raw)
 	}
-	iter := chromaIterFromTokens(neutralizeTokens(tokens))
+	// Common case: Chroma's Text tokens copy bytes verbatim from
+	// l.Raw, so we can scan l.Raw once and skip the per-token copy
+	// entirely when no ESC / CSI byte is present. Allocates only on
+	// the rare line that actually carries an escape (T109b.c).
+	safeTokens := tokens
+	if needsTokenNeutralisation(l.Raw) {
+		safeTokens = neutralizeTokens(tokens)
+	}
+	iter := chromaIterFromTokens(safeTokens)
 	var buf bytes.Buffer
 	if err := fm.Format(&buf, style, iter); err != nil {
 		return neutralizeEscapes(l.Raw)
 	}
 	return strings.TrimRight(buf.String(), "\n")
+}
+
+// needsTokenNeutralisation reports whether `raw` contains any byte
+// that [neutralizeEscapes] would substitute. Used as a fast pre-scan
+// so the per-token copy in [neutralizeTokens] only runs on lines that
+// actually carry an OSC / DCS / CSI byte. Per-line inputs are typically
+// hundreds of bytes; the IndexAny scan is one cache-line read in the
+// common case.
+func needsTokenNeutralisation(raw string) bool {
+	return strings.ContainsAny(raw, "\x1b\x9b")
 }
 
 // neutralizeTokens returns a copy of `tokens` with every ESC / CSI byte
@@ -172,6 +190,10 @@ func (r *codeRenderer) styleLine(l source.Line) string {
 // would still pass through to the user's terminal. Substitutions are
 // byte-for-byte (see neutralizeEscapes) so the formatter's offset math
 // stays valid.
+//
+// Callers should consult [needsTokenNeutralisation] first; this
+// function unconditionally allocates a fresh slice and is intended for
+// the rare line that does carry an escape.
 func neutralizeTokens(tokens []source.Token) []source.Token {
 	if len(tokens) == 0 {
 		return tokens

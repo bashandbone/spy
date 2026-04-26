@@ -65,6 +65,13 @@ type PTYOptions struct {
 	// CWD, when non-empty, is the working directory of the spawned
 	// process. Defaults to t.TempDir().
 	CWD string
+	// SkipCleanup, when true, prevents [NewPTYProgramOpts] from
+	// registering a [testing.T.Cleanup] that closes the PTY at end of
+	// test. Benchmarks that spawn many programs in a loop should use
+	// this and call [PTYProgram.Close] explicitly per iteration —
+	// otherwise every iteration's PTY FD + drain buffer stays alive
+	// until the test returns, exhausting FDs and bloating memory.
+	SkipCleanup bool
 }
 
 // NewPTYProgram builds the spy binary (if needed) and spawns it under a
@@ -109,9 +116,11 @@ func NewPTYProgramOpts(t *testing.T, args []string, env map[string]string, opts 
 		t.Fatalf("pty.Start: %v", err)
 	}
 	p := &PTYProgram{t: t, cmd: cmd, pty: f}
-	t.Cleanup(func() {
-		_ = p.Close()
-	})
+	if !opts.SkipCleanup {
+		t.Cleanup(func() {
+			_ = p.Close()
+		})
+	}
 	go p.drain()
 	return p
 }
@@ -125,8 +134,10 @@ func (p *PTYProgram) Send(s string) {
 	}
 }
 
-// Read returns and consumes the bytes accumulated since the last Read /
-// Snapshot. Returns the empty slice when nothing is buffered.
+// Read returns and consumes every byte accumulated since the last
+// successful [PTYProgram.Read]. [PTYProgram.Snapshot] is non-consuming
+// and does not affect this cursor. Returns the empty slice when
+// nothing is buffered.
 func (p *PTYProgram) Read() []byte {
 	p.mu.Lock()
 	defer p.mu.Unlock()
@@ -135,9 +146,10 @@ func (p *PTYProgram) Read() []byte {
 	return out
 }
 
-// Snapshot returns the bytes accumulated since the program started
-// without consuming the buffer. Tests use it to scan for substrings or
-// match against goldens after [PTYProgram.WaitFor].
+// Snapshot returns every byte accumulated since the program started
+// (or since the last [PTYProgram.Read], whichever is newer) without
+// consuming the buffer. Tests use it to scan for substrings or match
+// against goldens after [PTYProgram.WaitFor].
 func (p *PTYProgram) Snapshot() []byte {
 	p.mu.Lock()
 	defer p.mu.Unlock()
