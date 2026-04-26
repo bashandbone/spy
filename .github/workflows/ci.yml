@@ -93,10 +93,13 @@ jobs:
       - name: grep gate for net.* / http.* under internal/ + cmd/
         run: |
           set -euo pipefail
-          # Allow string literals that mention HTTP for documentation
-          # (file path comments, URL examples in --help). The gate looks
-          # for actual call sites: http.Get/Post/Do, net.Dial*, etc.
-          if grep -rE '(\bhttp\.(Get|Post|Head|Do|Client)|\bnet\.Dial|\.Get\()' internal/ cmd/ \
+          # Looks for actual network call sites — net.Dial*, http.Get/
+          # Post/Head/Do/NewRequest, and the http.Client constructor.
+          # Plain `.Get(` is intentionally NOT matched because Chroma's
+          # styles/lexers/formatters packages each expose Get(name)
+          # APIs that have nothing to do with the network.
+          if grep -rE '(\bhttp\.(Get|Post|Head|Do|Client|NewRequest)\b|\bnet\.Dial[A-Za-z]*\b|\bhttp\.NewRequest\b)' \
+              internal/ cmd/ \
               --include='*.go' \
               | grep -v '_test\.go:'; then
             echo
