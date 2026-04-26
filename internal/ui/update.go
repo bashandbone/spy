@@ -834,14 +834,13 @@ func (m Model) onNextPage() (tea.Model, tea.Cmd) {
 	if m.source == nil || m.source.Kind() != source.KindPDF {
 		return m, nil
 	}
+	prev := m.page
 	m.page++
 	if total := m.source.Metadata().PageCount; total > 0 && m.page > total {
 		m.page = total
 		m.statusAdvisory = "already on last page"
 	}
-	if m.renderer != nil {
-		m.viewport.SetContent(m.renderer.Render(m.renderContext()))
-	}
+	m.applyPageChange(prev)
 	return m, nil
 }
 
@@ -855,10 +854,9 @@ func (m Model) onPrevPage() (tea.Model, tea.Cmd) {
 		m.statusAdvisory = "already on first page"
 		return m, nil
 	}
+	prev := m.page
 	m.page--
-	if m.renderer != nil {
-		m.viewport.SetContent(m.renderer.Render(m.renderContext()))
-	}
+	m.applyPageChange(prev)
 	return m, nil
 }
 
@@ -878,11 +876,28 @@ func (m Model) jumpToPage(n int) (tea.Model, tea.Cmd) {
 		m.statusAdvisory = fmt.Sprintf("page %d > total %d", n, total)
 		n = total
 	}
+	prev := m.page
 	m.page = n
+	m.applyPageChange(prev)
+	return m, nil
+}
+
+// applyPageChange re-renders the viewport for the new page cursor and,
+// when the page actually changed, snaps scroll back to the top so the
+// user doesn't land halfway down a fresh page (or past the end of a
+// shorter one). `prev` is the cursor value before the change so a
+// no-op `]` on the last page is a true no-op — neither the rendered
+// content nor the scroll position is touched. Copilot review PR#11
+// round-2 #1, #5, #6.
+func (m *Model) applyPageChange(prev int) {
+	if m.page == prev {
+		return
+	}
 	if m.renderer != nil {
 		m.viewport.SetContent(m.renderer.Render(m.renderContext()))
 	}
-	return m, nil
+	m.viewport.GotoTop()
+	m.viewport.SetXOffset(0)
 }
 
 // renderContext bundles the per-frame state the renderer needs.

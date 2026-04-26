@@ -32,8 +32,8 @@ import "testing"
 //	    1. Spawn `./spy --graphics none tests/e2e/fixtures/dummy.pdf`.
 //	    2. Wait for alt-screen entry.
 //	    3. Assert the rendered frame contains the literal substring
-//	       "Dummy PDF file" (the pdfcpu page-text extraction path; on
-//	       the lebowsky/pdf reader the substring survives).
+//	       "Dummy PDF file" (the ledongthuc/pdf page-text extraction
+//	       path; the substring survives the reader's text decoder).
 //	    4. Send `q`, assert exit 0, and verify resident memory ≤ 250 MB.
 //
 // Until the harness lands, the assertions are documented here so a

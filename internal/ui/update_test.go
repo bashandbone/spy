@@ -498,6 +498,138 @@ func TestUpdate_StaleStreamDoneMsgIsDropped(t *testing.T) {
 	}
 }
 
+// fakePDFSource satisfies [source.Source] for the page-navigation tests.
+type fakePDFSource struct {
+	body  string
+	pages int
+}
+
+func (f *fakePDFSource) Kind() source.Kind   { return source.KindPDF }
+func (f *fakePDFSource) DisplayName() string { return "fake.pdf" }
+func (f *fakePDFSource) Metadata() source.Metadata {
+	return source.Metadata{LineCount: -1, PageCount: f.pages}
+}
+func (f *fakePDFSource) Open() (io.ReadCloser, error) {
+	return io.NopCloser(strings.NewReader(f.body)), nil
+}
+func (f *fakePDFSource) Reopen() (io.ReadSeeker, error) {
+	return strings.NewReader(f.body), nil
+}
+
+// newPDFTestModel builds a Model backed by a fake PDF with a known
+// page count. The body is just a placeholder — the renderer fails text
+// extraction, but the page-navigation handlers don't care because they
+// branch only on Kind / PageCount.
+func newPDFTestModel(t *testing.T, pages int) Model {
+	t.Helper()
+	src := &fakePDFSource{body: "%PDF-1.4\n%%EOF\n", pages: pages}
+	stream, err := loader.Open(context.Background(), src, loader.Config{})
+	if err != nil {
+		t.Fatalf("loader.Open: %v", err)
+	}
+	cfg := config.Defaults()
+	return NewModel(ModelOptions{
+		Source:       src,
+		Stream:       stream,
+		Capabilities: term.Capabilities{Cols: 80, Rows: 24},
+		Config:       cfg,
+		Theme:        render.ThemeDark(),
+		KeyMap:       keys.Default(),
+	})
+}
+
+func TestUpdate_NextPageAdvancesAndResetsViewport(t *testing.T) {
+	// Copilot review PR#11 round-2 #5: `]` must reset the viewport
+	// scroll offsets when the page actually changes so the new page
+	// doesn't render halfway down.
+	m := newPDFTestModel(t, 3)
+	m, _ = applyResize(m, 80, 24)
+	m.viewport.SetYOffset(7)
+	updated, _ := m.onNextPage()
+	mm := updated.(Model)
+	if mm.page != 2 {
+		t.Errorf("page after `]`: got %d want 2", mm.page)
+	}
+	if mm.viewport.YOffset != 0 {
+		t.Errorf("viewport YOffset not reset on page change: got %d", mm.viewport.YOffset)
+	}
+}
+
+func TestUpdate_NextPageOnLastPageClampsAndAdvises(t *testing.T) {
+	// `]` on the last page must be a no-op page-wise but surface the
+	// "already on last page" advisory.
+	m := newPDFTestModel(t, 2)
+	m, _ = applyResize(m, 80, 24)
+	m.page = 2
+	updated, _ := m.onNextPage()
+	mm := updated.(Model)
+	if mm.page != 2 {
+		t.Errorf("page should clamp at total: got %d want 2", mm.page)
+	}
+	if !strings.Contains(mm.statusAdvisory, "last page") {
+		t.Errorf("expected last-page advisory, got %q", mm.statusAdvisory)
+	}
+}
+
+func TestUpdate_PrevPageDecrementsAndResetsViewport(t *testing.T) {
+	// Copilot review PR#11 round-2 #6: `[` must reset the viewport
+	// scroll offsets when the page actually changes.
+	m := newPDFTestModel(t, 3)
+	m, _ = applyResize(m, 80, 24)
+	m.page = 2
+	m.viewport.SetYOffset(9)
+	updated, _ := m.onPrevPage()
+	mm := updated.(Model)
+	if mm.page != 1 {
+		t.Errorf("page after `[`: got %d want 1", mm.page)
+	}
+	if mm.viewport.YOffset != 0 {
+		t.Errorf("viewport YOffset not reset on page change: got %d", mm.viewport.YOffset)
+	}
+}
+
+func TestUpdate_PrevPageOnFirstPageClampsAndAdvises(t *testing.T) {
+	m := newPDFTestModel(t, 2)
+	m, _ = applyResize(m, 80, 24)
+	updated, _ := m.onPrevPage()
+	mm := updated.(Model)
+	if mm.page != 1 {
+		t.Errorf("page should clamp at 1: got %d", mm.page)
+	}
+	if !strings.Contains(mm.statusAdvisory, "first page") {
+		t.Errorf("expected first-page advisory, got %q", mm.statusAdvisory)
+	}
+}
+
+func TestUpdate_JumpToPageResetsViewport(t *testing.T) {
+	// Copilot review PR#11 round-2 #1: `:N` page jump should reset
+	// scroll offsets when the page actually changes.
+	m := newPDFTestModel(t, 5)
+	m, _ = applyResize(m, 80, 24)
+	m.viewport.SetYOffset(11)
+	updated, _ := m.jumpToPage(3)
+	mm := updated.(Model)
+	if mm.page != 3 {
+		t.Errorf("jumpToPage(3): got page %d want 3", mm.page)
+	}
+	if mm.viewport.YOffset != 0 {
+		t.Errorf("viewport YOffset not reset on jump: got %d", mm.viewport.YOffset)
+	}
+}
+
+func TestUpdate_JumpToOutOfRangePageClampsToTotal(t *testing.T) {
+	m := newPDFTestModel(t, 5)
+	m, _ = applyResize(m, 80, 24)
+	updated, _ := m.jumpToPage(99)
+	mm := updated.(Model)
+	if mm.page != 5 {
+		t.Errorf("jumpToPage(99) on 5-page PDF: got page %d want 5", mm.page)
+	}
+	if !strings.Contains(mm.statusAdvisory, ">") {
+		t.Errorf("expected out-of-range advisory, got %q", mm.statusAdvisory)
+	}
+}
+
 func TestLoaderConfigFromConfig(t *testing.T) {
 	cfg := &config.Config{MaxResidentBytes: 1024, WindowSize: 8}
 	got := loaderConfigFromConfig(cfg)

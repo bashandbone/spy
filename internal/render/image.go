@@ -163,9 +163,9 @@ func (r *imageRenderer) dimensions() string {
 	return fmt.Sprintf("%d×%d", cfg.Width, cfg.Height)
 }
 
-// humanSize is the same byte-pretty printer used elsewhere in render —
-// inlined here so the image renderer doesn't pull a sibling helper file
-// into its dependency graph.
+// humanSize is a byte-pretty printer kept local to this file so the
+// formatting logic stays next to the image renderer rather than
+// introducing another shared helper.
 func humanSize(n int64) string {
 	const unit = 1024
 	if n < unit {

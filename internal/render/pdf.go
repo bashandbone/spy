@@ -111,8 +111,11 @@ func (r *pdfRenderer) Render(ctx RenderContext) string {
 			// surfaces the reason if the text path also fails.
 		default:
 			r.cachedFailed = true
-			// fall through to text fallback with the error noted in
-			// the footer below.
+			// fall through silently to the text fallback. If the text
+			// path also fails, that later error is surfaced via
+			// metadataBlock; the rasterize-side error is intentionally
+			// swallowed because the user already gets useful content
+			// (Copilot review PR#11 round-2 #2).
 		}
 	}
 
