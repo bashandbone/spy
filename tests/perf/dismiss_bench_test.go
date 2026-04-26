@@ -96,15 +96,31 @@ func measureDismiss(t *testing.T, iterations int, limit time.Duration, failOnBud
 		// timer at that retransmit. That way the recorded duration
 		// reflects the keystroke the binary actually saw rather than
 		// the harness's input-pipeline race.
+		//
+		// The first-pass timeout (firstQTimeout) is a measurement
+		// floor: every iteration whose first `q` propagates is
+		// credited with this value as a strict upper bound on the
+		// real dismiss latency. The previous 200 ms floor made
+		// regressions in the 50 → 199 ms range invisible — the test
+		// would record 200 ms either way. 10 ms keeps the floor an
+		// order of magnitude under the 500 ms budget so that band of
+		// regressions actually moves the recorded p95.
+		//
+		// The trade-off: legitimately-slow first-pass exits (rare on
+		// commodity CI but possible under load) hit the timeout and
+		// fall through to the retransmit path, which times the
+		// second `q` precisely. The recorded duration in that case
+		// is the second-pass elapsed time, which still reflects the
+		// real dismiss latency for the keystroke the binary actually
+		// consumed. Net effect: the p95 across iterations is no
+		// worse than before, and the resolution is dramatically
+		// finer.
+		const firstQTimeout = 10 * time.Millisecond
 		p.Send("q")
 		var elapsed time.Duration
-		exited := p.WaitForExit(200 * time.Millisecond)
+		exited := p.WaitForExit(firstQTimeout)
 		if exited {
-			// First `q` propagated. We don't have a precise t0 (the
-			// instant Bubble Tea actually consumed the keystroke), so
-			// we credit the iteration with the polling tick — a
-			// strict upper bound on the real dismiss latency.
-			elapsed = 200 * time.Millisecond
+			elapsed = firstQTimeout
 		} else {
 			start := time.Now()
 			p.Send("q")
