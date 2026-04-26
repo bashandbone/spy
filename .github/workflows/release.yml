@@ -1,0 +1,201 @@
+# SPDX-FileCopyrightText: 2026 Adam Poulemanos
+#
+# SPDX-License-Identifier: MIT OR Apache-2.0
+
+name: release
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Tag to release (e.g. v0.1.0). Defaults to the current ref name."
+        required: false
+        default: ""
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: build ${{ matrix.goos }}/${{ matrix.goarch }}
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - goos: linux
+            goarch: amd64
+          - goos: linux
+            goarch: arm64
+          - goos: darwin
+            goarch: amd64
+          - goos: darwin
+            goarch: arm64
+          - goos: windows
+            goarch: amd64
+          - goos: windows
+            goarch: arm64
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.26"
+          check-latest: true
+
+      - name: Determine version
+        id: version
+        run: |
+          if [ -n "${{ github.event.inputs.tag }}" ]; then
+            TAG="${{ github.event.inputs.tag }}"
+          elif [ "${{ github.ref_type }}" = "tag" ]; then
+            TAG="${GITHUB_REF_NAME}"
+          else
+            echo "Error: workflow_dispatch requires a tag input or a tag ref." >&2
+            exit 1
+          fi
+
+          case "$TAG" in
+            v[0-9]*.[0-9]*.[0-9]*)
+              ;;
+            *)
+              echo "Error: invalid release tag '$TAG'. Expected format: v*.*.*" >&2
+              exit 1
+              ;;
+          esac
+
+          echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
+
+      - name: Build
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+          CGO_ENABLED: "0"
+        run: |
+          VERSION="${{ steps.version.outputs.tag }}"
+          ARCHIVE="spy-${VERSION}-${{ matrix.goos }}-${{ matrix.goarch }}"
+          mkdir -p dist
+          if [ "${{ matrix.goos }}" = "windows" ]; then
+            go build -ldflags "-X main.version=${VERSION}" -o dist/spy.exe ./cmd/spy
+            zip -j "dist/${ARCHIVE}.zip" dist/spy.exe
+          else
+            go build -ldflags "-X main.version=${VERSION}" -o dist/spy ./cmd/spy
+            tar -czf "dist/${ARCHIVE}.tar.gz" -C dist spy
+          fi
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: spy-${{ matrix.goos }}-${{ matrix.goarch }}
+          path: dist/spy-*
+          if-no-files-found: error
+
+  build-fitz:
+    name: build linux/amd64 (fitz)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.26"
+          check-latest: true
+
+      - name: Install mupdf headers (for -tags fitz)
+        run: sudo apt-get update && sudo apt-get install -y libmupdf-dev mupdf-tools
+
+      - name: Determine version
+        id: version
+        run: |
+          if [ -n "${{ github.event.inputs.tag }}" ]; then
+            TAG="${{ github.event.inputs.tag }}"
+          elif [ "${{ github.ref_type }}" = "tag" ]; then
+            TAG="${GITHUB_REF_NAME}"
+          else
+            echo "Error: workflow_dispatch requires a tag input or a tag ref." >&2
+            exit 1
+          fi
+
+          case "$TAG" in
+            v[0-9]*.[0-9]*.[0-9]*)
+              ;;
+            *)
+              echo "Error: invalid release tag '$TAG'. Expected format: v*.*.*" >&2
+              exit 1
+              ;;
+          esac
+
+          echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
+
+      - name: Build (fitz)
+        run: |
+          VERSION="${{ steps.version.outputs.tag }}"
+          ARCHIVE="spy-${VERSION}-linux-amd64-fitz"
+          mkdir -p dist
+          go build -tags fitz -ldflags "-X main.version=${VERSION}" -o dist/spy-fitz ./cmd/spy
+          tar -czf "dist/${ARCHIVE}.tar.gz" -C dist spy-fitz
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: spy-linux-amd64-fitz
+          path: dist/spy-*
+          if-no-files-found: error
+
+  release:
+    name: create GitHub release
+    runs-on: ubuntu-latest
+    needs: [build, build-fitz]
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Determine version
+        id: version
+        run: |
+          if [ -n "${{ github.event.inputs.tag }}" ]; then
+            TAG="${{ github.event.inputs.tag }}"
+          elif [ "${{ github.ref_type }}" = "tag" ]; then
+            TAG="${GITHUB_REF_NAME}"
+          else
+            echo "Error: workflow_dispatch requires a tag input or a tag ref." >&2
+            exit 1
+          fi
+
+          case "$TAG" in
+            v[0-9]*.[0-9]*.[0-9]*)
+              ;;
+            *)
+              echo "Error: invalid release tag '$TAG'. Expected format: v*.*.*" >&2
+              exit 1
+              ;;
+          esac
+
+          echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Generate checksums
+        run: |
+          cd dist
+          sha256sum spy-* > checksums.txt
+          cat checksums.txt
+
+      - name: Create release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.version.outputs.tag }}
+          name: ${{ steps.version.outputs.tag }}
+          generate_release_notes: true
+          files: |
+            dist/spy-*
+            dist/checksums.txt
