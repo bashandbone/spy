@@ -153,7 +153,13 @@ func TestC4_StderrSanitizesHostileFilename(t *testing.T) {
 	}
 
 	stderr := <-done
-	if bytes.ContainsAny(stderr, "\x1b\x9b") {
+	// Use IndexByte directly to scan for raw ESC (0x1b) / CSI (0x9b)
+	// bytes — bytes.ContainsAny decodes the chars argument as runes,
+	// and U+FFFD (the LOW-1 replacement for ESC/CSI) is also the
+	// fallback rune for the invalid byte 0x9b on its own, so
+	// ContainsAny(stderr, "\x1b\x9b") gives false positives once the
+	// neutralizer substitutes FFFD.
+	if bytes.IndexByte(stderr, 0x1b) >= 0 || bytes.IndexByte(stderr, 0x9b) >= 0 {
 		t.Errorf("stderr leaked ESC / 8-bit-CSI from hostile filename:\n  %q", stderr)
 	}
 }
@@ -312,12 +318,19 @@ func TestNewHighlighter_UnknownStyleStillUsable(t *testing.T) {
 	}
 }
 
-func TestBoolPtr(t *testing.T) {
-	if boolPtr(false) != nil {
-		t.Errorf("boolPtr(false) should be nil to signal 'not set'")
+// TestFlagBoolPtr_NilWhenUnset is the smoke test for the LOW-3 fix:
+// the historical boolPtr(false) → nil shortcut was replaced by
+// flagBoolPtr, which keys off ParsedFlags.FlagWasSet so explicit
+// `--vim=false` propagates as &false (not nil). The exhaustive
+// behavior matrix lives in TestFlagBoolPtr_DistinguishesUnsetFromExplicitFalse
+// (see flags_test.go).
+func TestFlagBoolPtr_NilWhenUnset(t *testing.T) {
+	pf := &ParsedFlags{}
+	if got := flagBoolPtr(pf, "vim", false); got != nil {
+		t.Errorf("flagBoolPtr(no-set, false) = &%v, want nil", *got)
 	}
-	if got := boolPtr(true); got == nil || *got != true {
-		t.Errorf("boolPtr(true): got %v", got)
+	if got := flagBoolPtr(pf, "vim", true); got != nil {
+		t.Errorf("flagBoolPtr(no-set, true) = &%v, want nil", *got)
 	}
 }
 

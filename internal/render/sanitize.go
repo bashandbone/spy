@@ -4,12 +4,32 @@
 
 package render
 
-import "strings"
+import (
+	"strings"
+)
+
+// containsRawEscByte reports whether s carries a raw ESC (0x1b) or
+// CSI (0x9b) byte. Distinct from strings.ContainsAny because that
+// helper decodes the chars argument as runes — and U+FFFD (the
+// replacement Neutralize substitutes in) is also the fallback rune
+// for the invalid byte 0x9b on its own, which gives false positives
+// once neutralisation has already run.
+func containsRawEscByte(s string) bool {
+	for i := 0; i < len(s); i++ {
+		if c := s[i]; c == 0x1b || c == 0x9b {
+			return true
+		}
+	}
+	return false
+}
 
 // Neutralize replaces every ESC (0x1b) and CSI (0x9b) byte in `s`
-// with the printable replacement character '?'. The substitution is
-// byte-for-byte so terminal-cell width math and search-match offsets
-// computed against the original Raw bytes stay valid.
+// with the Unicode replacement character U+FFFD (`�`). Each
+// replacement byte expands to the 3-byte UTF-8 encoding (EF BF BD),
+// so the returned string is longer than the input when escapes are
+// present. Terminal-cell width math and search-match offsets that
+// use the original Raw bytes stay valid because we never reach this
+// path for offsets — only for human-visible emit boundaries.
 //
 // Why: a file whose content includes `\x1b]2;malicious\x07` — the OSC 2
 // "set window title" sequence — would, if rendered verbatim, change the
@@ -35,19 +55,27 @@ import "strings"
 //   - Spec T109b.c "Terminal escape injection from file content"
 //   - Acceptance review C4 "neutralizeEscapes bypassed in markdown / PDF /
 //     statusbar / image / stderr paths"
+//   - Acceptance review LOW-1 "use U+FFFD instead of '?'"
 //   - tests/integration/escape_injection_test.go
 func Neutralize(s string) string {
-	if !strings.ContainsAny(s, "\x1b\x9b") {
+	if !containsRawEscByte(s) {
 		return s
 	}
-	b := []byte(s)
-	for i, c := range b {
+	var b strings.Builder
+	// Pre-size: each escape byte becomes 3 bytes; common case has only
+	// a handful of escapes so the rough upper bound (len(s)+12) is
+	// cheaper than counting escapes first.
+	b.Grow(len(s) + 12)
+	for i := 0; i < len(s); i++ {
+		c := s[i]
 		switch c {
 		case 0x1b, 0x9b:
-			b[i] = '?'
+			b.WriteRune('�')
+		default:
+			b.WriteByte(c)
 		}
 	}
-	return string(b)
+	return b.String()
 }
 
 // neutralizeEscapes is the unexported alias kept for the existing

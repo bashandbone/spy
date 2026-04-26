@@ -39,7 +39,7 @@ func TestC4_StatusBar_NeutralizesDisplayNameAndAdvisory(t *testing.T) {
 		Mono:        true, // bypass lipgloss theme styling for clean assertion
 	}
 	out := StatusBarRender(in, Theme{})
-	if strings.ContainsAny(out, "\x1b\x9b") {
+	if containsRawEscape(out) {
 		t.Errorf("status bar emitted ESC/CSI byte from DisplayName/Advisory:\n  %q", out)
 	}
 	if !strings.Contains(out, "evil") {
@@ -61,7 +61,7 @@ func TestC4_StatusBar_CollapsedAlsoNeutralizes(t *testing.T) {
 		Mono:        true,
 	}
 	out := StatusBarRender(in, Theme{})
-	if strings.ContainsAny(out, "\x1b\x9b") {
+	if containsRawEscape(out) {
 		t.Errorf("collapsed status bar emitted ESC/CSI byte:\n  %q", out)
 	}
 }
@@ -72,7 +72,7 @@ func TestC4_StatusBar_CollapsedAlsoNeutralizes(t *testing.T) {
 func TestC4_PDF_FormatTextPage_NeutralizesText(t *testing.T) {
 	r := &pdfRenderer{src: &fakeC4Source{name: "doc.pdf"}}
 	out := r.formatTextPage("benign content with "+oscPayload+" inside", 1, 3)
-	if strings.ContainsAny(out, "\x1b\x9b") {
+	if containsRawEscape(out) {
 		t.Errorf("formatTextPage leaked ESC/CSI from PDF body:\n  %q", out)
 	}
 	if !strings.Contains(out, "benign content with") {
@@ -85,7 +85,7 @@ func TestC4_PDF_FormatTextPage_NeutralizesText(t *testing.T) {
 func TestC4_PDF_FormatTextPage_NeutralizesDisplayName(t *testing.T) {
 	r := &pdfRenderer{src: &fakeC4Source{name: "evil" + oscPayload + ".pdf"}}
 	out := r.formatTextPage("body", 1, 1)
-	if strings.ContainsAny(out, "\x1b\x9b") {
+	if containsRawEscape(out) {
 		t.Errorf("formatTextPage leaked ESC/CSI from DisplayName:\n  %q", out)
 	}
 }
@@ -95,7 +95,7 @@ func TestC4_PDF_FormatTextPage_NeutralizesDisplayName(t *testing.T) {
 func TestC4_PDF_MetadataBlock_NeutralizesDisplayName(t *testing.T) {
 	r := &pdfRenderer{src: &fakeC4Source{name: "evil" + oscPayload + ".pdf", size: 1024}}
 	out := r.metadataBlock("note text "+oscPayload, 1, 1)
-	if strings.ContainsAny(out, "\x1b\x9b") {
+	if containsRawEscape(out) {
 		t.Errorf("PDF metadata block leaked ESC/CSI:\n  %q", out)
 	}
 }
@@ -105,7 +105,7 @@ func TestC4_PDF_MetadataBlock_NeutralizesDisplayName(t *testing.T) {
 func TestC4_Image_MetadataBlock_NeutralizesDisplayName(t *testing.T) {
 	r := newImageRenderer(Dependencies{}, &fakeC4Source{name: "evil" + oscPayload + ".png", size: 4096})
 	out := r.metadataBlock(RenderContext{}, "")
-	if strings.ContainsAny(out, "\x1b\x9b") {
+	if containsRawEscape(out) {
 		t.Errorf("image metadata block leaked ESC/CSI:\n  %q", out)
 	}
 }
@@ -119,7 +119,7 @@ func TestC4_Markdown_AssembleRaw_NeutralizesContent(t *testing.T) {
 		{Number: 2, Raw: "evil" + oscPayloadShort + " body"},
 	}
 	out := assembleRaw(lines)
-	if strings.ContainsAny(out, "\x1b\x9b") {
+	if containsRawEscape(out) {
 		t.Errorf("assembleRaw leaked ESC/CSI bytes:\n  %q", out)
 	}
 	if !strings.Contains(out, "evil") {
@@ -147,7 +147,7 @@ func TestC4_Markdown_Render_DoesNotLeakInOutput(t *testing.T) {
 		Viewport: viewport.New(80, 24),
 	}
 	out := r.Render(ctx)
-	if strings.ContainsAny(out, "\x1b\x9b") {
+	if containsRawEscape(out) {
 		// Glamour will emit SGR escapes (\x1b[...m) for styling — those
 		// are LEGITIMATE and welcome. The C4 contract is specifically
 		// about NON-CSI escapes (OSC/DCS/etc) leaking through. So we
