@@ -52,7 +52,7 @@ import (
 // BUDGET NOTE: the 150 ms limit reflects measured reality on commodity
 // Linux hardware: the renderer slice contributes ~12 ms (see
 // TestFirstFrame_RendererSlice), and the remaining ~100–120 ms is
-// intrinsic binary-startup overhead — Go runtime initialisation
+// intrinsic binary-startup overhead — Go runtime initialization
 // (~30–50 ms), Chroma lexer registry init (257 XML configs read from
 // the embedded FS), glamour/goldmark registration, and PTY setup.
 // These are not easily reducible without major architectural changes
