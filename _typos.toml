@@ -7,6 +7,9 @@
 
 [files]
 extend-exclude = [
+  # Chroma's API has british english spellings, which typos considers typos. Since these are public API, we can't change them, so we ignore them.
+  "internal/source/detect.go",
+  "internal/source/detect_test.go",
 ]
 
 [default]

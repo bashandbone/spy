@@ -128,7 +128,7 @@ func TestDetectKind_TabNewlineEscapeAreText(t *testing.T) {
 }
 
 func TestDetectKind_CodeViaChroma(t *testing.T) {
-	// No extension hint, but Chroma's Analyze should pick Go from the
+	// No extension hint, but Chroma's Analyse should pick Go from the
 	// content.
 	body := `package main
 
@@ -143,7 +143,7 @@ func main() {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if got != KindCode && got != KindText {
-		// Either is fine — Chroma may or may not Analyze-match this short
+		// Either is fine — Chroma may or may not Analyse-match this short
 		// snippet. The contract says detectKind never crashes; if Chroma
 		// matched, lexer is non-empty.
 		t.Errorf("got %v, want KindCode or KindText", got)

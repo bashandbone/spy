@@ -18,7 +18,7 @@ import (
 // for a byte stream. Order, per T016:
 //  1. Extension hint (markdown/image/pdf/code).
 //  2. Magic bytes (PDF / image).
-//  3. Chroma `Analyze` over the read-ahead buffer.
+//  3. Chroma `Analyse` over the read-ahead buffer.
 //  4. Text/binary heuristic over the first 8 KiB.
 //
 // The reader is consumed up to 8 KiB during detection. Callers that
@@ -58,7 +58,7 @@ func detectKind(r io.Reader, hint string) (Kind, string, error) {
 	}
 
 	// 3a. Shebang (US5 / T092). Stdin and unhinted files may carry an
-	// interpreter declaration on line 1 — Chroma's `Analyze` doesn't
+	// interpreter declaration on line 1 — Chroma's `Analyse` doesn't
 	// score short snippets reliably, so we look for the shebang
 	// explicitly. The interpreter name is mapped to a Chroma lexer; an
 	// unknown interpreter falls through to the rest of the pipeline.
@@ -76,8 +76,8 @@ func detectKind(r io.Reader, hint string) (Kind, string, error) {
 		}
 	}
 
-	// 3b. Chroma Analyze.
-	if lex := lexers.Analyze(string(buf)); lex != nil {
+	// 3b. Chroma Analyse.
+	if lex := lexers.Analyse(string(buf)); lex != nil {
 		cfg := lex.Config()
 		// Plaintext / fallback lexer is not "code" — degrade to KindText.
 		if !isPlaintextLexer(cfg.Name) {
