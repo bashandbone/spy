@@ -93,6 +93,10 @@ func pollReadOSC(ctx context.Context, fd int) []byte {
 	if err := syscall.SetNonblock(fd, true); err != nil {
 		return nil
 	}
+	// Restore blocking mode. Failure is safe to ignore here: the caller
+	// (probeOSC11Background) closes fd immediately via defer f.Close(),
+	// so a non-blocking fd would only affect the subsequent Close ioctl,
+	// which is unaffected by the O_NONBLOCK flag.
 	defer syscall.SetNonblock(fd, false) //nolint:errcheck
 
 	out := make([]byte, 0, oscReplyMaxBytes)
