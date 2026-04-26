@@ -53,18 +53,22 @@ func activeMatch(state search.State) (search.Match, bool) {
 // colour while highlighted (Copilot review of US2 `T057`).
 func applyMatchHighlights(raw string, matches []search.Match, active search.Match, hasActive bool, hitStyle, activeStyle styleRenderer) string {
 	if len(matches) == 0 {
-		return raw
+		return neutralizeEscapes(raw)
 	}
+	// Neutralise ESC/CSI bytes in `raw` before slicing. Substitutions
+	// are byte-for-byte (see neutralizeEscapes) so the precomputed
+	// match offsets stay aligned with the new (safe) bytes.
+	safe := neutralizeEscapes(raw)
 	var b strings.Builder
 	pos := 0
 	for _, m := range matches {
-		if m.Start < 0 || m.End <= m.Start || m.End > len(raw) {
+		if m.Start < 0 || m.End <= m.Start || m.End > len(safe) {
 			continue
 		}
 		if m.Start > pos {
-			b.WriteString(raw[pos:m.Start])
+			b.WriteString(safe[pos:m.Start])
 		}
-		seg := raw[m.Start:m.End]
+		seg := safe[m.Start:m.End]
 		isActive := hasActive && m.Line == active.Line && m.Start == active.Start && m.End == active.End
 		if isActive {
 			b.WriteString(activeStyle.Render(seg))
@@ -73,8 +77,8 @@ func applyMatchHighlights(raw string, matches []search.Match, active search.Matc
 		}
 		pos = m.End
 	}
-	if pos < len(raw) {
-		b.WriteString(raw[pos:])
+	if pos < len(safe) {
+		b.WriteString(safe[pos:])
 	}
 	return b.String()
 }

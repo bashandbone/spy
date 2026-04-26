@@ -1,0 +1,23 @@
+{
+  "name": "spy",
+  "version": "0.1.0",
+  "description": "Keyboard-driven popup reader for the terminal",
+  "author": {
+    "name": "Adam Poulemanos",
+    "email": "noreply@example.com"
+  },
+  "keywords": ["terminal", "viewer", "syntax-highlighting"],
+  "license": "MIT OR Apache-2.0",
+  "engines": {
+    "go": ">=1.26"
+  },
+  "settings": {
+    "theme": "auto",
+    "vim_mode": false,
+    "regex_default": false,
+    "highlight_cap_bytes": 5242880,
+    "max_resident_bytes": 268435456,
+    "graphics": ["auto", "kitty", "iterm2", "sixel", "none"]
+  },
+  "extensions": [".go", ".py", ".js", ".ts", ".rs", ".java", ".cpp"]
+}

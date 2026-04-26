@@ -1,0 +1,105 @@
+# SPDX-FileCopyrightText: 2026 Adam Poulemanos
+#
+# SPDX-License-Identifier: MIT OR Apache-2.0
+
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: lint + vet + test (race)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.26"
+          check-latest: true
+
+      - name: Install mupdf headers (for -tags fitz)
+        run: sudo apt-get update && sudo apt-get install -y libmupdf-dev mupdf-tools
+
+      - name: Install dev tools
+        run: |
+          go install golang.org/x/tools/cmd/goimports@latest
+          go install github.com/wadey/gocovmerge@latest
+
+      - name: make lint
+        run: make lint
+
+      - name: make vet
+        run: make vet
+
+      - name: make test-race
+        run: make test-race
+
+      - name: make cover (merged default + fitz)
+        run: make cover
+
+      - name: Coverage gate (≥ 80% per internal/* package)
+        run: |
+          set -euo pipefail
+          # Per-package coverage from the merged profile.
+          #   internal/*  - hard gate at 80%
+          #   cmd/spy     - advisory; the alt-screen launch / theme-probe /
+          #                 prog.Run paths require a real PTY, and Go's
+          #                 in-process coverage doesn't follow into binaries
+          #                 spawned by tests/integration. The 76% baseline
+          #                 documented in specs/001-popup-reader/tasks.md
+          #                 stands until binary-instrumented coverage is
+          #                 wired in (Phase 9 follow-up).
+          #   tests/*     - advisory.
+          go test -cover ./... -coverprofile=/dev/null 2>&1 \
+            | awk '
+              /coverage:/ {
+                pkg = $2
+                for (i = 1; i <= NF; i++) {
+                  if ($i == "coverage:") { cov = $(i+1) + 0; break }
+                }
+                if (pkg ~ /tests\// || pkg == "github.com/knitli/spy/cmd/spy") {
+                  printf "ADVISORY %s: %.1f%%\n", pkg, cov
+                } else if (cov + 0 < 80) {
+                  printf "FAIL %s: %.1f%% (need >= 80%%)\n", pkg, cov
+                  fail = 1
+                } else {
+                  printf "PASS %s: %.1f%%\n", pkg, cov
+                }
+              }
+              END { exit fail+0 }
+            '
+
+  reuse:
+    name: REUSE / SPDX compliance
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: fsfe/reuse-action@v5
+
+  no-network:
+    name: no accidental network calls in product code
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: grep gate for net.* / http.* under internal/ + cmd/
+        run: |
+          set -euo pipefail
+          # Allow string literals that mention HTTP for documentation
+          # (file path comments, URL examples in --help). The gate looks
+          # for actual call sites: http.Get/Post/Do, net.Dial*, etc.
+          if grep -rE '(\bhttp\.(Get|Post|Head|Do|Client)|\bnet\.Dial|\.Get\()' internal/ cmd/ \
+              --include='*.go' \
+              | grep -v '_test\.go:'; then
+            echo
+            echo "FAIL: product code references HTTP/net.Dial — spy must not make network calls."
+            exit 1
+          fi

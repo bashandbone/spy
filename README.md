@@ -4,139 +4,133 @@ SPDX-FileCopyrightText: 2026 Adam Poulemanos
 SPDX-License-Identifier: MIT OR Apache-2.0
 -->
 
-# spy - GUI File Viewer
+# spy
 
-A beautiful, keyboard-driven file viewer for the terminal. Think "GUI `bat`" with syntax highlighting, PDF support, and image preview capabilities.
-
-Built with:
-- **Bubble Tea** - TUI framework
-- **Lip Gloss** - Terminal styling
-- **Chroma** - Syntax highlighting
-- **Glamour** - Markdown rendering
-- **pdfcpu** - PDF handling
+A keyboard-driven popup reader for the terminal — `bat` with a real
+viewport. `spy` opens any file (or piped content) in the alt-screen,
+applies syntax highlighting, and lets you scroll, search, and jump to a
+line without leaving the shell. It exits cleanly on `q` and leaves the
+underlying terminal exactly as it found it.
 
 ## Features
 
-- 🎨 **Syntax Highlighting** - Beautiful code highlighting for 100+ languages
-- 📄 **PDF Support** - View PDF metadata and extract text
-- 🖼️ **Image Support** - Preview images with dimension info
-- 📝 **Markdown Rendering** - Beautifully formatted markdown
-- ⌨️ **Vim-style Navigation** - hjkl keys, Home/End, Page Up/Down
-- 🎯 **Status Bar** - File info and navigation hints
-- 🌙 **Themable** - Configurable syntax highlighting themes
+- Syntax highlighting for 100+ languages via [Chroma](https://github.com/alecthomas/chroma)
+- Scroll, page, and `:N` jump-to-line; `/` forward search and `?` reverse search
+- Auto theme detection (background luminance via OSC 11) with dark/light overrides
+- PDF and image viewers — Kitty, iTerm2, and Sixel graphics protocols supported
+  (PDF rasterization requires the `-tags fitz` build)
+- Pipe input: `git diff | spy`, `cat hello.go | spy -l go`, `… | spy | cat`
+- Soft-wrap and horizontal scrolling; line-numbers gutter
+- Configurable via `$XDG_CONFIG_HOME/spy/config.toml`; everything overridable
+  by CLI flags and environment variables
+- Optional vim-style keybindings (`--vim` or `vim_mode=true`)
 
-## Installation
+## Install
 
-```bash
-go install github.com/knitli/spy/cmd/spy@latest
-```
-
-Or build from source:
+Pre-built binaries will follow the v0.1.0 tag. Until then, build from
+source:
 
 ```bash
 git clone https://github.com/knitli/spy.git
 cd spy
-go build -o bin/spy ./cmd/spy
-./bin/spy [FILE]
+make build         # default pure-Go build → bin/spy
+make build-fitz    # add cgo PDF rasterization → bin/spy-fitz
 ```
+
+`spy` requires Go 1.26 or later. The `-tags fitz` build additionally
+needs a working C toolchain and `mupdf` headers; the default build has no
+cgo dependency and produces a single static binary.
 
 ## Usage
 
 ```bash
-spy                    # Start with welcome screen
-spy path/to/file.go   # Open a file
+spy hello.go                # open a file
+spy README.md               # markdown — rendered via Glamour
+spy --theme light invoice.pdf
+spy --lang go -                # explicit stdin, hint Go lexer
+git diff HEAD~ | spy        # pipe input — language auto-detected
+echo content | spy | cat    # degenerate-cat: verbatim, exit 0
 ```
 
-### Keyboard Shortcuts
+`spy --help` prints the full flag list. The most common ones:
 
-| Key | Action |
-|-----|--------|
-| `q`, `Ctrl+C` | Quit |
-| `o` | Open file dialog |
-| `↑`/`↓` or `k`/`j` | Scroll up/down |
-| `Home` | Jump to start |
-| `End` | Jump to end |
-| `PgUp`/`PgDn` | Page up/down |
-| `?` | Toggle help |
+| Flag | Effect |
+|------|--------|
+| `--theme=auto\|dark\|light\|<chroma-style>` | Override theme detection. |
+| `--vim` | Additive vim keybindings. |
+| `--lang=<chroma-lexer>` (`-l`) | Force a Chroma lexer (e.g., `go`, `python`). |
+| `--graphics=auto\|none\|kitty\|iterm2\|sixel` | Override graphics protocol. |
+| `--no-line-numbers` / `--no-wrap` / `--no-color` | Disable display features. |
+| `--highlight-cap=<bytes>` | Skip syntax highlighting above this size (default 5 MiB). |
+| `--config=<path>` / `--no-config` | Override or skip the config file. |
 
-## Project Structure
+### Keybindings
 
-```
-spy/
-├── cmd/
-│   └── spy/
-│       └── main.go          # Entry point
-├── internal/
-│   ├── config/
-│   │   └── config.go        # Configuration management
-│   ├── reader/
-│   │   └── reader.go        # File reading and type detection
-│   ├── renderer/
-│   │   └── renderer.go      # Content rendering and styling
-│   └── ui/
-│       └── model.go         # Bubble Tea model and UI logic
-├── go.mod
-├── go.sum
-└── README.md
-```
+The defaults work without learning anything new. Pressing `F1` or `?`
+opens an in-app help overlay generated from the live key table — remaps
+update the overlay automatically.
+
+| Action | Default | Vim |
+|--------|---------|-----|
+| Scroll | `↑` `↓` `←` `→` | `k` `j` `h` `l` |
+| Page | `PgUp` / `PgDn` / `Space` | `Ctrl-B` / `Ctrl-F` / `Ctrl-D` / `Ctrl-U` |
+| Top / bottom | `Home` / `End` | `gg` / `G` |
+| Search forward / back | `/` / `?` | — |
+| Next / prev match | `n` / `N` | — |
+| Command-line (`:N`, `:set theme dark`) | `:` | — |
+| Quit | `q`, `Esc`, `Ctrl-C` | — |
+
+The full key contract lives in
+[specs/001-popup-reader/contracts/keys.md](specs/001-popup-reader/contracts/keys.md).
 
 ## Configuration
 
-Configuration is managed in `internal/config/config.go`. Future versions will support config files.
+Drop a TOML file at `$XDG_CONFIG_HOME/spy/config.toml` (falling back to
+`$HOME/.config/spy/config.toml`). Every option is also available as a
+flag and an environment variable; precedence is **flags > env > file >
+compiled defaults**. See
+[examples/config.toml](examples/config.toml) for a fully-annotated
+template and
+[specs/001-popup-reader/contracts/config.md](specs/001-popup-reader/contracts/config.md)
+for the schema.
 
-Current settings:
-- **Theme**: monokai (Chroma syntax highlighting theme)
-- **Line Numbers**: enabled
-- **Word Wrap**: enabled
-- **Tab Width**: 4 spaces
-- **Status Bar**: enabled
+## Behavior contracts
 
-## Supported File Types
+The CLI surface, exit codes, stdin handling, and resolution table are
+specified in
+[specs/001-popup-reader/contracts/cli.md](specs/001-popup-reader/contracts/cli.md).
+Internal package APIs and their guarantees are documented in
+[specs/001-popup-reader/contracts/internal-apis.md](specs/001-popup-reader/contracts/internal-apis.md).
 
-- **Code**: Go, Python, Rust, JavaScript, TypeScript, Java, C, C++, C#, Ruby, PHP, Swift, Kotlin, Scala, Lisp, Clojure, SQL, Bash, Lua, JSON, YAML, TOML, XML, HTML, CSS, SCSS
-- **Markup**: Markdown
-- **Documents**: PDF
-- **Images**: PNG, JPG, GIF, BMP, WebP
-- **Text**: Any plain text file
+## Project structure
+
+```
+cmd/spy/          # entry point + flag parsing
+internal/
+  config/         # TOML loader, precedence merge
+  graphics/       # Kitty / iTerm2 / Sixel encoders, PDF rasterization
+  highlight/      # Chroma wrapper + per-session cap
+  keys/           # key bindings (default + vim) via bubbles/key
+  loader/         # streaming + windowed loaders
+  render/         # code/markdown/pdf/image renderers, status bar
+  search/         # forward/backward scan, wrap-around, regex/literal
+  source/         # File/Stdin sources, content-type detection
+  term/           # capability + theme detection
+  ui/             # Bubble Tea model: update/view/commands
+specs/001-popup-reader/  # spec, plan, research, contracts, tasks
+tests/
+  e2e/            # shell-driven non-TTY pipeline tests
+  integration/    # PTY-driven end-to-end tests
+```
 
 ## Development
 
-### Building
-
-```bash
-go build -o bin/spy ./cmd/spy
-```
-
-### Running
-
-```bash
-./bin/spy path/to/file
-```
-
-### Dependencies
-
-- `github.com/charmbracelet/bubbletea` - TUI framework
-- `github.com/charmbracelet/lipgloss` - Terminal styling
-- `github.com/charmbracelet/glamour` - Markdown rendering
-- `github.com/alecthomas/chroma/v2` - Syntax highlighting
-- `github.com/pdfcpu/pdfcpu` - PDF handling
-
-## Roadmap
-
-- [ ] Configuration file support
-- [ ] Search within file (Ctrl+F)
-- [ ] Line navigation (Ctrl+G, go to line)
-- [ ] Drag and drop file opening
-- [ ] Theme switcher
-- [ ] Wider color support
-- [ ] PDF text extraction
-- [ ] Image viewer improvements
-- [ ] Plugin system
+See [DEVELOPMENT.md](DEVELOPMENT.md) for build/test/coverage targets and
+the PTY harness used by integration tests.
 
 ## License
 
-MIT
-
-## Author
-
-Created with ❤️ for developers who love beautiful CLIs
+Dual-licensed under [MIT](LICENSE-MIT) or
+[Apache-2.0](LICENSE-Apache.20). The repository is REUSE 3.3 compliant
+(every file carries SPDX headers); run `reuse lint` from the root to
+verify.

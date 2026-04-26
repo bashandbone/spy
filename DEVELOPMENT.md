@@ -4,179 +4,162 @@ SPDX-FileCopyrightText: 2026 Adam Poulemanos
 SPDX-License-Identifier: MIT OR Apache-2.0
 -->
 
-# Development Guide for spy
+# Development guide
 
-## Quick Start
+This document describes how to build, test, and contribute to `spy`.
+The product surface, keybindings, configuration schema, and behavioral
+contracts are specified under
+[specs/001-popup-reader/](specs/001-popup-reader/).
 
-### Build the project
+## Prerequisites
+
+- Go 1.26.2 or later (matches `go.mod`)
+- `make`
+- For coverage merging: `gocovmerge` —
+  `go install github.com/wadey/gocovmerge@latest`
+- Optional: `goimports` for the lint target —
+  `go install golang.org/x/tools/cmd/goimports@latest`
+- Optional: `reuse` (Python 3) for SPDX/license checks —
+  `pipx install reuse` or `uv tool install reuse`
+- For the `-tags fitz` build only: a C toolchain plus `mupdf` headers
+  (`apt install libmupdf-dev` on Debian/Ubuntu;
+  `brew install mupdf-tools` on macOS). The default build has no cgo
+  dependency.
+
+## Make targets
+
+The `Makefile` is the single source of truth for the build/test surface.
+
+| Target | What it does |
+|--------|--------------|
+| `make build` | Default pure-Go build → `bin/spy`. |
+| `make build-fitz` | `-tags fitz` cgo build → `bin/spy-fitz` (PDF rasterization). |
+| `make test` | `go test ./...` (default tags). |
+| `make test-race` | `go test ./... -race`. |
+| `make cover-default` | Per-package coverage on default build → `cov-default.out`. |
+| `make cover-fitz` | Per-package coverage with `-tags fitz` → `cov-fitz.out`. |
+| `make cover` | Merge default + fitz profiles into `coverage.out` (requires `gocovmerge`). |
+| `make lint` | `gofmt -l .` and `goimports -l .`; non-zero on diff. |
+| `make vet` | `go vet ./...` and `go vet -tags fitz ./...`. |
+| `make fmt` | `go fmt ./...` (rewrites in-place). |
+| `make reuse` | `reuse lint` (SPDX/license compliance). |
+| `make perf` | `go test -tags perf ./tests/perf/...` (nightly suite). |
+| `make all` | `fmt vet lint test-race build` — the dev-loop default. |
+| `make clean` | Remove `bin/`, `cov-*.out`, `coverage.out`. |
+
+The `cover` target merges the default and `fitz` profiles so files gated
+by build tags (notably `internal/graphics/pdf_*.go`) are visible to the
+≥ 80%/package coverage gate; without the merge, `pdf_fitz.go` is invisible
+to the threshold check on a default-tags run.
+
+## Build tags
+
+| Tag | What it gates |
+|-----|---------------|
+| *(none)* | Pure-Go build. PDF rendering returns `ErrUnsupported`; rasterization is unavailable but the rest of the viewer (text, code, markdown, images) works fully. |
+| `fitz` | Enables `internal/graphics/pdf_fitz.go` via [`gen2brain/go-fitz`](https://github.com/gen2brain/go-fitz) (cgo, links against `mupdf`). |
+| `perf` | Gates `tests/perf/large_file_test.go` nightly tier and `dismiss_bench_test.go` heavyweight cases — see "Performance suites" below. |
+
+`go vet -tags fitz ./...` is part of `make vet` so cgo-only files don't
+silently bit-rot.
+
+## Test layers
+
+```
+tests/
+├── e2e/             # bash-driven, no TTY required, run by tests/e2e/run.sh
+├── integration/     # PTY-driven, exercises alt-screen + signal paths
+└── perf/            # benchmarks for SC-001..SC-008 (Phase 9)
+```
+
+### Unit tests
+
+Co-located `*_test.go` files in every package. Run via `go test ./...`
+or `make test`. Race detection is on by default in CI (`make test-race`).
+
+### End-to-end (`tests/e2e/`)
+
+Shell scripts that exercise non-TTY pipelines: stdin handling, exit
+codes, the degenerate-cat contract, footer rendering when stdout is not
+a TTY, etc. They run against the binary at `bin/spy` and don't need a
+PTY. Driver: `tests/e2e/run.sh`.
+
+### Integration (`tests/integration/`)
+
+PTY-driven tests for behaviour that requires a real terminal: alt-screen
+entry/exit, signal handling, graphics protocol emission, theme detection
+probes. The harness in `tests/integration/pty.go` builds the binary
+inside `t.TempDir()` and spawns it under a PTY (via
+[`github.com/creack/pty`](https://github.com/creack/pty)), exposing
+`Send`, `Read`, `Snapshot`, `Close`, and `ExitCode` helpers that test
+files compose into golden-file or substring assertions.
+
+The harness automatically skips tests on platforms without PTY support.
+Tests that depend on a particular graphics protocol (e.g., Kitty)
+configure the spawned process's environment via `NewPTYProgram`'s `env`
+parameter.
+
+### Performance suites (`tests/perf/`)
+
+Benchmark tests guarding the success criteria from
+[spec.md](specs/001-popup-reader/spec.md). The lightweight tier (no
+build tag) runs on every PR; the heavyweight nightly tier is gated by
+`-tags perf` and runs from
+[`.github/workflows/nightly-perf.yml`](.github/workflows/nightly-perf.yml).
+
+| Criterion | Test | PR gate | Nightly |
+|-----------|------|---------|---------|
+| SC-001 (≤ 100 ms first frame) | `firstframe_bench_test.go` | ✓ | — |
+| SC-002 (60 fps scroll) | `scroll_bench_test.go` | ✓ | — |
+| SC-003 (≤ 500 ms search on 1 MiB) | `search_bench_test.go` | ✓ | — |
+| SC-004 (≤ 16 ms p95 theme swap) | `theme_swap_bench_test.go` | ✓ | — |
+| SC-005 (200 MiB PR / 1 GiB nightly) | `large_file_test.go` | ✓ (200 MiB) | ✓ (1 GiB, `-tags perf`) |
+| SC-006 (47/50 highlight corpus) | `highlight_corpus_test.go` | ✓ | — |
+| SC-007 (≤ 500 ms p95 dismiss) | `dismiss_bench_test.go` | ✓ | — |
+| SC-008 (≤ 16 ms p95 resize) | `tests/integration/resize_test.go` | ✓ | — |
+
+## Coverage gate
+
+Per-package coverage threshold is **≥ 80%**, computed against the merged
+profile (`make cover`). The CI gate fails on the first package below
+threshold; the dev-loop equivalent is:
 
 ```bash
-make build
-# or
-go build -o bin/spy ./cmd/spy
+make cover && go tool cover -func=coverage.out | awk '$3+0 < 80'
 ```
 
-### Run the application
+## REUSE / SPDX
 
-```bash
-# Start with welcome screen
-make run
+Every file in the repository carries SPDX headers and is dual-licensed
+`MIT OR Apache-2.0`. The `LICENSES/` directory holds the canonical
+license texts; `REUSE.toml` enumerates files that can't carry inline
+headers (binaries, test fixtures, etc.). Verify with `make reuse`
+before merging any change that adds a file.
 
-# Or open a specific file
-./bin/spy path/to/file.go
-```
+## Repository layout
 
-### Development workflow
+See the "Project structure" section of [README.md](README.md). The
+`internal/*` packages have a `doc.go` describing the package's purpose
+and the contracts it implements; consult the corresponding section of
+[contracts/internal-apis.md](specs/001-popup-reader/contracts/internal-apis.md)
+when changing public types.
 
-```bash
-# Format code
-make fmt
+## Workflow
 
-# Run linter
-make vet
-
-# Run tests (when added)
-make test
-
-# Build and run
-make dev
-```
-
-## Project Architecture
-
-### Package Structure
-
-- **cmd/spy** - Entry point with CLI flag parsing
-- **internal/config** - Configuration management
-- **internal/reader** - File detection and reading logic
-  - Handles code, markdown, text, PDF, and image files
-  - Type detection based on file extension
-- **internal/renderer** - Content rendering and styling
-  - Syntax highlighting integration
-  - Markdown rendering
-  - Terminal styling with Lip Gloss
-- **internal/ui** - Bubble Tea TUI framework integration
-  - Model definition
-  - Keyboard navigation
-  - Viewport management
-
-### Data Flow
-
-```
-main.go
-  ↓
-ui.Model (Bubble Tea)
-  ├─ Input: KeyMsg, WindowSizeMsg
-  ├─ Update() → handle navigation, file loading
-  ├─ View() → render content
-  └─ Dependencies:
-      ├─ reader.ReadFile() → load file content
-      ├─ renderer.Render() → format content
-      └─ config.Config → user settings
-```
-
-## Syntax Highlighting Status
-
-Currently, code is rendered as plain text with line wrapping. Future enhancements:
-
-1. Integrate Chroma v2 for syntax highlighting
-2. Add support for multiple color themes
-3. Implement line numbers for code files
-4. Add language-specific features (e.g., bracket matching)
-
-**Note on Syntect**: The user requested Syntect integration. Syntect is a Rust library with no Go bindings. The recommended approach:
-- Use Chroma for Go-native syntax highlighting
-- Or create a Rust FFI wrapper (advanced approach)
-- For now, Chroma provides excellent syntax highlighting support
-
-## Keyboard Navigation
-
-The TUI supports:
-- **vim keys**: hjkl for navigation
-- **arrow keys**: standard navigation
-- **page keys**: PgUp/PgDn for paging
-- **home/end**: jump to beginning/end
-- **o**: open file
-- **q**: quit
-- **?**: help
-
-## Testing
-
-Add tests to `internal/*/name_test.go` files:
-
-```bash
-go test -v ./... -race
-```
-
-Current test coverage: 0% (TDD approach recommended for new features)
-
-## Dependencies
-
-Key dependencies and their usage:
-
-- **Bubble Tea** - Terminal UI framework
-- **Lip Gloss** - Terminal styling and layout
-- **Glamour** - Markdown rendering
-- **Chroma** - Syntax highlighting
-- **pdfcpu** - PDF file reading
-
-Check `go.mod` for complete dependency list.
-
-## Common Development Tasks
-
-### Adding a new file type
-
-1. Update `reader.FileType` enum
-2. Add detection in `DetectFileType()`
-3. Add reader function (e.g., `readXML()`)
-4. Add case in `ReadFile()`
-5. Add renderer in `renderer.go`
-
-### Improving syntax highlighting
-
-1. Review Chroma v2 API documentation
-2. Implement proper tokenization in `renderCode()`
-3. Test with various language files
-4. Consider caching formatted output
-
-### Adding configuration file support
-
-1. Create `config.go` that reads from `$HOME/.config/spy/config.toml`
-2. Parse TOML into `Config` struct
-3. Merge with defaults
-4. Use throughout application
-
-## Performance Notes
-
-- The TUI uses full screen buffering (efficient)
-- File content is loaded entirely into memory (suitable for small-medium files)
-- For very large files (>100MB), consider streaming/chunking
+1. Pull the latest `main`.
+2. Read the relevant section of `specs/001-popup-reader/`.
+3. Write tests first (Constitution Principle II); tests must FAIL
+   before the implementation lands.
+4. `make all` before committing.
+5. Use feature branches; commits include the SPDX header in the message
+   only when introducing a new file format.
 
 ## Debugging
 
-Enable pprof profiling:
-
 ```bash
-import _ "net/http/pprof"
-go func() {
-    log.Println(http.ListenAndServe("localhost:6060", nil))
-}()
+spy --debug=/tmp/spy.log <file>
 ```
 
-Visit http://localhost:6060/debug/pprof
-
-## Next Steps
-
-1. **Enhanced Syntax Highlighting** - Proper Chroma integration
-2. **Search** - Ctrl+F to find in file
-3. **Configuration** - config file support
-4. **Line Numbers** - Display line numbers for code
-5. **Better Image Viewer** - ASCII art rendering for images
-6. **Plugin System** - Extensible renderer architecture
-
-## References
-
-- [Bubble Tea Documentation](https://github.com/charmbracelet/bubbletea)
-- [Lip Gloss Styling Guide](https://github.com/charmbracelet/lipgloss)
-- [Glamour Markdown](https://github.com/charmbracelet/glamour)
-- [Chroma Syntax Highlighting](https://github.com/alecthomas/chroma)
+writes a structured log with one event per line (level, ts, msg, fields).
+Empty `--debug` (the default) disables logging entirely; nothing is
+written to disk unless the flag is set.

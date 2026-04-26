@@ -57,4 +57,19 @@ precedence = "aggregate"
 SPDX-FileCopyrightText = "2026 Adam Poulemanos"
 SPDX-License-Identifier = "MIT OR Apache-2.0"
 
-
+# SC-006 highlight-corpus fixtures (T106a). One small representative
+# file per language; each is hand-authored to exercise Chroma's
+# extension-driven lexer pick. Inline SPDX headers would distort the
+# tokenisation surface (the test counts chroma.Error tokens), so the
+# license is tracked here. Directory is `_`-prefixed so `go build
+# ./...` skips it (otherwise Go treats sample.c, sample.cpp, sample.s
+# as cgo source files and refuses the non-cgo default build).
+[[annotations]]
+path = [
+  "tests/fixtures/_highlight-corpus/Dockerfile",
+  "tests/fixtures/_highlight-corpus/Makefile",
+  "tests/fixtures/_highlight-corpus/sample.*",
+]
+precedence = "aggregate"
+SPDX-FileCopyrightText = "2026 Adam Poulemanos"
+SPDX-License-Identifier = "MIT OR Apache-2.0"
