@@ -9,6 +9,7 @@ import (
 	"io"
 	"strings"
 	"testing"
+	"time"
 )
 
 // StdinSource is the [Source] implementation backed by a non-seekable
@@ -130,6 +131,77 @@ func TestStdinSource_OpenReplaysPeekedBytes(t *testing.T) {
 	rc.Close()
 	if string(got) != body {
 		t.Errorf("Open should replay peeked bytes; len got=%d want=%d", len(got), len(body))
+	}
+}
+
+// blockingReader is an [io.Reader] that returns one chunk and then
+// blocks indefinitely on the next call — modelling `tail -f` and
+// other long-lived producers that don't write 8 KiB up front. Used to
+// pin the Copilot review PR#12 #6 contract: detectOnce must not
+// require the full peek window before returning.
+type blockingReader struct {
+	first  []byte
+	served bool
+	block  chan struct{}
+}
+
+func newBlockingReader(first []byte) *blockingReader {
+	return &blockingReader{first: first, block: make(chan struct{})}
+}
+
+func (b *blockingReader) Read(p []byte) (int, error) {
+	if !b.served {
+		b.served = true
+		n := copy(p, b.first)
+		return n, nil
+	}
+	// Block forever — simulates a producer that has more bytes coming
+	// but isn't writing them yet (tail -f, long-lived pipe, etc.).
+	<-b.block
+	return 0, io.EOF
+}
+
+func TestStdinSource_PeekDoesNotBlockOnStreamingInput(t *testing.T) {
+	// Copilot review PR#12 #6: detectOnce must not call io.ReadFull —
+	// that would hang on `tail -f | spy` until 8 KiB are written. A
+	// single Read returning the producer's first chunk must be enough
+	// for detection.
+	first := []byte("#!/usr/bin/env python\nprint('streaming')\n")
+	reader := newBlockingReader(first)
+	src := NewStdinSource(reader, "")
+
+	done := make(chan Kind, 1)
+	go func() { done <- src.Kind() }()
+
+	select {
+	case got := <-done:
+		if got != KindCode {
+			t.Errorf("streaming shebang detection: got %v want %v", got, KindCode)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("Kind() blocked on a streaming producer; detectOnce must not call io.ReadFull")
+	}
+}
+
+func TestStdinSource_HintSkipsPeekOnStreamingInput(t *testing.T) {
+	// Hint short-circuit: when `--lang` (or any explicit hint) already
+	// resolves a Kind/lexer, detectOnce should skip the peek entirely
+	// so the loader can stream from byte 0. A producer that never
+	// writes anything (and never closes) must still produce a valid
+	// session if the hint is set (Copilot review PR#12 #6).
+	never := newBlockingReader(nil) // never writes anything
+	src := NewStdinSource(never, "go")
+
+	done := make(chan Kind, 1)
+	go func() { done <- src.Kind() }()
+
+	select {
+	case got := <-done:
+		if got != KindCode {
+			t.Errorf("hint short-circuit: got %v want %v", got, KindCode)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("hint=go must short-circuit the peek; got blocked")
 	}
 }
 

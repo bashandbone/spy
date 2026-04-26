@@ -49,7 +49,9 @@ tmp_a="$(mktemp)"
 tmp_b="$(mktemp)"
 tmp_c="$(mktemp)"
 tmp_d="$(mktemp)"
-trap 'rm -f "${tmp_a}" "${tmp_b}" "${tmp_c}" "${tmp_d}"' EXIT
+tmp_d_want="$(mktemp)"
+tmp_d_got="$(mktemp)"
+trap 'rm -f "${tmp_a}" "${tmp_b}" "${tmp_c}" "${tmp_d}" "${tmp_d_want}" "${tmp_d_got}"' EXIT
 
 # (a) `cat hello.go | spy -l go` — non-TTY stdin, non-TTY stdout. The
 #     pipeline degenerate-cats stdin verbatim to stdout. The byte count
@@ -82,14 +84,18 @@ if [[ "${expected}" != "${got}" ]]; then
     exit 1
 fi
 
-# (d) `echo content | spy | cat` — explicit pipe-into-pipe (the
+# (d) `printf | spy | cat` — explicit pipe-into-pipe (the
 #     degenerate-cat contract from contracts/cli.md). Content survives
-#     the round trip verbatim and exit code is 0.
-want=$'alpha\nbeta\ngamma\n'
-got_d="$(printf '%s' "${want}" | "${binary}" --no-config | cat)"
-if [[ "${got_d}" != "${want%$'\n'}" && "${got_d}" != "${want}" ]]; then
-    echo "(d) echo | spy | cat: content mismatch" >&2
-    printf '  want=%q\n  got =%q\n' "${want}" "${got_d}" >&2
+#     the round trip verbatim and exit code is 0. We compare via temp
+#     files + `cmp -s` so trailing newlines aren't stripped by command
+#     substitution (Copilot review PR#12 #7); pipefail (set above)
+#     ensures a non-zero spy exit propagates through the trailing
+#     `cat` and trips `set -e`.
+printf 'alpha\nbeta\ngamma\n' > "${tmp_d_want}"
+printf 'alpha\nbeta\ngamma\n' | "${binary}" --no-config | cat > "${tmp_d_got}"
+if ! cmp -s "${tmp_d_want}" "${tmp_d_got}"; then
+    echo "(d) printf | spy | cat: content mismatch" >&2
+    diff "${tmp_d_want}" "${tmp_d_got}" >&2 || true
     exit 1
 fi
 

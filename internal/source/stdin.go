@@ -109,14 +109,26 @@ func (s *StdinSource) Metadata() Metadata {
 	}
 }
 
-// detectOnce reads up to [stdinPeekBytes] from the underlying reader
-// the first time any caller asks for the stream's classification, runs
-// [detectKind] over the buffered bytes, and caches the result so
-// subsequent Kind / Open / Metadata calls are O(1).
+// detectOnce classifies the stream the first time any caller asks
+// for its Kind / Metadata, and caches the result so subsequent calls
+// are O(1).
 //
-// The peeked bytes are kept in `s.peekedHead` so the next [Open] can
-// hand them back via [io.MultiReader] — without that replay the loader
-// would see a stream that's missing its first 8 KiB.
+// The peek path is deliberately non-blocking (Copilot review PR#12
+// #6): `io.ReadFull` would wait for the producer to write
+// [stdinPeekBytes] or close the pipe, which hangs `tail -f | spy`
+// and other long-lived shapes. A single [io.Reader.Read] returns
+// whatever the kernel has already buffered (typically the producer's
+// last write) — accurate detection on the partial buffer and a
+// graceful KindText fallback on slow producers.
+//
+// When `s.hint` already resolves a non-Unknown Kind via
+// [classifyByName], the peek is skipped entirely so the loader can
+// stream from byte 0. This makes `tail -f /var/log/foo | spy -l log`
+// start instantly even when the producer never writes 8 KiB.
+//
+// When the peek runs, the bytes are kept in `s.peekedHead` so the
+// next [Open] can hand them back via [io.MultiReader] — without that
+// replay the loader would miss the head of the stream.
 func (s *StdinSource) detectOnce() error {
 	if s.detected {
 		return s.detectErr
@@ -126,13 +138,20 @@ func (s *StdinSource) detectOnce() error {
 		s.detectErr = fmt.Errorf("%w: stdin reader is nil", ErrNoInput)
 		return s.detectErr
 	}
+	// Hint short-circuit. classifyByName resolves explicit `--lang`
+	// values to a Kind/lexer without inspecting any bytes; when it
+	// hits, peekedHead stays nil and Open returns the underlying
+	// reader directly.
+	if s.hint != "" {
+		if k, lex := classifyByName(s.hint); k != KindUnknown {
+			s.kind = k
+			s.lexerName = lex
+			return nil
+		}
+	}
 	buf := make([]byte, stdinPeekBytes)
-	n, err := io.ReadFull(s.reader, buf)
-	switch {
-	case err == nil, err == io.EOF, err == io.ErrUnexpectedEOF:
-		// All three are expected — the stream may be shorter than the
-		// peek window or close to it. detectKind handles the empty case.
-	default:
+	n, err := s.reader.Read(buf)
+	if err != nil && err != io.EOF {
 		s.detectErr = fmt.Errorf("stdin: peek: %w", err)
 		return s.detectErr
 	}
