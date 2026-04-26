@@ -41,3 +41,7 @@ debug.log
 # Test coverage
 *.coverprofile
 coverage.out
+
+# worktrees
+.worktrees/
+.claude/worktrees/
