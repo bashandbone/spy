@@ -70,8 +70,11 @@ func TestFileSource_OpenWithSymlinkSwap_RejectsRedirect(t *testing.T) {
 // file that flipped between detection categories would still render
 // through the old kind/lexer (Copilot review acceptance M2).
 //
-// We use an extensionless path so the hint cannot short-circuit
-// detection and the swap is observable in the cached Kind.
+// We use an unknown / unsupported extension (.unknownext) so the
+// hint cannot short-circuit detection and the swap is observable in
+// the cached Kind. Both detection passes therefore run their
+// content-based classification path (PR#24 review — prior wording
+// said "extensionless" but the path has a non-empty extension).
 func TestFileSource_RedetectClearsCache(t *testing.T) {
 	dir := t.TempDir()
 	// Use an unknown extension so the hint short-circuit in

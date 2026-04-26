@@ -22,10 +22,11 @@ import (
 // scan loop's pre-stream wait is exercised end-to-end without a
 // goroutine in the loader package poking unexported fields.
 type pendingProvider struct {
-	mu     sync.Mutex
-	ready  atomic.Bool
-	lines  []source.Line
-	totalN int64 // value returned once ready is true
+	mu         sync.Mutex
+	ready      atomic.Bool
+	lines      []source.Line
+	totalN     int64 // value returned once ready is true
+	totalCalls atomic.Int64
 }
 
 func newPendingProvider(raw ...string) *pendingProvider {
@@ -37,11 +38,16 @@ func newPendingProvider(raw ...string) *pendingProvider {
 }
 
 func (p *pendingProvider) Total() int64 {
+	p.totalCalls.Add(1)
 	if !p.ready.Load() {
 		return -1
 	}
 	return p.totalN
 }
+
+// TotalCalls returns the number of times Total() has been invoked,
+// for assertions on whether the scan entered the -1 polling path.
+func (p *pendingProvider) TotalCalls() int64 { return p.totalCalls.Load() }
 
 func (p *pendingProvider) Slice(start, end int64) []source.Line {
 	p.mu.Lock()
@@ -137,24 +143,35 @@ func TestScan_PreStreamCancellationExitsCleanly(t *testing.T) {
 
 // TestScan_ZeroTotalIsConfirmedEmpty verifies the boundary between -1
 // (unknown) and 0 (confirmed empty): a provider that reports 0 must
-// bail immediately without polling — empty file should not cost the
-// user 100 ms of search latency.
+// bail immediately without entering the -1 polling path — empty file
+// should not cost the user 100 ms of search latency.
+//
+// Asserts via the pendingProvider's Total() call counter rather than
+// wall-clock elapsed time: the polling path would call Total() many
+// times across totalUnknownMaxWaits attempts, so a small bound on
+// the call count is a more deterministic regression guard than a
+// 50 ms wall-clock budget that flakes on loaded CI runners (PR#24
+// review).
 func TestScan_ZeroTotalIsConfirmedEmpty(t *testing.T) {
 	t.Parallel()
-	prov := newFakeProvider() // empty → Total() returns 0
+	prov := newPendingProvider() // empty: zero lines, totalN=0
+	prov.Ready()                 // flip immediately so Total() returns 0, not -1
 	m, err := Compile("anything", false, CaseSensitive)
 	if err != nil {
 		t.Fatalf("Compile: %v", err)
 	}
-	start := time.Now()
 	ch := Scan(context.Background(), prov, m, DirForward, 1)
 	got := drain(t, ch, 200*time.Millisecond)
-	elapsed := time.Since(start)
 	if len(got) != 0 {
 		t.Errorf("expected no matches on empty provider, got %d", len(got))
 	}
-	// Must not have hit the full pre-stream wait budget.
-	if elapsed > 50*time.Millisecond {
-		t.Errorf("scan against confirmed-empty provider took %v; expected near-zero", elapsed)
+	// The polling path calls Total() up to totalUnknownMaxWaits times
+	// (currently 20). A bound of 4 covers any reasonable initial-read
+	// + termination-check pattern while making the polling path's
+	// fingerprint plainly visible if it's accidentally re-entered.
+	if calls := prov.TotalCalls(); calls > 4 {
+		t.Errorf("Total() called %d times on a confirmed-empty provider; "+
+			"polling path entered (max-waits=%d). Scan must short-circuit on Total()==0",
+			calls, totalUnknownMaxWaits)
 	}
 }
