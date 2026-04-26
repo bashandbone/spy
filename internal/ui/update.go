@@ -104,11 +104,32 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 // statusAdvisory. On success the new stream becomes the active one and
 // the renderer is rebuilt with the new source's kind / language.
 //
-// Clears m.openCancel regardless of outcome — on success ownership
-// moves to m.cancel (set below from msg.cancel); on error the
-// closure already invoked cancel before sending the message
+// Drops messages whose gen no longer matches m.openGen — those are
+// from a prior :open that was superseded before its loader.Open
+// returned. Acting on a stale message would clear the m.openCancel
+// belonging to the *current* in-flight :open, reintroducing the M6
+// quit-leak this guard was added to prevent (PR#26 review). The
+// stale closure already saw its ctx cancelled by the newer
+// runOpenCommand call, so its stream (if loader.Open returned one)
+// is being torn down regardless; we just need to not poison the
+// model state with it.
+//
+// Clears m.openCancel only on the matching-gen path — on success
+// ownership moves to m.cancel (set below from msg.cancel); on error
+// the closure already invoked cancel before sending the message
 // (acceptance review M6).
 func (m Model) onOpenResult(msg openResultMsg) (tea.Model, tea.Cmd) {
+	if msg.gen != m.openGen {
+		// Stale: defensively cancel the captured CancelFunc so the
+		// stream (if any) is torn down even though we drop the rest
+		// of the payload. The prior runOpenCommand already cancelled
+		// the parent ctx, but the captured cancel may still be the
+		// canonical handle the stream's goroutine watches.
+		if msg.cancel != nil {
+			msg.cancel()
+		}
+		return m, nil
+	}
 	m.openCancel = nil
 	if msg.err != nil {
 		m.statusAdvisory = fmt.Sprintf("open: %v", msg.err)
@@ -909,13 +930,19 @@ func (m Model) runOpenCommand(path string) (tea.Model, tea.Cmd) {
 	cfg := m.cfg
 	ctx, cancel := context.WithCancel(context.Background())
 	m.openCancel = cancel
+	// Bump the generation BEFORE capturing into the closure so a
+	// stale openResultMsg from a prior :open (whose closure captured
+	// the older gen value) is dropped on receipt — see openResultMsg
+	// staleness guard in onOpenResult, mirroring searchGen for H5.
+	m.openGen++
+	gen := m.openGen
 	return m, func() tea.Msg {
 		stream, err := loader.Open(ctx, src, loaderConfigFromConfig(cfg))
 		if err != nil {
 			cancel()
-			return openResultMsg{err: err, src: src}
+			return openResultMsg{err: err, src: src, gen: gen}
 		}
-		return openResultMsg{stream: stream, cancel: cancel, src: src}
+		return openResultMsg{stream: stream, cancel: cancel, src: src, gen: gen}
 	}
 }
 

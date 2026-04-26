@@ -134,6 +134,71 @@ func TestM6_QuitCommandCancelsInFlightOpen(t *testing.T) {
 	}
 }
 
+// TestM6_StaleOpenResultDropped verifies the openGen staleness
+// guard added in PR#26 review: a stale openResultMsg (one whose gen
+// no longer matches m.openGen because a newer :open was issued in
+// the meantime) must be dropped without clearing the *current*
+// in-flight m.openCancel. Without the guard, the stale message
+// would wipe the cancel belonging to the newer open and reintroduce
+// the M6 leak this PR was intended to fix.
+func TestM6_StaleOpenResultDropped(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	pathA := filepath.Join(dir, "a.txt")
+	pathB := filepath.Join(dir, "b.txt")
+	if err := os.WriteFile(pathA, []byte("a\n"), 0o644); err != nil {
+		t.Fatalf("WriteFile a: %v", err)
+	}
+	if err := os.WriteFile(pathB, []byte("b\n"), 0o644); err != nil {
+		t.Fatalf("WriteFile b: %v", err)
+	}
+
+	m := newTestModel(t, "original\n")
+	m, _ = applyResize(m, 80, 24)
+
+	// First :open — capture its gen so we can fabricate a stale msg.
+	updated, _ := m.runOpenCommand(pathA)
+	m = updated.(Model)
+	staleGen := m.openGen
+
+	// Second :open — bumps gen, replaces openCancel with a fresh one.
+	updated2, _ := m.runOpenCommand(pathB)
+	m = updated2.(Model)
+	if m.openGen == staleGen {
+		t.Fatal("second runOpenCommand must bump openGen")
+	}
+	currentCancel := m.openCancel
+	if currentCancel == nil {
+		t.Fatal("second runOpenCommand must stash a fresh openCancel")
+	}
+
+	// Fabricate a stale openResultMsg from the first :open arriving
+	// late. Track whether its captured cancel was invoked by the
+	// stale-drop path (defensive teardown).
+	var staleCancelled atomic.Bool
+	staleMsg := openResultMsg{
+		err: nil,
+		src: nil,
+		gen: staleGen,
+		cancel: func() {
+			staleCancelled.Store(true)
+		},
+	}
+
+	updated3, _ := m.Update(staleMsg)
+	m = updated3.(Model)
+
+	// Critical: the current in-flight openCancel must NOT have been
+	// cleared by the stale message.
+	if m.openCancel == nil {
+		t.Fatal("stale openResultMsg cleared the current m.openCancel — guard regression")
+	}
+	// Defensive teardown should have fired on the stale carrier.
+	if !staleCancelled.Load() {
+		t.Error("stale message handler should defensively cancel the captured CancelFunc")
+	}
+}
+
 // TestM6_SecondOpenCancelsFirst verifies that issuing a second
 // `:open <path>` while the first is still in flight cancels the
 // prior in-flight loader's CancelFunc — otherwise the prior open's

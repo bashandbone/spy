@@ -480,10 +480,15 @@ func TestCommand_OpenSwapsSource(t *testing.T) {
 		updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}})
 		m = updated.(Model)
 	}
-	_, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
 	if cmd == nil {
 		t.Fatal(":open <path> should return a cmd")
 	}
+	// Propagate the post-Enter model so the openGen bump from
+	// runOpenCommand is observable when the openResultMsg arrives —
+	// the gen-staleness guard added in PR#26 review drops messages
+	// whose captured gen no longer matches m.openGen.
+	m = updated.(Model)
 	msg := cmd()
 	open, ok := msg.(openResultMsg)
 	if !ok {
@@ -492,8 +497,8 @@ func TestCommand_OpenSwapsSource(t *testing.T) {
 	if open.err != nil {
 		t.Fatalf(":open returned error: %v", open.err)
 	}
-	updated, _ := m.Update(open)
-	m = updated.(Model)
+	updated2, _ := m.Update(open)
+	m = updated2.(Model)
 	if m.source.DisplayName() == "fake.txt" {
 		t.Errorf(":open did not swap the source")
 	}

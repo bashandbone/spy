@@ -162,6 +162,16 @@ type Model struct {
 	// (success: ownership moves to m.cancel; error: the closure
 	// already invoked cancel before the message was sent).
 	openCancel context.CancelFunc
+
+	// openGen is bumped each time runOpenCommand dispatches a fresh
+	// :open. The async tea.Cmd captures the current value into
+	// [openResultMsg.gen]; on receipt the Update handler drops any
+	// message whose gen doesn't match the live counter. Without this,
+	// a stale openResultMsg from a cancelled prior :open would clear
+	// the m.openCancel belonging to the *current* in-flight :open and
+	// reintroduce the leak this guard was added to prevent (PR#26
+	// review). Mirrors the searchGen pattern used for H5.
+	openGen uint64
 }
 
 // NewModel constructs the viewer's Bubble Tea model. The first frame
@@ -303,6 +313,12 @@ type openResultMsg struct {
 	cancel context.CancelFunc
 	src    source.Source
 	err    error
+	// gen is the value of [Model.openGen] at the moment the
+	// originating runOpenCommand dispatched this message. Update
+	// drops the message if it no longer matches the live counter,
+	// preventing a stale result from a cancelled prior :open from
+	// clearing the m.openCancel of a newer in-flight :open.
+	gen uint64
 }
 
 // searchResultMsg carries the outcome of an asynchronous search scan.

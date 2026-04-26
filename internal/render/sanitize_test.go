@@ -5,7 +5,6 @@
 package render
 
 import (
-	"strings"
 	"testing"
 )
 
@@ -13,10 +12,9 @@ import (
 // containsRawEscByte helper so the boundary tests in this package
 // can share the byte-level check without re-implementing it. We
 // deliberately bypass strings.ContainsAny because that helper
-// decodes the chars argument as runes — and U+FFFD (the
-// replacement Neutralize substitutes in) is also the fallback rune
-// for the invalid byte 0x9b on its own, so ContainsAny(out,
-// "\x1b\x9b") gives a false positive once neutralisation has run.
+// decodes the chars argument as runes — and 0x9b on its own is
+// invalid UTF-8 that decodes as U+FFFD, so a source file containing
+// a literal U+FFFD would false-positive ContainsAny.
 func containsRawEscape(s string) bool { return containsRawEscByte(s) }
 
 // TestNeutralize_PassthroughBenign verifies the fast path: strings
@@ -38,10 +36,12 @@ func TestNeutralize_PassthroughBenign(t *testing.T) {
 	}
 }
 
-// TestNeutralize_ReplacesEscWithFFFD pins LOW-1: ESC (0x1b) and CSI
-// (0x9b) bytes are replaced with the Unicode replacement character
-// U+FFFD (encoded as 3 UTF-8 bytes EF BF BD), not a single '?'.
-func TestNeutralize_ReplacesEscWithFFFD(t *testing.T) {
+// TestNeutralize_ReplacesEscWithQuestionMark pins the post-PR#26
+// behaviour: ESC (0x1b) and CSI (0x9b) bytes are replaced with the
+// single ASCII byte `'?'`. The single-byte choice is load-bearing —
+// see TestNeutralize_PreservesByteLength for the invariant tests
+// downstream callers depend on.
+func TestNeutralize_ReplacesEscWithQuestionMark(t *testing.T) {
 	t.Parallel()
 
 	cases := []struct {
@@ -52,27 +52,27 @@ func TestNeutralize_ReplacesEscWithFFFD(t *testing.T) {
 		{
 			name: "single ESC",
 			in:   "\x1b]2;evil\x07",
-			want: "�]2;evil\x07",
+			want: "?]2;evil\x07",
 		},
 		{
 			name: "single CSI 8-bit",
 			in:   "\x9b31m",
-			want: "�31m",
+			want: "?31m",
 		},
 		{
 			name: "mixed ESC and CSI",
 			in:   "before\x1bmid\x9bafter",
-			want: "before�mid�after",
+			want: "before?mid?after",
 		},
 		{
 			name: "only escapes",
 			in:   "\x1b\x9b\x1b",
-			want: "���",
+			want: "???",
 		},
 		{
 			name: "ESC adjacent to multibyte UTF-8",
 			in:   "漢\x1b字",
-			want: "漢�字",
+			want: "漢?字",
 		},
 	}
 
@@ -87,22 +87,51 @@ func TestNeutralize_ReplacesEscWithFFFD(t *testing.T) {
 			if containsRawEscape(got) {
 				t.Errorf("Neutralize(%q) leaked ESC/CSI: %q", tc.in, got)
 			}
-			// The replacement bytes are exactly the 3-byte UTF-8 of U+FFFD.
-			if !strings.Contains(got, "�") {
-				t.Errorf("Neutralize(%q) = %q; missing U+FFFD replacement", tc.in, got)
-			}
 		})
 	}
 }
 
-// TestNeutralize_ReplacementByteEncoding verifies the replacement
-// character is exactly the 3-byte UTF-8 sequence EF BF BD (U+FFFD)
-// — guards against an accidental switch to a single-byte placeholder.
-func TestNeutralize_ReplacementByteEncoding(t *testing.T) {
+// TestNeutralize_PreservesByteLength is the load-bearing invariant
+// guard for PR#26: applyMatchHighlights (match.go) computes byte
+// offsets against the pre-Neutralize string and slices the
+// post-Neutralize string with those offsets. Any change in length
+// would misalign the slices and could split a multi-byte UTF-8
+// sequence across a highlight boundary.
+//
+// If you are tempted to switch the replacement to U+FFFD or any
+// other multi-byte rune, this test will fail — and so will the
+// downstream highlight rendering. Pick a different defence.
+func TestNeutralize_PreservesByteLength(t *testing.T) {
+	t.Parallel()
+
+	cases := []string{
+		"",
+		"plain ascii",
+		"\x1b",
+		"\x9b",
+		"\x1b\x9b\x1b\x9b",
+		"\x1b]2;evil\x07",
+		"漢\x1b字\x9b!",
+		"start\x1bmiddle\x9bend",
+	}
+	for _, in := range cases {
+		got := Neutralize(in)
+		if len(got) != len(in) {
+			t.Errorf("Neutralize(%q): len(out)=%d, len(in)=%d — byte-preservation invariant violated", in, len(got), len(in))
+		}
+	}
+}
+
+// TestNeutralize_ReplacementByteIsAscii pins the substitution byte
+// value at exactly `'?'` (0x3f). Guards against an accidental switch
+// back to a multi-byte replacement.
+func TestNeutralize_ReplacementByteIsAscii(t *testing.T) {
 	t.Parallel()
 	got := Neutralize("\x1b")
-	want := []byte{0xEF, 0xBF, 0xBD}
-	if got != string(want) {
-		t.Errorf("Neutralize(ESC) = % x, want % x (U+FFFD)", []byte(got), want)
+	if got != "?" {
+		t.Errorf("Neutralize(ESC) = %q (% x), want %q", got, []byte(got), "?")
+	}
+	if len(got) != 1 {
+		t.Errorf("Neutralize(ESC) length = %d, want 1", len(got))
 	}
 }
