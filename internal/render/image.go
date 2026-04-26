@@ -138,14 +138,19 @@ func (r *imageRenderer) decode() (img image.Image, err error) {
 // metadataBlock formats the fallback message displayed when graphics
 // are unavailable or decoding fails. The block is deterministic so the
 // integration tests can assert against it without flake.
+//
+// DisplayName, the source path, and the optional `note` all pass
+// through [Neutralize] so an attacker-controlled filename containing
+// OSC payload bytes cannot reach the terminal. Acceptance review C4.
 func (r *imageRenderer) metadataBlock(_ RenderContext, note string) string {
 	if r.src == nil {
 		return "[image: no source attached]\n"
 	}
 	md := r.src.Metadata()
 	dims := r.dimensions()
+	name := Neutralize(r.src.DisplayName())
 	var b strings.Builder
-	fmt.Fprintf(&b, "[image: %s]\n", r.src.DisplayName())
+	fmt.Fprintf(&b, "[image: %s]\n", name)
 	if dims != "" {
 		fmt.Fprintf(&b, "  dimensions: %s\n", dims)
 	}
@@ -153,7 +158,7 @@ func (r *imageRenderer) metadataBlock(_ RenderContext, note string) string {
 		fmt.Fprintf(&b, "  size: %s\n", humanSize(md.Size))
 	}
 	if md.Path != "" && md.Path != r.src.DisplayName() {
-		fmt.Fprintf(&b, "  path: %s\n", md.Path)
+		fmt.Fprintf(&b, "  path: %s\n", Neutralize(md.Path))
 	}
 	// The fallback message branches on whether `note` was set: a
 	// non-empty note means the renderer hit a real processing error
@@ -161,7 +166,7 @@ func (r *imageRenderer) metadataBlock(_ RenderContext, note string) string {
 	// is misleading in that case (Copilot review PR#11 #7).
 	if note != "" {
 		fmt.Fprintf(&b, "  fallback: unable to render inline image\n")
-		fmt.Fprintf(&b, "  note: %s\n", note)
+		fmt.Fprintf(&b, "  note: %s\n", Neutralize(note))
 	} else {
 		fmt.Fprintf(&b, "  fallback: terminal lacks inline-image support\n")
 	}

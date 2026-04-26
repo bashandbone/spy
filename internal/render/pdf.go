@@ -201,26 +201,36 @@ func (r *pdfRenderer) pageText(page int) (string, int, error) {
 
 // formatTextPage wraps the extracted text in a header so the user can
 // see the page indicator + total without checking the status bar.
+//
+// Both the PDF text-extraction output (`text`) and the source
+// display name are funnelled through [Neutralize] — `ledongthuc/pdf`
+// returns the raw PDF content stream bytes, which a hostile document
+// can use to embed OSC / DCS escapes. Acceptance review C4.
 func (r *pdfRenderer) formatTextPage(text string, page, total int) string {
 	var b strings.Builder
+	name := Neutralize(r.src.DisplayName())
 	if total > 0 {
-		fmt.Fprintf(&b, "[pdf: %s — page %d/%d]\n", r.src.DisplayName(), page, total)
+		fmt.Fprintf(&b, "[pdf: %s — page %d/%d]\n", name, page, total)
 	} else {
-		fmt.Fprintf(&b, "[pdf: %s — page %d]\n", r.src.DisplayName(), page)
+		fmt.Fprintf(&b, "[pdf: %s — page %d]\n", name, page)
 	}
-	b.WriteString(strings.TrimRight(text, " \n\r\t"))
+	b.WriteString(Neutralize(strings.TrimRight(text, " \n\r\t")))
 	b.WriteString("\n")
 	return b.String()
 }
 
 // metadataBlock formats the deterministic fallback message.
+//
+// DisplayName, the optional `note`, and (defensively) the size string
+// pass through [Neutralize] so a hostile filename containing OSC
+// payload bytes cannot reach the terminal. Acceptance review C4.
 func (r *pdfRenderer) metadataBlock(note string, page, total int) string {
 	if r.src == nil {
 		return "[pdf: no source attached]\n"
 	}
 	md := r.src.Metadata()
 	var b strings.Builder
-	fmt.Fprintf(&b, "[pdf: %s]\n", r.src.DisplayName())
+	fmt.Fprintf(&b, "[pdf: %s]\n", Neutralize(r.src.DisplayName()))
 	if total > 0 {
 		fmt.Fprintf(&b, "  page: %d/%d\n", page, total)
 	} else if page > 0 {
@@ -230,7 +240,7 @@ func (r *pdfRenderer) metadataBlock(note string, page, total int) string {
 		fmt.Fprintf(&b, "  size: %s\n", humanSize(md.Size))
 	}
 	if note != "" {
-		fmt.Fprintf(&b, "  note: %s\n", note)
+		fmt.Fprintf(&b, "  note: %s\n", Neutralize(note))
 	}
 	return b.String()
 }

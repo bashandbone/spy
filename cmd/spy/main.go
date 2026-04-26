@@ -58,7 +58,10 @@ func main() {
 func run(args []string, stdin *os.File) int {
 	pf, err := ParseFlags(args)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "spy: %v\n", err)
+		// Flag parse errors can include the user's argv verbatim
+		// (e.g. "unknown flag: --\x1b]2;evil\x07"). Sanitise before
+		// stderr — acceptance review C4.
+		fmt.Fprintf(os.Stderr, "spy: %s\n", render.Neutralize(err.Error()))
 		return exitUsageError
 	}
 	if pf.Help {
@@ -103,13 +106,17 @@ func run(args []string, stdin *os.File) int {
 		FlagHighlightCap:   pf.HighlightCap, // *int64; nil when unset, &0 disables
 	})
 	for _, w := range warnings {
+		// Config warnings can quote user-supplied TOML key/value text
+		// (e.g. "unknown key 'foo\x1b]2;evil\x07' in [keys]").
+		// Sanitise before stderr — acceptance review C4.
+		safeW := render.Neutralize(w.Error())
 		if errors.Is(w, config.ErrConfigNotFound) {
-			fmt.Fprintf(os.Stderr, "spy: %v\n", w)
+			fmt.Fprintf(os.Stderr, "spy: %s\n", safeW)
 			return exitUsageError
 		}
 		// Soft warnings (unknown key, type mismatch) go to stderr but
 		// don't abort.
-		fmt.Fprintf(os.Stderr, "spy: %v\n", w)
+		fmt.Fprintf(os.Stderr, "spy: %s\n", safeW)
 	}
 	if pf.NoColor {
 		cfg.NoColor = true
@@ -177,7 +184,10 @@ func run(args []string, stdin *os.File) int {
 	if len(cfg.Keys) > 0 {
 		mergedKM, kerrs := keys.ApplyOverrides(baseKeyMap, cfg.Keys)
 		for _, e := range kerrs {
-			fmt.Fprintf(os.Stderr, "spy: %v\n", e)
+			// Keymap-override errors quote user-supplied action /
+			// key strings from cfg.Keys. Sanitise before stderr —
+			// acceptance review C4.
+			fmt.Fprintf(os.Stderr, "spy: %s\n", render.Neutralize(e.Error()))
 		}
 		baseKeyMap = mergedKM
 	}
@@ -261,7 +271,11 @@ func run(args []string, stdin *os.File) int {
 		if sig := drainCaughtSignal(caught); sig != 0 {
 			return 128 + int(sig)
 		}
-		fmt.Fprintf(os.Stderr, "spy: tea program: %v\n", err)
+		// Bubble Tea errors aren't ordinarily user-controlled, but a
+		// rendering error chain can wrap upstream string content
+		// (e.g. file path in a renderer-init failure). Sanitise
+		// defensively — acceptance review C4.
+		fmt.Fprintf(os.Stderr, "spy: tea program: %s\n", render.Neutralize(err.Error()))
 		return exitGenericError
 	}
 
@@ -293,6 +307,10 @@ func drainCaughtSignal(caught <-chan os.Signal) syscall.Signal {
 // open the source and stream its bytes verbatim to stdout, exit 0.
 // No alt-screen, no rendering, no graphics — `spy file.go > out.txt`
 // behaves like `cat file.go > out.txt`.
+//
+// The DisplayName passed to exitForSourceError is already sanitised
+// inside that helper. The error is sanitised before reaching stderr.
+// Acceptance review C4.
 func runDegenerate(src source.Source) int {
 	rc, err := src.Open()
 	if err != nil {
@@ -300,7 +318,7 @@ func runDegenerate(src source.Source) int {
 	}
 	defer rc.Close()
 	if _, err := io.Copy(os.Stdout, rc); err != nil {
-		fmt.Fprintf(os.Stderr, "spy: write stdout: %v\n", err)
+		fmt.Fprintf(os.Stderr, "spy: write stdout: %s\n", render.Neutralize(err.Error()))
 		return exitIOError
 	}
 	return exitOK
@@ -353,11 +371,18 @@ func applyGraphicsOverride(detected term.Graphics, override string) term.Graphic
 // exitForSourceError maps a source-layer error to the documented exit
 // code from contracts/cli.md. The stderr line uses the
 // "spy: <reason>: <detail>" format the contract requires.
+//
+// `target` is sanitised through [render.Neutralize] before reaching
+// stderr because it's user-controlled input (the filename arg) and a
+// hostile path containing `\x1b]2;evil\x07` would otherwise drive the
+// terminal title before alt-screen even starts. Same for the wrapped
+// error string. Acceptance review C4.
 func exitForSourceError(err error, args []string) int {
 	target := "<no input>"
 	if len(args) > 0 {
-		target = args[0]
+		target = render.Neutralize(args[0])
 	}
+	safeErr := render.Neutralize(err.Error())
 	switch {
 	case errors.Is(err, source.ErrNoInput):
 		// US5 turned StdinSource on: ErrNoInput now reflects the
@@ -372,7 +397,7 @@ func exitForSourceError(err error, args []string) int {
 	case errors.Is(err, source.ErrAmbiguousArgs):
 		// `-` alongside FILE, or multiple FILEs — the contract row
 		// "present yes — yes" is a usage error mapped to exit 2.
-		fmt.Fprintf(os.Stderr, "spy: usage: %v\n", err)
+		fmt.Fprintf(os.Stderr, "spy: usage: %s\n", safeErr)
 		return exitUsageError
 	case errors.Is(err, source.ErrNotFound):
 		fmt.Fprintf(os.Stderr, "spy: cannot open: %s: not found\n", target)
@@ -384,10 +409,10 @@ func exitForSourceError(err error, args []string) int {
 		fmt.Fprintf(os.Stderr, "spy: binary file: %s: refusing to render binary content\n", target)
 		return exitUnsupported
 	case errors.Is(err, source.ErrUnsupported):
-		fmt.Fprintf(os.Stderr, "spy: unsupported format: %s: %v\n", target, err)
+		fmt.Fprintf(os.Stderr, "spy: unsupported format: %s: %s\n", target, safeErr)
 		return exitUnsupported
 	}
-	fmt.Fprintf(os.Stderr, "spy: %v\n", err)
+	fmt.Fprintf(os.Stderr, "spy: %s\n", safeErr)
 	return exitGenericError
 }
 

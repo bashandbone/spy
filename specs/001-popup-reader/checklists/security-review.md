@@ -62,34 +62,42 @@ campaign on a developer workstation is sufficient pre-tag work.
 ## (c) Terminal escape injection from file content
 
 > Source: [internal/render/sanitize.go](../../../internal/render/sanitize.go),
+> [internal/render/sanitize_boundary_test.go](../../../internal/render/sanitize_boundary_test.go),
 > [tests/integration/escape_injection_test.go](../../../tests/integration/escape_injection_test.go)
 
 Files containing `\x1b]2;...\x07` (OSC 2 "set window title") would,
-without sanitisation, drive the user's terminal title. The renderer
-now neutralises every `\x1b` (0x1b) and `\x9b` (8-bit CSI) byte in raw
-content before emission via `neutralizeEscapes`:
+without sanitisation, drive the user's terminal title. Every emit
+boundary now neutralises ESC (0x1b) and CSI (0x9b) bytes via the
+exported `render.Neutralize`:
 
-- `code.go` `styleLine` — every fallback path (mono mode, no
-  highlighter, empty tokens, formatter failure).
-- `code.go` `Render` — match-overlay mono path and the wrap path.
-- `match.go` `applyMatchHighlights` — sanitises before slicing so
-  match offsets remain byte-aligned.
-- `text.go` — both the no-wrap and wrap fallback paths.
+| Layer | Site | Notes |
+|---|---|---|
+| Code (US1) | `code.go` styleLine fallbacks + Render match overlay | T109b.c original scope |
+| Match overlay | `match.go` applyMatchHighlights | sanitises before slicing |
+| Text passthrough | `text.go` no-wrap + wrap paths | |
+| Markdown | `markdown.go` assembleRaw | Glamour does NOT strip ESC from non-code-block content |
+| PDF text | `pdf.go` formatTextPage (text + DisplayName) | the default path on no-fitz builds |
+| PDF metadata | `pdf.go` metadataBlock (DisplayName + note) | graphics-unavailable fallback |
+| Image metadata | `image.go` metadataBlock (DisplayName + path + note) | terminal-lacks-graphics fallback |
+| Status bar | `statusbar.go` StatusBarRender (DisplayName + Advisory) | sanitised at entry-point so wide / collapsed both protected |
+| stderr | `cmd/spy/main.go` ParseFlags / config warnings / keymap warnings / exitForSourceError / runDegenerate / tea.Program error | every stderr write now sanitises the user-controlled error message |
 
-The substitution is byte-for-byte (`\x1b` → `?`) so search-match
-offsets and visual width math stay valid.
+The substitution is byte-for-byte (`\x1b` / `\x9b` → `?`) so
+search-match offsets and visual width math stay valid.
 
-`tests/integration/escape_injection_test.go::TestEscapeInjection_OSCSequenceNeutralised`
-asserts that:
-1. The rendered frame contains no live OSC payload.
-2. The surrounding (benign) content survives.
-3. Every remaining `\x1b` is followed by `[` (CSI introducer) — only
-   Chroma's SGR colour escapes are allowed in a v0.1.0 frame.
+`internal/render/sanitize_boundary_test.go` adds 8 new boundary
+tests; `cmd/spy/main_test.go::TestC4_StderrSanitizesHostileFilename`
+adds the stderr-side gate. `tests/integration/escape_injection_test.go`
+already covers the integration-level rendered-frame contract.
 
-**Status**: PASS. Trade-off: files with intentional ANSI colour
-escapes (e.g., `git diff --color=always > /tmp/diff.txt`) lose their
-colour. A future `--allow-ansi-passthrough` flag with an
-SGR-but-not-OSC discriminator can opt back in.
+**Status**: PASS. *Updated 2026-04-26 — original draft only covered
+code/match/text. Acceptance review C4 surfaced the markdown / PDF /
+image / statusbar / stderr bypasses, all closed in the same patch.*
+
+Trade-off: files with intentional ANSI colour escapes (e.g.,
+`git diff --color=always > /tmp/diff.txt`) lose their colour. A
+future `--allow-ansi-passthrough` flag with an SGR-but-not-OSC
+discriminator can opt back in.
 
 ## (d) OSC 11 background-color reply parsing
 
