@@ -150,7 +150,7 @@ func measureDismiss(t *testing.T, iterations int, limit time.Duration, failOnBud
 	}
 
 	sort.Slice(durations, func(i, j int) bool { return durations[i] < durations[j] })
-	p95 := durations[(len(durations)*95)/100]
+	p95 := p95Duration(durations)
 	t.Logf("SC-007: dismiss p95=%v across %d invocations (limit %v); fastest=%v slowest=%v",
 		p95, iterations, limit, durations[0], durations[len(durations)-1])
 	if failOnBudget && p95 > limit {
