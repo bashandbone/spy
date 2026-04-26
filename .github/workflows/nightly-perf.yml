@@ -22,10 +22,10 @@ jobs:
     env:
       RUNNER_OS_RAM_HINT: "8192" # SC-005 nightly tier asserts RSS ≤ 500 MiB on an 8 GiB runner
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Set up Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@v6
         with:
           go-version: "1.26"
           check-latest: true
@@ -42,14 +42,14 @@ jobs:
 
       - name: Upload perf output
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: perf-output
           path: artifacts/perf-output.txt
 
       - name: File regression issue on failure
         if: failure()
-        uses: peter-evans/create-issue-from-file@v5
+        uses: peter-evans/create-issue-from-file@v6
         with:
           title: "perf-regression: nightly run on ${{ github.run_id }}"
           content-filepath: artifacts/perf-output.txt
