@@ -6,6 +6,7 @@ package ui
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strconv"
 	"strings"
@@ -23,14 +24,22 @@ import (
 	"github.com/knitli/spy/internal/source"
 )
 
-// Init sets up the initial command pipeline: subscribe to the loader's
-// Updates channel via [waitForChunk] and seed the viewport with the
-// first chunk's content.
+// Init sets up the initial command pipeline: subscribe to BOTH the
+// loader's Updates channel (via [waitForChunk]) AND its Errs channel
+// (via [waitForStreamErr]) so progressive content arrivals AND
+// non-fatal warnings (line-truncated, stdin-non-seekable) surface
+// in the UI as they happen.
+//
+// Pre-acceptance review the Errs channel was unconsumed in production
+// — `loader.ErrLineTruncated` and `loader.ErrStdinNonSeekable`
+// warnings reached the channel and were silently dropped, so users
+// were never told content was clipped or that scroll-back was
+// disabled (review C7).
 func (m Model) Init() tea.Cmd {
 	if m.stream == nil {
 		return nil
 	}
-	return waitForChunk(m.stream)
+	return tea.Batch(waitForChunk(m.stream), waitForStreamErr(m.stream))
 }
 
 // Update routes Bubble Tea messages to the matching handler. The
@@ -60,6 +69,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.status = render.StatusIdle
 		}
 		return m, metaUpdatedCmd(m.stream)
+	case streamErrMsg:
+		return m.onStreamErr(msg)
 	case reloadMsg:
 		return m.onReload()
 	case reloadResultMsg:
@@ -141,9 +152,16 @@ func (m Model) onOpenResult(msg openResultMsg) (tea.Model, tea.Cmd) {
 	}
 	m.viewport.SetContent(m.renderer.Render(m.renderContext()))
 	if m.streaming {
-		return m, waitForChunk(m.stream)
+		// Re-subscribe to BOTH chunks AND errs against the new
+		// stream — without re-subscribing to errs, the swapped-in
+		// source's truncation / stdin warnings would never reach
+		// the UI (acceptance review C7).
+		return m, tea.Batch(waitForChunk(m.stream), waitForStreamErr(m.stream))
 	}
-	return m, nil
+	// Even on EOF stream we should subscribe once so a buffered
+	// warning from `loader.Open` (e.g. truncation in the first
+	// chunk read synchronously) still surfaces.
+	return m, waitForStreamErr(m.stream)
 }
 
 // onResize reflows the viewport to the new terminal size. The status
@@ -831,6 +849,59 @@ func (m Model) onChunk(msg chunkLoadedMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+// onStreamErr translates a [loader.Stream.Errs] arrival into a
+// status-bar advisory and re-subscribes for the next warning.
+//
+// Stale-stream guard mirrors [chunkLoadedMsg] / [streamDoneMsg]:
+// warnings from an old stream that ActionReload or :open replaced
+// must not surface against the new session.
+//
+// nil errors are skipped (re-subscription only); they shouldn't
+// happen in practice but the loader's `select / default` send is
+// best-effort and a nil send would corrupt the advisory.
+func (m Model) onStreamErr(msg streamErrMsg) (tea.Model, tea.Cmd) {
+	if msg.stream != nil && msg.stream != m.stream {
+		return m, nil
+	}
+	if msg.err == nil {
+		return m, waitForStreamErr(m.stream)
+	}
+	m.statusAdvisory = formatStreamErr(msg.err)
+	return m, waitForStreamErr(m.stream)
+}
+
+// formatStreamErr renders a [loader.Stream.Errs] error into a
+// terse one-line advisory suitable for the status bar.
+//
+// The two documented sentinels (per loader/stream.go:74-80) are:
+//   - ErrLineTruncated, wrapped as "%w: line N" — surfaced as
+//     "line N truncated (cap exceeded)" so the user sees both the
+//     fact and the affected location.
+//   - ErrStdinNonSeekable — surfaced verbatim because the existing
+//     wording already explains what the user lost ("scroll-back
+//     disabled past resident window").
+//
+// Anything else falls through to the wrapped error string. The
+// status bar collapses below 80 cols and drops the advisory anyway,
+// so we keep the format short but informative.
+func formatStreamErr(err error) string {
+	if errors.Is(err, loader.ErrLineTruncated) {
+		// The loader wraps with line number: "line truncated: line N".
+		// Re-shape so the line number leads (more relevant to the
+		// user) and the cause follows.
+		s := err.Error()
+		if idx := strings.LastIndex(s, "line "); idx >= 0 {
+			lineN := s[idx:]
+			return lineN + " truncated (cap exceeded)"
+		}
+		return "line truncated (cap exceeded)"
+	}
+	if errors.Is(err, loader.ErrStdinNonSeekable) {
+		return err.Error()
+	}
+	return "loader: " + err.Error()
+}
+
 // metaUpdatedCmd returns a tea.Cmd that yields a [metaUpdatedMsg]
 // carrying the buffer's pinned total. nil-safe for streams without a
 // buffer (degenerate test models).
@@ -898,9 +969,12 @@ func (m Model) onReloadResult(msg reloadResultMsg) (tea.Model, tea.Cmd) {
 	}
 	m.viewport.SetContent(m.renderer.Render(m.renderContext()))
 	if m.streaming {
-		return m, waitForChunk(m.stream)
+		// Re-subscribe to BOTH chunks AND errs after a reload —
+		// see the matching comment in [Model.onOpenResult] for
+		// the C7 background.
+		return m, tea.Batch(waitForChunk(m.stream), waitForStreamErr(m.stream))
 	}
-	return m, nil
+	return m, waitForStreamErr(m.stream)
 }
 
 // loaderConfigFromConfig pulls the loader-shaped fields out of the
@@ -1073,5 +1147,42 @@ func waitForChunk(s *loader.Stream) tea.Cmd {
 			return streamDoneMsg{stream: s}
 		}
 		return chunkLoadedMsg{chunk: c, stream: s}
+	}
+}
+
+// waitForStreamErr subscribes to the loader's Errs channel and
+// forwards each received warning / error as a tea.Msg tagged with
+// the originating stream. The handler in [Model.Update] uses the
+// tag to drop stale warnings from a stream that ActionReload /
+// :open has already swapped out (matches the [waitForChunk]
+// tagging convention), and [Model.onStreamErr] guards against the
+// theoretical nil-error case from the loader's best-effort
+// `select / default` send.
+//
+// Returns nil when the channel closes. A closed Errs means this
+// stream will not emit any more warnings / errors, regardless of
+// whether Updates has already closed (the loader closes them in
+// different orders depending on whether streaming finished
+// synchronously in [loader.Open] or asynchronously on the producer
+// goroutine — defers fire LIFO). We don't need a separate "errs
+// done" sentinel because streamDoneMsg remains the signal for the
+// streaming-finished transition.
+//
+// Acceptance review C7: before this command existed, the loader's
+// errs channel was buffered, written to, and never read — when the
+// channel filled up the loader's `select / default` non-blocking
+// send dropped subsequent warnings silently, so users were never
+// told a 100 KiB+ line was truncated or that stdin scroll-back
+// was disabled.
+func waitForStreamErr(s *loader.Stream) tea.Cmd {
+	if s == nil {
+		return nil
+	}
+	return func() tea.Msg {
+		err, ok := <-s.Errs
+		if !ok {
+			return nil
+		}
+		return streamErrMsg{err: err, stream: s}
 	}
 }

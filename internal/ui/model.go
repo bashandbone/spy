@@ -208,6 +208,22 @@ type streamDoneMsg struct {
 	stream *loader.Stream
 }
 
+// streamErrMsg announces a warning or error read from
+// [loader.Stream.Errs] — the side-channel the loader uses to surface
+// non-fatal conditions like [loader.ErrLineTruncated] (a single line
+// exceeded MaxLineBytes and was clipped) or [loader.ErrStdinNonSeekable]
+// (windowed-mode entered against non-seekable stdin so scroll-back is
+// unavailable past the resident region).
+//
+// The originating Stream is carried so post-reload deliveries from
+// the previous loader don't surface against the new session's source
+// (acceptance review C7 — `Stream.Errs` was unconsumed in production
+// before this message landed).
+type streamErrMsg struct {
+	err    error
+	stream *loader.Stream
+}
+
 // reloadMsg requests a fresh loader.Open against the current Source.
 // Fired by the keymap's ActionReload binding.
 type reloadMsg struct{}
