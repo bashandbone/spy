@@ -80,7 +80,7 @@ func TestScroll_60fps(t *testing.T) {
 	}
 
 	sort.Slice(durations, func(i, j int) bool { return durations[i] < durations[j] })
-	p95 := durations[(len(durations)*95)/100]
+	p95 := p95Duration(durations)
 	const limit = 16 * time.Millisecond
 	// SC-002 has two clauses: p95 ≤ 16 ms AND zero dropped frames.
 	// Until this fix the dropped count was only mentioned in the p95

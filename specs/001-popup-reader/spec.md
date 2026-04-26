@@ -23,7 +23,7 @@ A developer using tmux with multiple panes needs to quickly review a file withou
 
 **Acceptance Scenarios**:
 
-1. **Given** `hello.go` exists on disk, **When** user runs `spy hello.go`, **Then** the alt-screen launches within 150 ms (SC-001), `hello.go` content is visible with Go syntax highlighting applied via Chroma's `go` lexer, and the footer reads `hello.go | <N> lines | Line 1`.
+1. **Given** `hello.go` exists on disk, **When** user runs `spy hello.go`, **Then** the alt-screen launch meets the SC-001 p95 budget of 150 ms across repeated runs, `hello.go` content is visible with Go syntax highlighting applied via Chroma's `go` lexer, and the footer reads `hello.go | <N> lines | Line 1`.
 2. **Given** the viewer is open, **When** user presses `↓` or `j`, **Then** the viewport scrolls one line down without visible flicker; `PgDn` / `Space` advances one viewport-height; `Home` / `End` jump to top/bottom.
 3. **Given** the viewer is open, **When** user presses `q`, `Esc`, or `Ctrl-C`, **Then** the alt-screen exits, the previous shell prompt is visible unchanged (no residual escape sequences, cursor restored, modes restored), and the process exits with code 0 (or 130 for `Ctrl-C`) within the SC-007 budget.
 4. **Given** content fills multiple screens, **When** user scrolls past the last loaded line, **Then** the footer shows `END` styled with `Theme.Footer` and further down-scroll is a no-op (no error, no wrap).

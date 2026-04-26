@@ -111,8 +111,7 @@ func TestFirstFrame_Under150ms(t *testing.T) {
 	}
 
 	sortDurations(durations)
-	p95Index := ((len(durations) - 1) * 95) / 100
-	p95 := durations[p95Index]
+	p95 := p95Duration(durations)
 	worst := durations[len(durations)-1]
 	const limit = 150 * time.Millisecond
 	if p95 > limit {
@@ -123,9 +122,9 @@ func TestFirstFrame_Under150ms(t *testing.T) {
 		p95, worst, len(durations), limit)
 }
 
-// TestFirstFrame_RendererSlice measures the renderer-only path and
-// reports it without failing the build. It's the diagnostic counterpart
-// to TestFirstFrame_Under150ms: the spawn-based budget catches "from
+// TestFirstFrame_RendererSlice enforces a ≤ 20 ms p95 budget on the
+// renderer-only path. It's the diagnostic counterpart to
+// TestFirstFrame_Under150ms: the spawn-based budget catches "from
 // invocation" regressions (Go startup, link-time bloat, init() blocks);
 // this slice-only timing isolates the loader + ui.NewModel + first
 // View() pass so reviewers can localise regressions to the renderer vs
@@ -166,8 +165,7 @@ func TestFirstFrame_RendererSlice(t *testing.T) {
 	}
 
 	sortDurations(durations)
-	p95Index := ((len(durations) - 1) * 95) / 100
-	p95 := durations[p95Index]
+	p95 := p95Duration(durations)
 	worst := durations[len(durations)-1]
 	const rendererLimit = 20 * time.Millisecond
 	if p95 > rendererLimit {
@@ -187,6 +185,15 @@ func sortDurations(d []time.Duration) {
 			d[j], d[j-1] = d[j-1], d[j]
 		}
 	}
+}
+
+// p95Duration returns the 95th-percentile value from a pre-sorted
+// duration slice using the nearest-rank definition. For any N, the
+// returned index is ((N-1)*95)/100, which never reaches the last
+// element when N < 2000 — avoiding the off-by-one that
+// (N*95)/100 produces for N=20 (resolves to index 19 = p100).
+func p95Duration(sorted []time.Duration) time.Duration {
+	return sorted[((len(sorted)-1)*95)/100]
 }
 
 // buildPerfBinary go-builds the spy binary once per test process and
