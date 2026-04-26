@@ -143,7 +143,15 @@ func run(args []string) int {
 		return exitForSourceError(err, pf.Args)
 	}
 
-	// 5. Build the UI model.
+	// 5. Build the UI model. The OSC 11 luminance probe only fires
+	//    when the resolved theme spec is "auto" — explicit dark/light
+	//    or a named Chroma style throws the result away, so we'd be
+	//    paying the 50 ms budget for nothing (Copilot review PR#10
+	//    round-3 #2). NoColor also short-circuits the probe because
+	//    Mono mode wins regardless of the underlying theme.
+	if !cfg.NoColor && wantsAutoTheme(cfg.Theme) {
+		caps.BackgroundLuminance = term.DetectBackgroundLuminance(context.Background())
+	}
 	theme := render.ResolveTheme(cfg.Theme, caps, cfg.NoColor)
 	// Build the *base* keymap first: defaults + any user [keys]
 	// overrides. Vim is layered on top of that base so a runtime
@@ -219,6 +227,18 @@ func runDegenerate(src source.Source) int {
 // rendering when --no-color was passed.
 func newHighlighter(theme render.Theme, caps term.Capabilities, capBytes int64) *highlight.Highlighter {
 	return highlight.New(styles.Get(theme.ChromaStyle), caps.ColorDepth, capBytes)
+}
+
+// wantsAutoTheme reports whether `cfg.Theme` resolves through the
+// auto-detect branch (and therefore needs a background luminance
+// reading). An empty value or the literal "auto" qualifies; explicit
+// dark/light and named Chroma styles bypass the probe.
+func wantsAutoTheme(spec string) bool {
+	switch strings.ToLower(strings.TrimSpace(spec)) {
+	case "", "auto":
+		return true
+	}
+	return false
 }
 
 // applyGraphicsOverride layers cfg.Graphics on top of the auto-detected

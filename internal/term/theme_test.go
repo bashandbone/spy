@@ -259,40 +259,55 @@ func TestDetectBackgroundLuminance_OSC11MalformedFallsThrough(t *testing.T) {
 	}
 }
 
-// --- Detect-level integration smoke tests ---
+// --- DetectBackgroundLuminance (exported entry point) ---
 
-// TestDetect_NonTTYBypassesLuminanceProbe pins the contract from
-// research R6: when stdout is not a TTY [detectBackgroundLuminance]
-// short-circuits to NaN even when COLORFGBG would otherwise yield a
-// usable fallback. The piped-session caller has no use for theming
-// and surfacing a non-NaN value would surprise the renderer.
-func TestDetect_NonTTYBypassesLuminanceProbe(t *testing.T) {
+func TestDetectBackgroundLuminance_NonTTYReturnsNaN(t *testing.T) {
 	resetEnv(t)
-	t.Setenv("COLORFGBG", "0;15") // would say "light" if the probe ran
-	caps := Detect(context.Background())
-	if caps.IsTTY {
-		t.Skip("test runner has a real TTY; non-TTY bypass path not exercised")
-	}
-	if !math.IsNaN(caps.BackgroundLuminance) {
-		t.Errorf("non-TTY Detect must bypass to NaN; got %v", caps.BackgroundLuminance)
+	got := DetectBackgroundLuminance(context.Background())
+	// Under `go test`, stdout is rarely a real TTY; the bypass path
+	// returns NaN. We can't reliably exercise the OSC-reply path from
+	// a unit test; that's covered by [parseOSC11Reply] tests + the
+	// (skipped) integration test in tests/integration/theme_test.go.
+	if !math.IsNaN(got) {
+		// Only a real TTY runner could legitimately get here.
+		t.Skip("test runner has a TTY; non-bypass path produced a value")
 	}
 }
 
-func TestDetect_RespectsSPYThemeBypass(t *testing.T) {
+func TestDetectBackgroundLuminance_RespectsSPYThemeBypass(t *testing.T) {
 	resetEnv(t)
 	t.Setenv("SPY_THEME", "light")
-	caps := Detect(context.Background())
-	if !math.IsNaN(caps.BackgroundLuminance) {
-		t.Errorf("SPY_THEME=light bypass: got %v, want NaN", caps.BackgroundLuminance)
+	if got := DetectBackgroundLuminance(context.Background()); !math.IsNaN(got) {
+		t.Errorf("SPY_THEME=light bypass: got %v, want NaN", got)
 	}
 }
 
-func TestDetect_RespectsNoColorBypass(t *testing.T) {
+func TestDetectBackgroundLuminance_RespectsNoColorBypass(t *testing.T) {
 	resetEnv(t)
 	t.Setenv("NO_COLOR", "1")
+	if got := DetectBackgroundLuminance(context.Background()); !math.IsNaN(got) {
+		t.Errorf("NO_COLOR=1 bypass: got %v, want NaN", got)
+	}
+}
+
+// --- Detect-level integration smoke tests ---
+
+// TestDetect_DoesNotRunLuminanceProbe pins the contract from Copilot
+// review PR#10 round-3 #2: [Detect] no longer runs the OSC 11 probe
+// itself, so [Capabilities.BackgroundLuminance] is always NaN until
+// the caller invokes [DetectBackgroundLuminance] explicitly. Doing
+// so lets `cmd/spy` skip the 50 ms budget when the user has chosen
+// an explicit theme.
+func TestDetect_DoesNotRunLuminanceProbe(t *testing.T) {
+	resetEnv(t)
+	// Even with COLORFGBG set (which would otherwise yield "light"
+	// luminance), Detect alone must return NaN — the probe is the
+	// caller's responsibility now.
+	t.Setenv("COLORFGBG", "0;15")
 	caps := Detect(context.Background())
 	if !math.IsNaN(caps.BackgroundLuminance) {
-		t.Errorf("NO_COLOR=1 bypass: got %v, want NaN", caps.BackgroundLuminance)
+		t.Errorf("Detect now defers the probe; want NaN, got %v",
+			caps.BackgroundLuminance)
 	}
 }
 

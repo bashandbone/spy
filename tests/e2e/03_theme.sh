@@ -85,17 +85,21 @@ if ! diff -q "${tmp_envlight}" "${tmp_light}" >/dev/null; then
     exit 1
 fi
 
-# 4. NO_COLOR=1 must produce no ANSI escapes anywhere in the stream.
+# 4. NO_COLOR=1 must produce no escape sequences anywhere in the stream.
+#    We grep for any ESC (\x1b) byte rather than just CSI (\x1b[) so a
+#    stray OSC, DCS, or bare ESC also fails the assertion (Copilot
+#    review PR#10 round-3 #3).
 NO_COLOR=1 "${binary}" --no-config "${hello}" > "${tmp_nocolor}"
-if grep -q $'\x1b\[' "${tmp_nocolor}"; then
-    echo "NO_COLOR=1: ANSI escapes leaked into non-TTY output" >&2
+if grep -q $'\x1b' "${tmp_nocolor}"; then
+    echo "NO_COLOR=1: escape sequences leaked into non-TTY output" >&2
     exit 1
 fi
 
-# 5. ANSI must not leak into any non-TTY stream regardless of theme.
+# 5. No escape sequences may leak into any non-TTY stream regardless
+#    of theme (same broadened ESC check as step 4).
 for f in "${tmp_dark}" "${tmp_light}" "${tmp_auto}" "${tmp_envlight}"; do
-    if grep -q $'\x1b\[' "${f}"; then
-        echo "non-TTY ANSI leak in ${f}" >&2
+    if grep -q $'\x1b' "${f}"; then
+        echo "non-TTY escape leak in ${f}" >&2
         exit 1
     fi
 done
