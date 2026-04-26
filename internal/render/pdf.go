@@ -43,9 +43,25 @@ var ErrUnsupportedDecoder = errors.New("render: image / PDF decoder rejected the
 // aren't available — capability *or* build configuration. The two
 // failure modes are mapped to a single deterministic message so the
 // integration tests can assert against it.
+//
+// Concurrency invariant (acceptance review M3): all methods on
+// *pdfRenderer MUST be called from the Bubble Tea event-loop
+// goroutine. The cache fields below are unprotected — concurrent
+// access from a reader goroutine or background tea.Cmd will race.
+// pdfRenderer instances are constructed on the event-loop goroutine
+// via [render.ForKind] (called from `rebuildRenderer` /
+// model construction in internal/ui) and consumed on the same
+// goroutine via [pdfRenderer.Render] from internal/ui/view.go. No
+// synchronization is needed today; if a future refactor moves
+// renderer construction or invocation onto another goroutine, this
+// invariant must be re-evaluated and a mutex (or per-renderer
+// channel handoff) added before that lands.
 type pdfRenderer struct {
 	deps Dependencies
 	src  source.Source
+
+	// Cache fields below are protected by the event-loop-goroutine
+	// invariant documented on the struct comment above. No mutex.
 
 	// cachedFrame memoizes the rendered output keyed on (page, proto,
 	// cols, rows). Stored regardless of whether the graphics path

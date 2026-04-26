@@ -74,6 +74,20 @@ func (m Model) footerLine() string {
 	// non-zero so the footer doesn't take the buffer mutex on every
 	// paint; while streaming the cache is zero and we read the
 	// running total from the buffer instead.
+	//
+	// M14 verified: [loader.LineBuffer.Total] takes the buffer mutex
+	// for a single int64 read inside the lock — no torn reads. The
+	// underlying total only ever increases (Append grows
+	// startLine + len(lines); MarkComplete pins totalLines), so
+	// successive paints observe a monotonically non-decreasing value.
+	// metaUpdatedMsg arrival is the same monotonic sequence: any
+	// paint between streamDoneMsg and metaUpdatedMsg reads
+	// Buffer.Total() directly and sees the already-pinned final
+	// total (MarkComplete fired before close(updates) which is what
+	// triggered streamDoneMsg). The footer therefore cannot race
+	// between two frames — the worst case is reading a slightly
+	// stale running total before metaUpdatedMsg lands, and that is
+	// exactly the M5 streaming display the spec asked for.
 	if m.totalLines > 0 {
 		meta.LineCount = m.totalLines
 	} else if m.stream != nil && m.stream.Buffer != nil {
