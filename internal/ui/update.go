@@ -31,9 +31,10 @@ import (
 // in the UI as they happen.
 //
 // Pre-acceptance review the Errs channel was unconsumed in production
-// — `WarnLineTruncated` and `WarnStdinNonSeekable` warnings reached
-// the channel and were silently dropped, so users were never told
-// content was clipped or that scroll-back was disabled (review C7).
+// — `loader.ErrLineTruncated` and `loader.ErrStdinNonSeekable`
+// warnings reached the channel and were silently dropped, so users
+// were never told content was clipped or that scroll-back was
+// disabled (review C7).
 func (m Model) Init() tea.Cmd {
 	if m.stream == nil {
 		return nil
@@ -1150,11 +1151,13 @@ func waitForChunk(s *loader.Stream) tea.Cmd {
 }
 
 // waitForStreamErr subscribes to the loader's Errs channel and
-// yields each non-nil warning / error as a tea.Msg tagged with the
-// originating stream. The handler in [Model.Update] uses the tag
-// to drop stale warnings from a stream that ActionReload / :open
-// has already swapped out (matches the [waitForChunk] tagging
-// convention).
+// forwards each received warning / error as a tea.Msg tagged with
+// the originating stream. The handler in [Model.Update] uses the
+// tag to drop stale warnings from a stream that ActionReload /
+// :open has already swapped out (matches the [waitForChunk]
+// tagging convention), and [Model.onStreamErr] guards against the
+// theoretical nil-error case from the loader's best-effort
+// `select / default` send.
 //
 // Returns nil when the channel closes — the loader closes Errs
 // after Updates closes, so a closed Errs always means streaming has

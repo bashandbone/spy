@@ -133,9 +133,11 @@ func TestC7_FormatStreamErr_Sentinels(t *testing.T) {
 	}
 }
 
-// TestC7_Init_SubscribesToErrsChannel proves the Init pipeline
-// includes waitForStreamErr — without it, a real warning emitted
-// by the loader's truncation path would never reach a subscriber.
+// TestC7_WaitForStreamErr_DeliversTaggedMsg proves waitForStreamErr
+// subscribes to [loader.Stream.Errs] and tags the delivered warning
+// with the originating stream — the contract that lets the
+// stale-stream guard in [Model.onStreamErr] discriminate warnings
+// from a swapped-out reload/`:open` stream.
 //
 // The test drives a synthetic stream whose Errs channel has a
 // pre-injected warning, calls waitForStreamErr directly, and
@@ -144,9 +146,10 @@ func TestC7_FormatStreamErr_Sentinels(t *testing.T) {
 //
 // We don't drive Init() end-to-end here — that returns a tea.Batch
 // whose order is implementation-detail and whose subordinate cmds
-// can block on an empty Errs channel. The contract that matters is
-// "subscribed AND tagged correctly", which waitForStreamErr fully
-// expresses.
+// can block on an empty Errs channel. The "subscribed AND tagged
+// correctly" contract is what waitForStreamErr fully expresses; the
+// end-to-end production path is exercised by
+// [TestC7_EndToEnd_TruncationFromRealLoader] below.
 func TestC7_WaitForStreamErr_DeliversTaggedMsg(t *testing.T) {
 	errs := make(chan error, 2)
 	stream := &loader.Stream{Errs: errs}
@@ -244,6 +247,11 @@ func TestC7_EndToEnd_TruncationFromRealLoader(t *testing.T) {
 		select {
 		case msg = <-done:
 		case <-time.After(200 * time.Millisecond):
+			// Re-enqueue: a slow waitForStreamErr/waitForChunk
+			// must not be silently dropped, otherwise we'd miss
+			// the warning we're trying to assert on. The outer
+			// 2s deadline still bounds the loop.
+			queue = append(queue, c)
 			continue
 		}
 		if msg == nil {
