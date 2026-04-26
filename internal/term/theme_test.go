@@ -296,18 +296,34 @@ func TestDetect_RespectsNoColorBypass(t *testing.T) {
 	}
 }
 
-// Ensure the OSC probe budget does not block well past the documented
-// 50 ms total deadline. Even in environments where the probe quietly
-// fails (no TTY → fakeProbe returns ""), the wall-clock should be
-// trivially small.
-func TestDetectBackgroundLuminance_BudgetIsBounded(t *testing.T) {
+// TestDetectBackgroundLuminance_BudgetBoundsSlowProbe drives the
+// probe with a function that blocks until the per-call ctx fires, so
+// the assertion actually exercises the [oscProbeBudget] timeout (a
+// fakeProbe("") returns instantly and never proves the timeout works
+// — Copilot review PR#10 round-2 #4). The lower bound (≥ 40 ms)
+// catches a probe that returns early and short-circuits the budget;
+// the upper bound (≤ 250 ms) catches a runaway that ignores the ctx
+// deadline. The window is wide enough to absorb scheduler jitter on
+// slow CI without becoming a coin flip.
+func TestDetectBackgroundLuminance_BudgetBoundsSlowProbe(t *testing.T) {
 	t.Setenv("SPY_THEME", "")
 	t.Setenv("NO_COLOR", "")
 	t.Setenv("COLORFGBG", "")
 	start := time.Now()
-	_ = detectBackgroundLuminance(context.Background(), envFromOS{}, true, fakeProbe(""))
-	if d := time.Since(start); d > 100*time.Millisecond {
-		t.Errorf("detect took %v, expected ≤ 100ms (budget is 50ms + slack)", d)
+	got := detectBackgroundLuminance(context.Background(), envFromOS{}, true,
+		func(ctx context.Context) string {
+			<-ctx.Done()
+			return ""
+		})
+	d := time.Since(start)
+	if !math.IsNaN(got) {
+		t.Errorf("blocking probe with no fallback: got %v want NaN", got)
+	}
+	if d < 40*time.Millisecond {
+		t.Errorf("detect took %v, expected ≥ ~50ms (probe must wait the budget)", d)
+	}
+	if d > 250*time.Millisecond {
+		t.Errorf("detect took %v, expected ≤ 250ms (50ms budget + slack)", d)
 	}
 }
 
@@ -343,13 +359,24 @@ func TestSeenTerminator_LonelyBackslash(t *testing.T) {
 
 // --- readOSCReply ---
 
-// scriptedReader hands out canned chunks one Read at a time; once the
-// list is drained, subsequent Reads return io.EOF. This lets us drive
-// readOSCReply through specific multi-packet shapes without spinning up
+// readerFunc lets a test inject ad-hoc Read behaviour (e.g.
+// "hand back a byte then cancel ctx") without declaring a full mock
+// type. The function value is the Read implementation directly.
+type readerFunc func(p []byte) (int, error)
+
+func (f readerFunc) Read(p []byte) (int, error) { return f(p) }
+
+// scriptedReader hands out canned chunks. Each Read consumes from the
+// current chunk; once a chunk is fully drained, the next Read advances
+// to the following chunk. Once the chunk list is drained, subsequent
+// Reads return io.EOF. This lets us drive readOSCReply (which now
+// reads byte-at-a-time to avoid over-consuming past the OSC
+// terminator) through specific multi-packet shapes without spinning up
 // a real TTY.
 type scriptedReader struct {
 	chunks [][]byte
-	idx    int
+	chunk  int // current chunk index
+	pos    int // byte offset within chunks[chunk]
 	err    error
 }
 
@@ -357,15 +384,20 @@ func (s *scriptedReader) Read(p []byte) (int, error) {
 	if s.err != nil {
 		return 0, s.err
 	}
-	if s.idx >= len(s.chunks) {
+	// Skip past any drained chunks (handles trailing empty chunks
+	// gracefully too).
+	for s.chunk < len(s.chunks) && s.pos >= len(s.chunks[s.chunk]) {
+		s.chunk++
+		s.pos = 0
+	}
+	if s.chunk >= len(s.chunks) {
 		// Signal end-of-input once all scripted chunks have been read
 		// so [readOSCReply] stops looping even when the script never
 		// supplies an explicit OSC terminator.
 		return 0, io.EOF
 	}
-	c := s.chunks[s.idx]
-	s.idx++
-	n := copy(p, c)
+	n := copy(p, s.chunks[s.chunk][s.pos:])
+	s.pos += n
 	return n, nil
 }
 
@@ -399,14 +431,66 @@ func TestReadOSCReply_FirstReadEmptyReturnsNil(t *testing.T) {
 }
 
 func TestReadOSCReply_StopsOnContextCancel(t *testing.T) {
-	// First chunk has no terminator; readOSCReply should re-enter the
-	// loop, observe ctx.Done(), and return the partial buffer.
-	r := &scriptedReader{chunks: [][]byte{[]byte("\x1b]11;rgb:0000/0000")}}
+	// Ctx is cancelled mid-stream after the reader has handed back a
+	// partial body. readOSCReply's next iteration observes ctx.Done()
+	// and returns the buffered prefix instead of looping forever.
+	ctx, cancel := context.WithCancel(context.Background())
+	body := []byte("\x1b]11;rgb:0000/0000")
+	const cancelAfter = 6
+	pos := 0
+	r := readerFunc(func(p []byte) (int, error) {
+		if pos >= len(body) {
+			return 0, io.EOF
+		}
+		n := copy(p, body[pos:pos+1])
+		pos += n
+		if pos == cancelAfter {
+			cancel()
+		}
+		return n, nil
+	})
+	got := readOSCReply(ctx, r)
+	// readOSCReply checks ctx at the *top* of the loop; the byte at
+	// `cancelAfter` (the one whose Read triggered the cancel) is still
+	// appended before the next iteration observes Done. Hence the
+	// expected length is exactly `cancelAfter`.
+	if len(got) != cancelAfter {
+		t.Errorf("ctx cancel: got %d bytes (%q), want %d", len(got), string(got), cancelAfter)
+	}
+}
+
+func TestReadOSCReply_PreCancelledContextReturnsNil(t *testing.T) {
+	// A ctx already cancelled before the first Read must yield nil
+	// (not an empty slice that callers might mis-interpret as a
+	// well-formed reply).
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
+	r := &scriptedReader{chunks: [][]byte{[]byte("\x1b]11;rgb:0/0/0\x07")}}
 	got := readOSCReply(ctx, r)
-	if string(got) != "\x1b]11;rgb:0000/0000" {
-		t.Errorf("ctx cancel: got %q", string(got))
+	if got != nil {
+		t.Errorf("pre-cancelled ctx: got %q want nil", string(got))
+	}
+}
+
+func TestReadOSCReply_StopsAtTerminatorWithTrailingBytes(t *testing.T) {
+	// A real TTY read can coalesce the complete OSC 11 reply and an
+	// unrelated trailing byte (e.g. a user keypress) into the same
+	// chunk. readOSCReply must stop *exactly* at the terminator so the
+	// trailing byte stays on the FD for the next reader to consume —
+	// otherwise we silently swallow keystrokes (Copilot review PR#10
+	// round-2 #3).
+	r := &scriptedReader{chunks: [][]byte{[]byte("\x1b]11;rgb:0000/0000/0000\x07EXTRA")}}
+	got := readOSCReply(context.Background(), r)
+	if string(got) != "\x1b]11;rgb:0000/0000/0000\x07" {
+		t.Errorf("trailing bytes after terminator: got %q", string(got))
+	}
+	// And the trailing bytes must still be sittable on the reader. With
+	// our scriptedReader the remaining bytes live at chunks[0][pos:];
+	// a follow-up Read should hand them back.
+	tail := make([]byte, 16)
+	n, _ := r.Read(tail)
+	if string(tail[:n]) != "EXTRA" {
+		t.Errorf("trailing bytes left on reader: got %q want EXTRA", string(tail[:n]))
 	}
 }
 

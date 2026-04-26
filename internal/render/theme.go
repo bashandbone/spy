@@ -14,11 +14,13 @@ import (
 	"github.com/knitli/spy/internal/term"
 )
 
-// LuminanceLightThreshold is the boundary above which an
+// luminanceLightThreshold is the boundary above which an
 // [term.Capabilities.BackgroundLuminance] reading is considered "light"
 // for the purposes of auto-theme selection. Per research R6 the cutoff
-// is ≥ 0.5 → light, < 0.5 → dark.
-const LuminanceLightThreshold = 0.5
+// is ≥ 0.5 → light, < 0.5 → dark. Unexported because it's an internal
+// resolution detail; callers care about the resulting [Theme.Name],
+// not the boundary number.
+const luminanceLightThreshold = 0.5
 
 // Theme is the active styling profile for a viewer session. It bundles
 // the Chroma style name (used by the highlighter), the lipgloss styles
@@ -79,7 +81,7 @@ func ThemeLight() Theme {
 
 // ResolveTheme picks the active Theme from the user-facing theme spec.
 // The auto-detect branch reads [term.Capabilities.BackgroundLuminance]:
-// luminance ≥ [LuminanceLightThreshold] selects [ThemeLight], anything
+// luminance ≥ [luminanceLightThreshold] selects [ThemeLight], anything
 // lower (or NaN) selects [ThemeDark]. Explicit `dark` / `light` and
 // named Chroma styles bypass the auto branch entirely.
 //
@@ -113,7 +115,7 @@ func ResolveTheme(spec string, caps term.Capabilities, noColor bool) Theme {
 // matches the most common terminal default and the research R6
 // fallback.
 func autoTheme(caps term.Capabilities) Theme {
-	if !math.IsNaN(caps.BackgroundLuminance) && caps.BackgroundLuminance >= LuminanceLightThreshold {
+	if !math.IsNaN(caps.BackgroundLuminance) && caps.BackgroundLuminance >= luminanceLightThreshold {
 		return ThemeLight()
 	}
 	return ThemeDark()

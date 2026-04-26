@@ -223,42 +223,47 @@ func raceReadOSCReply(ctx context.Context, r io.Reader) []byte {
 	}
 }
 
-// readOSCReply pulls bytes from `r` until any of:
+// readOSCReply pulls bytes from `r` one at a time until any of:
 //   - [seenTerminator] is satisfied,
 //   - the buffer reaches [oscReplyMaxBytes],
 //   - Read returns an error or zero bytes, or
 //   - `ctx` is cancelled between Reads.
 //
-// Returns the accumulated bytes (possibly empty). Extracting this
-// loop here lets us drive it from unit tests with a mock io.Reader,
-// keeping the platform-specific [probeOSC11Background] thin enough
-// that the lines that *do* require a real /dev/tty (open + raw-mode
-// switch) are the only untested ones.
+// One byte at a time matters when `r` is a real terminal FD (the
+// /dev/tty production path): a bulk Read can over-consume past the OSC
+// terminator and swallow whatever the user typed immediately after,
+// silently dropping a keystroke into the void (Copilot review PR#10
+// round-2 #2). The byte-at-a-time loop stops exactly at BEL/ST so any
+// trailing bytes stay on the FD for the next reader.
+//
+// Returns the accumulated bytes (nil when the very first read failed).
+// Extracting this loop here lets us drive it from unit tests with a
+// mock io.Reader, keeping the platform-specific
+// [probeOSC11Background] thin enough that the lines that *do* require
+// a real /dev/tty (open + raw-mode switch) are the only untested ones.
 func readOSCReply(ctx context.Context, r io.Reader) []byte {
-	var buf [oscReplyMaxBytes]byte
-	n, err := r.Read(buf[:])
-	if err != nil || n <= 0 {
-		return nil
-	}
-	out := make([]byte, n)
-	copy(out, buf[:n])
-	for !seenTerminator(out) && len(out) < oscReplyMaxBytes {
+	out := make([]byte, 0, oscReplyMaxBytes)
+	var buf [1]byte
+	for len(out) < oscReplyMaxBytes {
 		select {
 		case <-ctx.Done():
+			if len(out) == 0 {
+				return nil
+			}
 			return out
 		default:
 		}
-		more, err := r.Read(buf[:])
-		if err != nil || more <= 0 {
+		n, err := r.Read(buf[:])
+		if err != nil || n <= 0 {
 			break
 		}
-		// Trim any over-read past oscReplyMaxBytes so callers always
-		// see a buffer with a bounded length even on a chatty source.
-		room := oscReplyMaxBytes - len(out)
-		if more > room {
-			more = room
+		out = append(out, buf[0])
+		if seenTerminator(out) {
+			break
 		}
-		out = append(out, buf[:more]...)
+	}
+	if len(out) == 0 {
+		return nil
 	}
 	return out
 }
