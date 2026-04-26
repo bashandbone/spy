@@ -157,7 +157,7 @@ type Stream struct {
     First    Chunk             // populated synchronously before Stream is returned
     Updates  <-chan Chunk      // bounded buffer (cap = Config.UpdatesBuffer, default 4); closed on EOF or error
     Errs     <-chan error      // single-value channel; closed when no more errors
-    Buffer   *LineBuffer       // resident lines + windowing state; lives in internal/loader (see data-model.md package map)
+    Buffer   *LineBuffer       // resident lines + windowing state; lives in internal/loader (see data-model.md package map). (Acceptance review M13.)
 }
 
 // Open begins streaming. cfg.MaxResidentBytes triggers windowed mode.
@@ -263,7 +263,8 @@ in `internal/render/pdf_fitz.go`, gated by the `fitz` build tag. The no-fitz
 stub in `internal/render/pdf_nofitz.go` returns `ErrPDFGraphicsUnavailable`.
 `page` is 0-indexed; there is no DPI parameter (the resolution is fixed by
 go-fitz's default rasterizer). The renderer in `internal/render/pdf.go` is the
-sole caller.
+sole caller. (Acceptance review H6 — replaces the earlier fictional
+`graphics.PDFPage(path, n, dpi)` signature.)
 
 ## `internal/render`
 
@@ -301,7 +302,7 @@ type Renderer interface {
     // rendered gutter once word-wrap inflates one source line into multiple
     // visual rows. Returns 0 when the buffer is empty or the row is out of
     // range; the caller treats 0 as the "Line 0" footer sentinel for empty
-    // input.
+    // input. (Acceptance review M13.)
     RowToLine(ctx RenderContext, visualRow int) int64
 }
 
@@ -316,6 +317,7 @@ type Dependencies struct {
     // LineNumbers and WordWrap mirror the active config for the current
     // session; renderers branch on them per frame so toggles
     // (Ctrl-L / Ctrl-W) take effect on the next tick.
+    // (Acceptance review M13 — fields below were undocumented.)
     LineNumbers bool
     WordWrap    bool
 
@@ -430,6 +432,7 @@ type ModelOptions struct {
     // The Model retains this so a runtime `:set novim` can restore it
     // verbatim and `:set vim` can layer keys.WithVim on top without losing
     // user overrides. When zero/nil, NewModel uses KeyMap as the base.
+    // (Acceptance review M13 — fields below were undocumented.)
     BaseKeyMap keys.KeyMap
 
     // Highlighter is the per-session syntax highlighter. nil disables
