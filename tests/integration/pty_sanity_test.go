@@ -31,14 +31,17 @@ func TestPTYSanity_HelpFlag(t *testing.T) {
 
 // TestPTYSanity_QuitOnQBigFile reproduces the scenario the dismiss
 // benchmark uses: spawn against a 1000-line file (so streaming has
-// runway), wait for first paint, sleep, send `q` once, expect exit.
+// runway), wait for the first content frame (which can only be painted
+// after Bubble Tea's input reader is subscribed to stdin), send `q`
+// once, expect exit.
 //
-// The first-`q` retransmit fallback is a known-flake workaround
-// (acceptance review M7). See specs/001-popup-reader/acceptance_review/
-// pty_flake_investigation.md for the full diagnosis: most likely
-// root cause is a missing input-ready barrier in Bubble Tea v1's
-// renderer/input-reader bootstrap. The retry is conservative and
-// doesn't mask regressions.
+// Root-cause fix (M7): rather than sleeping after the alt-screen
+// prologue (which is emitted BEFORE Bubble Tea's cancelreader
+// subscription), we wait for "line" — actual viewport content from the
+// loader's first chunk. Rendered content can only appear after the
+// event loop has processed a WindowSizeMsg, which is dispatched after
+// initCancelReader returns, so this is a reliable "input pipeline live"
+// signal.
 func TestPTYSanity_QuitOnQBigFile(t *testing.T) {
 	dir := t.TempDir()
 	fixture := filepath.Join(dir, "big.txt")
@@ -53,13 +56,17 @@ func TestPTYSanity_QuitOnQBigFile(t *testing.T) {
 	if !p.WaitFor(AltScreenEnter, 5*time.Second) {
 		t.Fatalf("alt-screen entry not observed")
 	}
-	time.Sleep(500 * time.Millisecond)
-	// Try a few variants to figure out what propagates.
-	t.Logf("sending q...")
+	// Wait for actual viewport content: "line" appears in every row of
+	// the rendered file and can only reach the PTY after the event loop
+	// has processed the initial WindowSizeMsg (which is dispatched
+	// after initCancelReader). This is the reliable input-ready signal.
+	if !p.WaitFor("line", 5*time.Second) {
+		t.Fatalf("first content frame not observed; snapshot=%q", string(p.Snapshot()))
+	}
 	p.Send("q")
 	exited := p.WaitForExit(500 * time.Millisecond)
 	if !exited {
-		t.Logf("q did not exit; trying ctrl-c")
+		// Safety-net: ctrl-c if `q` still didn't propagate.
 		p.Send("\x03")
 		exited = p.WaitForExit(2 * time.Second)
 	}
@@ -73,9 +80,17 @@ func TestPTYSanity_QuitOnQBigFile(t *testing.T) {
 }
 
 // TestPTYSanity_QuitOnQ verifies that pressing `q` inside an
-// alt-screen session terminates the binary cleanly. The 5-iteration
-// resend loop is the M7 workaround for the first-`q` flake — see
-// specs/001-popup-reader/acceptance_review/pty_flake_investigation.md.
+// alt-screen session terminates the binary cleanly.
+//
+// Root-cause fix (M7): the previous implementation slept 250 ms after
+// the alt-screen prologue and then retransmitted `q` in a loop because
+// the prologue escapes (including \x1b[?2004h) are emitted BEFORE
+// Bubble Tea's cancelreader subscribes to stdin. Instead we now wait
+// for "2 lines" — the streaming-complete footer for the 2-line
+// fixture. Rendered content can only appear after the event loop has
+// processed both the WindowSizeMsg and the streamDoneMsg/metaUpdatedMsg
+// sequence, all of which run after initCancelReader returns. This
+// eliminates the race window entirely.
 func TestPTYSanity_QuitOnQ(t *testing.T) {
 	dir := t.TempDir()
 	fixture := filepath.Join(dir, "tiny.txt")
@@ -86,28 +101,18 @@ func TestPTYSanity_QuitOnQ(t *testing.T) {
 	if !p.WaitFor(AltScreenEnter, 5*time.Second) {
 		t.Fatalf("alt-screen entry not observed; snapshot=%q", string(p.Snapshot()))
 	}
-	// Give Bubble Tea a moment to install its raw-mode handlers and
-	// finish the first paint before delivering input.
-	time.Sleep(250 * time.Millisecond)
-	for i := 0; i < 5 && !waitExitShort(p, 200*time.Millisecond); i++ {
-		p.Send("q")
+	// Wait for the streaming-complete footer ("2 lines") — this is the
+	// reliable input-ready signal (see comment above).
+	if !p.WaitFor("2 lines", 5*time.Second) {
+		t.Fatalf("streaming-complete footer not observed; snapshot=%q", string(p.Snapshot()))
 	}
+	p.Send("q")
 	if !p.WaitForExit(5 * time.Second) {
 		t.Fatalf("process did not exit on `q`; snapshot=%q", string(p.Snapshot()))
 	}
 	if exit := p.ExitCode(); exit != 0 {
 		t.Fatalf("exit code %d (want 0)", exit)
 	}
-}
-
-// waitExitShort is a non-blocking-ish helper: returns true if the
-// process has exited, otherwise sleeps for `d` and returns false. Used
-// to drive the q-resend loop in the quit-on-q sanity check.
-func waitExitShort(p *PTYProgram, d time.Duration) bool {
-	if p.WaitForExit(d) {
-		return true
-	}
-	return false
 }
 
 // contains is a tiny helper for the sanity checks above so we don't

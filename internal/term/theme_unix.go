@@ -9,6 +9,8 @@ package term
 import (
 	"context"
 	"os"
+	"syscall"
+	"time"
 
 	xterm "golang.org/x/term"
 )
@@ -26,9 +28,16 @@ import (
 //     arrives — the same approach termenv uses, just without the
 //     hardcoded 5 s OSCTimeout we can't override.
 //  3. Write the OSC 11 query.
-//  4. Hand the FD to [raceReadOSCReply] which reads the reply on a
-//     goroutine and races completion against `ctx.Done()` so the 50 ms
-//     budget is respected even when the terminal never replies.
+//  4. Read the reply via [pollReadOSC], which uses O_NONBLOCK +
+//     ctx-aware spin so it terminates when the context deadline fires.
+//     This replaces the goroutine-based [raceReadOSCReply] to avoid a
+//     goroutine that stays alive in a blocking read(2) after the 50 ms
+//     budget expires: on Linux, close(fd) does NOT interrupt a blocked
+//     read() on another OS thread, so the leaked goroutine competed
+//     with Bubble Tea's cancelreader for the first keystroke the test
+//     harness sent, causing intermittent dropped-keystroke failures
+//     (see specs/001-popup-reader/acceptance_review/
+//     pty_flake_investigation.md for the full diagnosis).
 //
 // Defensive parsing — including rejecting CSI-embedded replies — is
 // the responsibility of [parseOSC11Reply]; this function only owns the
@@ -59,9 +68,63 @@ func probeOSC11Background(ctx context.Context) string {
 		return ""
 	}
 
-	buf := raceReadOSCReply(ctx, f)
+	buf := pollReadOSC(ctx, fd)
 	if len(buf) == 0 {
 		return ""
 	}
 	return string(buf)
+}
+
+// pollReadOSC reads the OSC 11 reply one byte at a time using
+// O_NONBLOCK + a 5 ms spin so it terminates promptly when ctx is done.
+// Unlike [raceReadOSCReply] this runs inline on the calling goroutine
+// and leaves no goroutine alive after the context deadline fires.
+//
+// Implementation: set the fd to O_NONBLOCK, loop calling syscall.Read;
+// on EAGAIN sleep 5 ms and retry; on any other error or ctx expiry
+// break. Restore blocking mode before returning so callers can use the
+// fd normally (e.g. xterm.Restore ioctl).
+//
+// The 5 ms spin adds at most 5 ms of latency beyond the budget (within
+// the 50 ms [oscProbeBudget] ceiling); on terminals that never reply
+// the overhead is one extra EAGAIN + sleep per iteration.
+func pollReadOSC(ctx context.Context, fd int) []byte {
+	// Switch to non-blocking so Read returns EAGAIN instead of blocking.
+	if err := syscall.SetNonblock(fd, true); err != nil {
+		return nil
+	}
+	// Restore blocking mode. Failure is safe to ignore here: the caller
+	// (probeOSC11Background) closes fd immediately via defer f.Close(),
+	// so a non-blocking fd would only affect the subsequent Close ioctl,
+	// which is unaffected by the O_NONBLOCK flag.
+	defer syscall.SetNonblock(fd, false) //nolint:errcheck
+
+	out := make([]byte, 0, oscReplyMaxBytes)
+	var b [1]byte
+	for len(out) < oscReplyMaxBytes {
+		if ctx.Err() != nil {
+			break
+		}
+		n, err := syscall.Read(fd, b[:])
+		if n > 0 {
+			out = append(out, b[0])
+			if seenTerminator(out) {
+				break
+			}
+		}
+		switch err {
+		case syscall.EAGAIN:
+			time.Sleep(5 * time.Millisecond)
+		case syscall.EINTR:
+			// Signal interrupted the read; retry immediately.
+		case nil:
+			// n==0 with no error means EOF/hangup on the tty.
+			if n == 0 {
+				return out
+			}
+		default:
+			return out
+		}
+	}
+	return out
 }

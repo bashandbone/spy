@@ -29,6 +29,17 @@ import (
 // paint without parsing intermediate frames.
 const AltScreenEnter = "\x1b[?1049h"
 
+// BracketedPasteEnable is the escape sequence Bubble Tea emits to
+// enable bracketed-paste mode. It is written synchronously by the
+// renderer before Bubble Tea's input reader (cancelreader) is
+// subscribed to stdin, so it is NOT a reliable "input pipeline live"
+// signal on its own. Use a content-level wait (e.g. WaitFor("N lines",
+// …)) to guarantee the input reader is ready before delivering
+// keystrokes — the first rendered frame can only appear after
+// initCancelReader has been called and the event loop has processed at
+// least one WindowSizeMsg.
+const BracketedPasteEnable = "\x1b[?2004h"
+
 // PTYProgram is the handle returned by [NewPTYProgram]. It exposes the
 // minimal surface integration tests need: write keystrokes, read raw
 // PTY bytes, snapshot the buffered output so far, close the PTY, and
