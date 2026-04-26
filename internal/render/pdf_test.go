@@ -26,7 +26,7 @@ type fakePDFSource struct {
 	pageCount int
 }
 
-func (f *fakePDFSource) Kind() Kind          { return source.KindPDF }
+func (f *fakePDFSource) Kind() source.Kind   { return source.KindPDF }
 func (f *fakePDFSource) DisplayName() string { return f.name }
 func (f *fakePDFSource) Open() (io.ReadCloser, error) {
 	return io.NopCloser(bytes.NewReader(f.bytes)), nil
@@ -185,7 +185,7 @@ func TestPDFRenderer_RowToLineAlwaysZero(t *testing.T) {
 // PDF fallback paths.
 type errPDFSource struct{ name string }
 
-func (e *errPDFSource) Kind() Kind                     { return source.KindPDF }
+func (e *errPDFSource) Kind() source.Kind              { return source.KindPDF }
 func (e *errPDFSource) DisplayName() string            { return e.name }
 func (e *errPDFSource) Open() (io.ReadCloser, error)   { return nil, os.ErrNotExist }
 func (e *errPDFSource) Reopen() (io.ReadSeeker, error) { return nil, os.ErrNotExist }

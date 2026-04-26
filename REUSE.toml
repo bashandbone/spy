@@ -57,10 +57,4 @@ precedence = "aggregate"
 SPDX-FileCopyrightText = "2026 Adam Poulemanos"
 SPDX-License-Identifier = "MIT OR Apache-2.0"
 
-# Graphics testdata README has its own SPDX header inline.
-[[annotations]]
-path = ["internal/graphics/testdata/README.md"]
-precedence = "aggregate"
-SPDX-FileCopyrightText = "2026 Adam Poulemanos"
-SPDX-License-Identifier = "MIT OR Apache-2.0"
 

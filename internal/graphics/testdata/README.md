@@ -1,3 +1,9 @@
+<!--
+SPDX-FileCopyrightText: 2026 Adam Poulemanos
+
+SPDX-License-Identifier: MIT OR Apache-2.0
+-->
+
 # Graphics encoder testdata
 
 This directory holds binary fixtures for the per-protocol golden tests.

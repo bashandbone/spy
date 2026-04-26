@@ -30,7 +30,7 @@ type fakeImageSource struct {
 	size  int64
 }
 
-func (f *fakeImageSource) Kind() Kind          { return source.KindImage }
+func (f *fakeImageSource) Kind() source.Kind   { return source.KindImage }
 func (f *fakeImageSource) DisplayName() string { return f.name }
 func (f *fakeImageSource) Open() (io.ReadCloser, error) {
 	return io.NopCloser(bytes.NewReader(f.bytes)), nil
@@ -43,10 +43,6 @@ func (f *fakeImageSource) Metadata() source.Metadata {
 		Modified: time.Time{},
 	}
 }
-
-// Kind alias for test ergonomics — mirrors the package's other test
-// files which import source.Kind under a short name.
-type Kind = source.Kind
 
 func deterministicPNG(t *testing.T) []byte {
 	t.Helper()
@@ -172,7 +168,7 @@ func TestImageRenderer_DimensionsHelperHandlesError(t *testing.T) {
 // fallback paths.
 type errImageSource struct{ name string }
 
-func (e *errImageSource) Kind() Kind                     { return source.KindImage }
+func (e *errImageSource) Kind() source.Kind              { return source.KindImage }
 func (e *errImageSource) DisplayName() string            { return e.name }
 func (e *errImageSource) Open() (io.ReadCloser, error)   { return nil, os.ErrNotExist }
 func (e *errImageSource) Reopen() (io.ReadSeeker, error) { return nil, os.ErrNotExist }

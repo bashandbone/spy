@@ -113,7 +113,7 @@ func TestEncodeKitty_ChunkSizeRespects4096B(t *testing.T) {
 		chunkCount++
 	}
 	if chunkCount < 2 {
-		t.Errorf("256×256 image should produce ≥ 2 chunks, got %d", chunkCount)
+		t.Errorf("512×512 image should produce ≥ 2 chunks, got %d", chunkCount)
 	}
 }
 

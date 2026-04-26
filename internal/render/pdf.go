@@ -54,6 +54,13 @@ type pdfRenderer struct {
 	// `]`/`[` page navigation doesn't re-parse the entire file each
 	// time. Indexed by 1-based page number.
 	cachedText map[int]string
+
+	// cachedTotal stores the parsed page count. Set on the first
+	// successful pageText() call so navigation footers
+	// (`page 2/3`) and out-of-range checks don't trigger a second
+	// re-parse of the whole document. Zero means "not yet known"
+	// (Copilot review PR#11 #4).
+	cachedTotal int
 }
 
 // newPDFRenderer wires the per-source state.
@@ -124,14 +131,16 @@ func (r *pdfRenderer) RowToLine(_ RenderContext, _ int) int64 { return 0 }
 
 // pageText extracts the human-readable plain text for `page` (1-based)
 // using `ledongthuc/pdf`. The result is cached so subsequent renders
-// of the same page are O(1).
+// of the same page are O(1); the total page count is cached on the
+// first parse so footer headers (`page 2/3`) don't trigger a second
+// re-parse of the whole document (Copilot review PR#11 #4).
 func (r *pdfRenderer) pageText(page int) (string, int, error) {
 	if cached, ok := r.cachedText[page]; ok {
-		return cached, r.totalPagesCached(), nil
+		return cached, r.cachedTotal, nil
 	}
 	rs, err := r.src.Reopen()
 	if err != nil {
-		return "", 0, fmt.Errorf("reopen: %w", err)
+		return "", r.cachedTotal, fmt.Errorf("reopen: %w", err)
 	}
 	if c, ok := rs.(io.Closer); ok {
 		defer c.Close()
@@ -140,13 +149,14 @@ func (r *pdfRenderer) pageText(page int) (string, int, error) {
 	// the seekable reader into a bytes.Reader so we can hand it both.
 	body, err := io.ReadAll(rs)
 	if err != nil {
-		return "", 0, fmt.Errorf("read: %w", err)
+		return "", r.cachedTotal, fmt.Errorf("read: %w", err)
 	}
 	reader, err := pdfreader.NewReader(bytes.NewReader(body), int64(len(body)))
 	if err != nil {
-		return "", 0, fmt.Errorf("parse: %w", err)
+		return "", r.cachedTotal, fmt.Errorf("parse: %w", err)
 	}
 	total := reader.NumPage()
+	r.cachedTotal = total
 	if page < 1 || page > total {
 		return "", total, fmt.Errorf("page %d out of range (1-%d)", page, total)
 	}
@@ -160,28 +170,6 @@ func (r *pdfRenderer) pageText(page int) (string, int, error) {
 	}
 	r.cachedText[page] = text
 	return text, total, nil
-}
-
-// totalPagesCached returns the page-count from any cached entry, or 0
-// if none exist yet. Used so metadata blocks know the total without
-// re-parsing the PDF.
-func (r *pdfRenderer) totalPagesCached() int {
-	rs, err := r.src.Reopen()
-	if err != nil {
-		return 0
-	}
-	if c, ok := rs.(io.Closer); ok {
-		defer c.Close()
-	}
-	body, err := io.ReadAll(rs)
-	if err != nil {
-		return 0
-	}
-	reader, err := pdfreader.NewReader(bytes.NewReader(body), int64(len(body)))
-	if err != nil {
-		return 0
-	}
-	return reader.NumPage()
 }
 
 // formatTextPage wraps the extracted text in a header so the user can

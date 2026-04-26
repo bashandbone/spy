@@ -131,9 +131,15 @@ func (r *imageRenderer) metadataBlock(_ RenderContext, note string) string {
 	if md.Path != "" && md.Path != r.src.DisplayName() {
 		fmt.Fprintf(&b, "  path: %s\n", md.Path)
 	}
-	fmt.Fprintf(&b, "  fallback: terminal lacks inline-image support\n")
+	// The fallback message branches on whether `note` was set: a
+	// non-empty note means the renderer hit a real processing error
+	// (decode / encode failed) — claiming the terminal lacks support
+	// is misleading in that case (Copilot review PR#11 #7).
 	if note != "" {
+		fmt.Fprintf(&b, "  fallback: unable to render inline image\n")
 		fmt.Fprintf(&b, "  note: %s\n", note)
+	} else {
+		fmt.Fprintf(&b, "  fallback: terminal lacks inline-image support\n")
 	}
 	return b.String()
 }

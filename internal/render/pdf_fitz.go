@@ -7,9 +7,9 @@
 package render
 
 import (
-	"bytes"
 	"fmt"
 	"image"
+	"image/draw"
 	"io"
 
 	"github.com/gen2brain/go-fitz"
@@ -48,13 +48,12 @@ func rasterizePDFPage(src source.Source, page int) (image.Image, error) {
 		return nil, fmt.Errorf("rasterize page %d: %w", page, err)
 	}
 	// Force a copy so `doc.Close()` can release MuPDF's internal
-	// buffers without invalidating the returned image.
+	// buffers without invalidating the returned image. image/draw's
+	// bulk path uses image.RGBA fast-paths when both src and dst are
+	// *image.RGBA (which go-fitz returns), so this is a single memcpy
+	// per scanline rather than O(w*h) method calls (Copilot review
+	// PR#11 #3).
 	out := image.NewRGBA(img.Bounds())
-	for y := img.Bounds().Min.Y; y < img.Bounds().Max.Y; y++ {
-		for x := img.Bounds().Min.X; x < img.Bounds().Max.X; x++ {
-			out.Set(x, y, img.At(x, y))
-		}
-	}
-	_ = bytes.NewReader // keep io / bytes imports stable across edits
+	draw.Draw(out, out.Bounds(), img, img.Bounds().Min, draw.Src)
 	return out, nil
 }
