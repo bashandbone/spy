@@ -33,9 +33,8 @@ func detectKind(r io.Reader, hint string) (Kind, string, error) {
 		}
 	}
 
-	// Read up to 8 KiB for content-based detection.
-	const peekN = 8192
-	buf := make([]byte, peekN)
+	// Read up to [detectionPeekBytes] for content-based detection.
+	buf := make([]byte, detectionPeekBytes)
 	n, err := io.ReadFull(r, buf)
 	if err != nil && err != io.ErrUnexpectedEOF && err != io.EOF {
 		return KindUnknown, "", err
@@ -58,7 +57,26 @@ func detectKind(r io.Reader, hint string) (Kind, string, error) {
 		return KindBinary, "", fmt.Errorf("%w: %d control bytes in first %d", ErrBinary, controlByteCount(buf), len(buf))
 	}
 
-	// 3. Chroma Analyse.
+	// 3a. Shebang (US5 / T092). Stdin and unhinted files may carry an
+	// interpreter declaration on line 1 — Chroma's `Analyse` doesn't
+	// score short snippets reliably, so we look for the shebang
+	// explicitly. The interpreter name is mapped to a Chroma lexer; an
+	// unknown interpreter falls through to the rest of the pipeline.
+	// Try the full interpreter name first (e.g. "python3" — chroma
+	// recognises it as an alias of the Python lexer) and only fall
+	// back to the trimmed form on miss (Copilot review PR#12 #2).
+	if interp := shebangInterpreter(buf); interp != "" {
+		if lex := lexers.Get(interp); lex != nil && !isPlaintextLexer(lex.Config().Name) {
+			return KindCode, lex.Config().Name, nil
+		}
+		if trimmed := trimVersionSuffix(interp); trimmed != "" && trimmed != interp {
+			if lex := lexers.Get(trimmed); lex != nil && !isPlaintextLexer(lex.Config().Name) {
+				return KindCode, lex.Config().Name, nil
+			}
+		}
+	}
+
+	// 3b. Chroma Analyse.
 	if lex := lexers.Analyse(string(buf)); lex != nil {
 		cfg := lex.Config()
 		// Plaintext / fallback lexer is not "code" — degrade to KindText.
@@ -69,6 +87,73 @@ func detectKind(r io.Reader, hint string) (Kind, string, error) {
 
 	// 4. Text fallback.
 	return KindText, "", nil
+}
+
+// shebangInterpreter inspects the first line of `buf` for a `#!` line
+// and returns the interpreter basename (verbatim, including any
+// trailing version digits) that a Chroma lexer name lookup will
+// recognise. Returns "" when the buffer has no shebang or the line is
+// empty after stripping the magic + flags.
+//
+// Forms handled:
+//
+//	#!/usr/bin/env python      → "python"
+//	#!/usr/bin/env -S python3  → "python3"
+//	#!/usr/local/bin/python3.11 → "python3.11"
+//	#!/bin/bash                → "bash"
+//	#!/usr/bin/perl -w         → "perl"
+//
+// The version suffix is preserved here so chroma's `lexers.Get` can
+// match aliases like "python3" directly. The caller is responsible for
+// the try-full-then-trim fallback via [trimVersionSuffix] (the
+// detectKind shebang branch does this).
+func shebangInterpreter(buf []byte) string {
+	if len(buf) < 2 || buf[0] != '#' || buf[1] != '!' {
+		return ""
+	}
+	end := bytes.IndexByte(buf, '\n')
+	if end < 0 {
+		end = len(buf)
+	}
+	line := strings.TrimSpace(string(buf[2:end]))
+	if line == "" {
+		return ""
+	}
+	// Tokenise on whitespace; drop `env` / `-S` flags so
+	// `/usr/bin/env -S python3` collapses to "python3".
+	fields := strings.Fields(line)
+	for i, f := range fields {
+		base := filepath.Base(f)
+		switch base {
+		case "env":
+			continue
+		}
+		if strings.HasPrefix(f, "-") && i > 0 {
+			continue
+		}
+		// Preserve the verbatim interpreter name so the caller can
+		// try `lexers.Get("python3")` first; falling back to the
+		// trimmed form only on miss is the documented contract.
+		if name := strings.ToLower(base); name != "" {
+			return name
+		}
+	}
+	return ""
+}
+
+// trimVersionSuffix returns the language portion of an interpreter name
+// like "python3.11" → "python", "ruby2.7" → "ruby", "node18" → "node".
+// If the name has no digits the input is returned unchanged.
+func trimVersionSuffix(name string) string {
+	for i, r := range name {
+		if r >= '0' && r <= '9' {
+			if i == 0 {
+				return name
+			}
+			return name[:i]
+		}
+	}
+	return name
 }
 
 // classifyByName picks a Kind from a filename / hint. The hint may be a

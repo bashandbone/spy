@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/alecthomas/chroma/v2"
+	xterm "golang.org/x/term"
 )
 
 // Kind names the high-level category of a [Source]'s content. It drives
@@ -31,6 +32,13 @@ const (
 	KindBinary
 )
 
+// detectionPeekBytes is the up-front read window every detection
+// path uses to classify a Source: 8 KiB chosen to capture shebangs,
+// magic bytes, and Chroma's `Analyse` window in a single read.
+// Shared by [detectKind] (file path) and [StdinSource.detectOnce]
+// (stream path) so both stay in sync without a duplicate literal.
+const detectionPeekBytes = 8192
+
 // Sentinel errors. Callers identify error categories via [errors.Is].
 // All package-internal errors wrap these so tests like
 // `errors.Is(err, ErrNotFound)` resolve regardless of the call site.
@@ -42,6 +50,10 @@ var (
 	ErrPermission      = errors.New("permission denied")
 	ErrNotSeekable     = errors.New("source does not support seeking")
 	ErrAlreadyConsumed = errors.New("source already consumed")
+	// ErrAmbiguousArgs covers mutually-exclusive positional
+	// combinations from contracts/cli.md: `-` alongside a FILE
+	// argument, or multiple FILE arguments. Maps to exit 2 in main.
+	ErrAmbiguousArgs = errors.New("ambiguous arguments")
 )
 
 // Source is the producer-side abstraction for the byte stream a viewer
@@ -99,19 +111,64 @@ type LineProvider interface {
 	Total() int64
 }
 
-// FromArgs picks a Source from CLI arguments and stdin. In Phase 2 only
-// file paths are honoured; the stdin/"-" paths return [ErrNoInput] until
-// US5 wires StdinSource. The `hint` is an optional language hint that
-// short-circuits content-based detection (see contracts/cli.md `--lang`).
-func FromArgs(args []string, _ *os.File, hint string) (Source, error) {
-	if len(args) == 0 {
-		return nil, fmt.Errorf("%w: stdin support lands in US5", ErrNoInput)
+// FromArgs picks a Source from CLI arguments and stdin per the
+// resolution table in contracts/cli.md. The `hint` is an optional
+// language hint that short-circuits content-based detection (see
+// contracts/cli.md `--lang`).
+//
+// Resolution rules:
+//
+//   - file argument present (single positional): FileSource (file
+//     always wins; stdin is never read even when piped).
+//   - "-" positional (single): StdinSource (forced — blocks on TTY
+//     stdin until EOF/Ctrl-D, the documented behaviour).
+//   - no args + stdin is non-TTY: StdinSource (the `... | spy` shape).
+//   - no args + stdin is a TTY (or nil): ErrNoInput (exit 2 from main).
+//   - "-" alongside a FILE, or multiple FILEs: ErrAmbiguousArgs
+//     (also exit 2). Per contracts/cli.md row "present yes — yes".
+//
+// `stdin` is normally `os.Stdin`; tests pass an `os.Pipe` read end to
+// drive the non-TTY path without a real PTY.
+func FromArgs(args []string, stdin *os.File, hint string) (Source, error) {
+	if len(args) > 1 {
+		// Two positionals are always wrong: either "-" + FILE
+		// (mutually exclusive per contract) or multiple FILEs (the
+		// synopsis only allows one).
+		dashCount := 0
+		for _, a := range args {
+			if a == "-" {
+				dashCount++
+			}
+		}
+		switch {
+		case dashCount > 0 && dashCount < len(args):
+			return nil, fmt.Errorf("%w: '-' and FILE are mutually exclusive", ErrAmbiguousArgs)
+		case dashCount > 1:
+			return nil, fmt.Errorf("%w: '-' positional given more than once", ErrAmbiguousArgs)
+		default:
+			return nil, fmt.Errorf("%w: only one FILE may be given (got %d)", ErrAmbiguousArgs, len(args))
+		}
 	}
-	first := args[0]
-	if first == "-" {
-		return nil, fmt.Errorf("%w: stdin support lands in US5", ErrNoInput)
+	if len(args) == 1 && args[0] != "-" {
+		return newFileSourceWithHint(args[0], hint)
 	}
-	return newFileSourceWithHint(first, hint)
+	if len(args) == 1 && args[0] == "-" {
+		// `-` always picks stdin, regardless of TTY status. A nil
+		// stdin pointer still surfaces as ErrNoInput because there's
+		// nothing to read.
+		if stdin == nil {
+			return nil, fmt.Errorf("%w: '-' positional given but no stdin", ErrNoInput)
+		}
+		return NewStdinSource(stdin, hint), nil
+	}
+	// No positional. Auto-pick stdin only when it's clearly a pipe.
+	if stdin == nil {
+		return nil, fmt.Errorf("%w: missing FILE; nothing on stdin", ErrNoInput)
+	}
+	if xterm.IsTerminal(int(stdin.Fd())) {
+		return nil, fmt.Errorf("%w: missing FILE; stdin is a TTY", ErrNoInput)
+	}
+	return NewStdinSource(stdin, hint), nil
 }
 
 // classifyFSError translates the "raw" filesystem error into one of the

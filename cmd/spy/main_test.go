@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 
 	"github.com/knitli/spy/internal/render"
@@ -22,25 +23,25 @@ import (
 // integration coverage lands with the PTY harness in Phase 9.
 
 func TestRun_VersionExitsZero(t *testing.T) {
-	if got := run([]string{"--version"}); got != exitOK {
+	if got := run([]string{"--version"}, nil); got != exitOK {
 		t.Errorf("--version: got exit %d want %d", got, exitOK)
 	}
 }
 
 func TestRun_HelpExitsZero(t *testing.T) {
-	if got := run([]string{"--help"}); got != exitOK {
+	if got := run([]string{"--help"}, nil); got != exitOK {
 		t.Errorf("--help: got exit %d want %d", got, exitOK)
 	}
 }
 
 func TestRun_UnknownFlagExitsUsage(t *testing.T) {
-	if got := run([]string{"--mystery"}); got != exitUsageError {
+	if got := run([]string{"--mystery"}, nil); got != exitUsageError {
 		t.Errorf("unknown flag: got exit %d want %d", got, exitUsageError)
 	}
 }
 
 func TestRun_ConflictingConfigFlagsExitsUsage(t *testing.T) {
-	if got := run([]string{"--config", "/x", "--no-config"}); got != exitUsageError {
+	if got := run([]string{"--config", "/x", "--no-config"}, nil); got != exitUsageError {
 		t.Errorf("conflicting flags: got exit %d want %d", got, exitUsageError)
 	}
 }
@@ -48,14 +49,14 @@ func TestRun_ConflictingConfigFlagsExitsUsage(t *testing.T) {
 func TestRun_NoInputExitsUsage(t *testing.T) {
 	// No FILE arg + go-test runs with stdin/stdout typically not a TTY,
 	// but FromArgs sees no args and returns ErrNoInput — exit 2.
-	got := run([]string{"--no-config"})
+	got := run([]string{"--no-config"}, nil)
 	if got != exitUsageError {
 		t.Errorf("no input: got exit %d want %d", got, exitUsageError)
 	}
 }
 
 func TestRun_MissingFileExitsIO(t *testing.T) {
-	got := run([]string{"--no-config", filepath.Join(t.TempDir(), "nope.txt")})
+	got := run([]string{"--no-config", filepath.Join(t.TempDir(), "nope.txt")}, nil)
 	if got != exitIOError {
 		t.Errorf("missing file: got exit %d want %d", got, exitIOError)
 	}
@@ -67,14 +68,14 @@ func TestRun_BinaryFileExitsUnsupported(t *testing.T) {
 	if err := os.WriteFile(p, body, 0o644); err != nil {
 		t.Fatalf("write: %v", err)
 	}
-	if got := run([]string{"--no-config", p}); got != exitUnsupported {
+	if got := run([]string{"--no-config", p}, nil); got != exitUnsupported {
 		t.Errorf("binary file: got exit %d want %d", got, exitUnsupported)
 	}
 }
 
 func TestRun_DirectoryExitsUnsupported(t *testing.T) {
 	dir := t.TempDir()
-	if got := run([]string{"--no-config", dir}); got != exitUnsupported {
+	if got := run([]string{"--no-config", dir}, nil); got != exitUnsupported {
 		t.Errorf("directory: got exit %d want %d", got, exitUnsupported)
 	}
 }
@@ -94,7 +95,7 @@ func TestRun_PermissionDeniedExitsIO(t *testing.T) {
 		t.Fatalf("chmod: %v", err)
 	}
 	t.Cleanup(func() { _ = os.Chmod(p, 0o644) })
-	if got := run([]string{"--no-config", p}); got != exitIOError {
+	if got := run([]string{"--no-config", p}, nil); got != exitIOError {
 		t.Errorf("permission denied: got exit %d want %d", got, exitIOError)
 	}
 }
@@ -102,7 +103,7 @@ func TestRun_PermissionDeniedExitsIO(t *testing.T) {
 func TestRun_ExplicitMissingConfigExitsUsage(t *testing.T) {
 	// --config <missing> is a hard error per contracts/cli.md
 	// "Discovery rules" #1 — exit 2.
-	got := run([]string{"--config", filepath.Join(t.TempDir(), "no.toml")})
+	got := run([]string{"--config", filepath.Join(t.TempDir(), "no.toml")}, nil)
 	if got != exitUsageError {
 		t.Errorf("missing --config: got exit %d want %d", got, exitUsageError)
 	}
@@ -116,7 +117,7 @@ func TestRun_BadConfigSurfacesWarnings(t *testing.T) {
 	if err := os.WriteFile(p, []byte(`unknown_key = 42`), 0o644); err != nil {
 		t.Fatalf("write: %v", err)
 	}
-	got := run([]string{"--config", p, filepath.Join(t.TempDir(), "missing.txt")})
+	got := run([]string{"--config", p, filepath.Join(t.TempDir(), "missing.txt")}, nil)
 	if got != exitIOError {
 		t.Errorf("bad config + missing file: got exit %d want %d", got, exitIOError)
 	}
@@ -125,7 +126,7 @@ func TestRun_BadConfigSurfacesWarnings(t *testing.T) {
 func TestRun_NoColorFlag(t *testing.T) {
 	// --no-color sets cfg.NoColor = true; pair with a missing file so
 	// the run exits before tea.Program starts.
-	got := run([]string{"--no-config", "--no-color", filepath.Join(t.TempDir(), "missing.txt")})
+	got := run([]string{"--no-config", "--no-color", filepath.Join(t.TempDir(), "missing.txt")}, nil)
 	if got != exitIOError {
 		t.Errorf("--no-color path: got exit %d want %d", got, exitIOError)
 	}
@@ -139,7 +140,7 @@ func TestRun_NoTTYDegenerateCats(t *testing.T) {
 	if err := os.WriteFile(p, []byte("hello\n"), 0o644); err != nil {
 		t.Fatalf("write: %v", err)
 	}
-	got := run([]string{"--no-config", p})
+	got := run([]string{"--no-config", p}, nil)
 	if got != exitOK {
 		t.Errorf("non-TTY stdout with file arg: got exit %d want %d", got, exitOK)
 	}
@@ -271,6 +272,85 @@ func TestBoolPtr(t *testing.T) {
 	}
 }
 
+func TestRun_AmbiguousArgsExitsUsage(t *testing.T) {
+	// Copilot review PR#12 #1: contracts/cli.md row "present yes — yes"
+	// is a usage error — `-` alongside a FILE positional is rejected at
+	// the source layer and surfaced as exit 2.
+	p := filepath.Join(t.TempDir(), "real.txt")
+	if err := os.WriteFile(p, []byte("hi"), 0o644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	cases := [][]string{
+		{"--no-config", p, "-"},
+		{"--no-config", "-", p},
+		{"--no-config", p, p},
+	}
+	for _, args := range cases {
+		if got := run(args, nil); got != exitUsageError {
+			t.Errorf("run(%v): got exit %d want %d", args, got, exitUsageError)
+		}
+	}
+}
+
+func TestRun_StdinPipeDegenerateCats(t *testing.T) {
+	// US5: no FILE, non-TTY stdin (pipe) → run() picks StdinSource and,
+	// because go-test stdout is also a pipe, falls through to the
+	// degenerate-cat path. Content is copied verbatim to stdout, exit 0.
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("pipe: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = r.Close()
+		_ = w.Close()
+	})
+	want := "hello via stdin\n"
+	if _, err := w.WriteString(want); err != nil {
+		t.Fatalf("pipe write: %v", err)
+	}
+	if err := w.Close(); err != nil {
+		t.Fatalf("pipe close: %v", err)
+	}
+	if got := run([]string{"--no-config"}, r); got != exitOK {
+		t.Errorf("stdin pipe: got exit %d want %d", got, exitOK)
+	}
+}
+
+func TestRun_StdinTTYWithoutFileExitsUsage(t *testing.T) {
+	// US5: nil stdin pointer mirrors the "no FILE and stdin is not
+	// available" case; run() must surface ErrNoInput → exit 2.
+	// Capture stderr to assert that usage is printed alongside the
+	// error line (Copilot review PR#12 round-3 #8 — contracts/cli.md
+	// row "absent no yes yes" requires "exit 2 (usage printed)").
+	origStderr := os.Stderr
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("pipe: %v", err)
+	}
+	os.Stderr = w
+	t.Cleanup(func() { os.Stderr = origStderr })
+
+	done := make(chan []byte, 1)
+	go func() {
+		buf := make([]byte, 4096)
+		n, _ := r.Read(buf)
+		done <- buf[:n]
+	}()
+
+	got := run([]string{"--no-config"}, nil)
+	w.Close()
+	stderr := string(<-done)
+	if got != exitUsageError {
+		t.Errorf("nil stdin + no FILE: got exit %d want %d", got, exitUsageError)
+	}
+	if !strings.Contains(stderr, "spy: no input") {
+		t.Errorf("stderr missing error line; got %q", stderr)
+	}
+	if !strings.Contains(stderr, "Usage: spy") {
+		t.Errorf("stderr missing usage block; got %q", stderr)
+	}
+}
+
 func TestRun_VimFlagDegenerateCat(t *testing.T) {
 	// --vim flag should parse cleanly and the non-TTY path should still
 	// degenerate-cat the file (the keymap only matters on a TTY). Pair
@@ -279,7 +359,7 @@ func TestRun_VimFlagDegenerateCat(t *testing.T) {
 	if err := os.WriteFile(p, []byte("alpha\nbeta\n"), 0o644); err != nil {
 		t.Fatalf("write: %v", err)
 	}
-	if got := run([]string{"--no-config", "--vim", p}); got != exitOK {
+	if got := run([]string{"--no-config", "--vim", p}, nil); got != exitOK {
 		t.Errorf("--vim: got exit %d want %d", got, exitOK)
 	}
 }
