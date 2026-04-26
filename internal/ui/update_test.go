@@ -169,6 +169,64 @@ func TestUpdate_HighlightAdvisorySurfacedOnDisable(t *testing.T) {
 	}
 }
 
+// TestUpdate_ScrollHighlightsNewlyVisibleLines is a regression test for
+// the bug where syntax highlighting only applied to the initially-visible
+// viewport window. After scrolling, lines that were outside the initial
+// viewport must receive ANSI color once they scroll into view.
+func TestUpdate_ScrollHighlightsNewlyVisibleLines(t *testing.T) {
+	const viewHeight = 10
+	// Build a 40-line Go source; the viewport is 10 rows, so lines
+	// 11+ are outside the initial window and were previously rendered
+	// as raw text.
+	var lineSlice []string
+	for i := 0; i < 40; i++ {
+		lineSlice = append(lineSlice, "x := 1")
+	}
+	body := strings.Join(lineSlice, "\n") + "\n"
+
+	src := &fakeCodeSource{body: body, lang: "go"}
+	stream, err := loader.Open(context.Background(), src, loader.Config{})
+	if err != nil {
+		t.Fatalf("loader.Open: %v", err)
+	}
+	h := highlight.New(styles.Get("monokai"), term.ColorANSI256, 5*1024*1024)
+	m := NewModel(ModelOptions{
+		Source:       src,
+		Stream:       stream,
+		Capabilities: term.Capabilities{Cols: 80, Rows: viewHeight + 1, ColorDepth: term.ColorANSI256},
+		Config:       config.Defaults(),
+		Theme:        render.ThemeDark(),
+		KeyMap:       keys.Default(),
+		Highlighter:  h,
+	})
+	m, _ = applyResize(m, 80, viewHeight+1) // +1 for footer row
+
+	// Drain all chunks so the full 40-line buffer is resident.
+	for c := range stream.Updates {
+		updated, _ := m.Update(chunkLoadedMsg{chunk: c})
+		m = updated.(Model)
+	}
+
+	// Scroll down far enough that the initially-visible lines are off
+	// screen and only lines that were originally outside the viewport
+	// are visible.
+	for i := 0; i < viewHeight+5; i++ {
+		updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyDown})
+		m = updated.(Model)
+	}
+	if m.viewport.YOffset == 0 {
+		t.Skip("viewport did not scroll; can't exercise this path")
+	}
+
+	// The visible content must contain ANSI escapes — if the bug
+	// is present, lines that were below the initial viewport are
+	// rendered as raw text and the view has no color codes.
+	view := m.viewport.View()
+	if !strings.Contains(view, "\x1b[") {
+		t.Errorf("lines scrolled into view should be syntax-highlighted; view=%q", view)
+	}
+}
+
 // --- ActionReload ---
 
 func TestUpdate_ReloadSuccessfullyReplacesStream(t *testing.T) {

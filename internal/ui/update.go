@@ -252,6 +252,7 @@ func (m Model) onKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.vimPendingG = false
 		if msg.String() == "g" {
 			m.viewport.GotoTop()
+			m.rerender()
 			return m, nil
 		}
 		// fall-through: the second key is dispatched normally below.
@@ -316,34 +317,42 @@ func (m Model) onKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	}
 	if matchAction(m.keyMap, keys.ActionScrollUp, msg) {
 		m.viewport.LineUp(1)
+		m.rerender()
 		return m, nil
 	}
 	if matchAction(m.keyMap, keys.ActionScrollDown, msg) {
 		m.viewport.LineDown(1)
+		m.rerender()
 		return m, nil
 	}
 	if matchAction(m.keyMap, keys.ActionPageUp, msg) {
 		m.viewport.ViewUp()
+		m.rerender()
 		return m, nil
 	}
 	if matchAction(m.keyMap, keys.ActionPageDown, msg) {
 		m.viewport.ViewDown()
+		m.rerender()
 		return m, nil
 	}
 	if matchAction(m.keyMap, keys.ActionHalfPageUp, msg) {
 		m.viewport.HalfViewUp()
+		m.rerender()
 		return m, nil
 	}
 	if matchAction(m.keyMap, keys.ActionHalfPageDown, msg) {
 		m.viewport.HalfViewDown()
+		m.rerender()
 		return m, nil
 	}
 	if matchAction(m.keyMap, keys.ActionGoToTop, msg) {
 		m.viewport.GotoTop()
+		m.rerender()
 		return m, nil
 	}
 	if matchAction(m.keyMap, keys.ActionGoToBottom, msg) {
 		m.viewport.GotoBottom()
+		m.rerender()
 		return m, nil
 	}
 	if matchAction(m.keyMap, keys.ActionNextPage, msg) {
@@ -800,6 +809,7 @@ func (m Model) runCommand(cmd string) (tea.Model, tea.Cmd) {
 	// :0 / :$ jumps.
 	if cmd == "0" {
 		m.scrollToLine(1)
+		m.rerender()
 		return m, nil
 	}
 	if cmd == "$" {
@@ -809,6 +819,7 @@ func (m Model) runCommand(cmd string) (tea.Model, tea.Cmd) {
 		}
 		if total > 0 {
 			m.scrollToLine(total)
+			m.rerender()
 		}
 		return m, nil
 	}
@@ -828,6 +839,7 @@ func (m Model) runCommand(cmd string) (tea.Model, tea.Cmd) {
 			m.statusAdvisory = fmt.Sprintf("line %d > total %d", n, total)
 		}
 		m.scrollToLine(n)
+		m.rerender()
 		return m, nil
 	}
 	// :set commands.
@@ -1013,6 +1025,19 @@ func (m *Model) rebuildRenderer() {
 		Source:       m.source,
 	}
 	m.renderer = render.ForKind(kind, deps)
+}
+
+// rerender updates the viewport content to reflect the current render
+// context, including the active YOffset. Called after any scroll
+// operation that changes the viewport position so lines newly scrolled
+// into view are syntax-highlighted. The renderer's per-line cache means
+// previously-visible lines are served from cache rather than
+// re-tokenised, keeping the re-render cost bounded by the number of
+// newly-visible lines.
+func (m *Model) rerender() {
+	if m.renderer != nil {
+		m.viewport.SetContent(m.renderer.Render(m.renderContext()))
+	}
 }
 
 // onChunk re-renders the viewport on every chunk arrival so streamed
