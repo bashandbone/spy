@@ -123,8 +123,11 @@ func writeSyntheticFile(t *testing.T, targetBytes, lineBytes int) string {
 //     bytes on Darwin, kilobytes on BSD)
 //   - Windows / unsupported: returns runtime.MemStats.HeapInuse with
 //     the label "heap-inuse-fallback" so the test still produces a
-//     reading rather than 0; the SC-005 PR-gate skips on Windows
-//     anyway via the `Short()` gate / per-OS skip in nightly.
+//     reading rather than 0. The SC-005 PR-gate runs on Windows with
+//     this degraded measurement; SC-005's RSS budget is unverified
+//     there but the test catches gross regressions in HeapInuse
+//     deltas. (PR#23 review — the prior comment claimed a Windows
+//     skip that didn't actually exist.)
 //
 // runtime.GC() is called first so any heap garbage left over from
 // test bootstrap doesn't show up in the RSS delta.

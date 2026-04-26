@@ -22,10 +22,14 @@ import (
 // see. SC-005 is an RSS budget per spec, so the test must read RSS
 // (not heap) to verify the promise on cgo builds.
 //
-// Returns 0 (and no error) if /proc/self/status can't be read or the
-// VmRSS line isn't present; the caller treats 0 as "couldn't measure"
-// and the test logs it but doesn't fail. This keeps the helper safe to
-// call from non-test code paths if it's ever lifted out.
+// Returns 0 with the underlying I/O / parse error if /proc/self/status
+// can't be opened or the VmRSS line can't be parsed, and 0 with a nil
+// error if the file is readable but contains no VmRSS line (extremely
+// rare; would require a kernel without procfs accounting). The caller
+// (`residentBytes`) treats either case as "couldn't measure" and falls
+// through to HeapInuse with a "heap-inuse-fallback" label, so the test
+// still produces a reading. (PR#23 review — the prior comment claimed
+// "0 and no error on failure" which didn't match the implementation.)
 func readRSS() (int64, error) {
 	f, err := os.Open("/proc/self/status")
 	if err != nil {

@@ -34,14 +34,20 @@ import (
 // file with syntax highlighting must produce a renderable first frame
 // in ≤ 100 ms from invocation.
 //
-// This test spawns the spy binary under a PTY and times from
-// `cmd.Start()` until the alt-screen-enter marker appears on the
-// PTY — which is the latest moment we can be sure Bubble Tea's first
-// paint has flushed. Spawning rather than driving the model in-process
-// is required because the spec budget reads "from invocation":
-// excluding Go runtime startup (~50–80 ms typical) would understate
-// the user-visible first-frame latency on cgo builds where
-// initialisation costs are non-trivial.
+// This test spawns the spy binary under a PTY and times from the
+// PTY-spawn call site (`integration.NewPTYProgramOpts`, which
+// internally performs PTY setup and then `exec.Cmd.Start()`) until
+// the alt-screen-enter marker appears on the PTY — which is the
+// latest moment we can be sure Bubble Tea's first paint has flushed.
+// The PTY-setup overhead is small (low ms) and constant across runs
+// so it doesn't bias the regression signal. Spawning rather than
+// driving the model in-process is required because the spec budget
+// reads "from invocation": excluding Go runtime startup (~50–80 ms
+// typical) would understate the user-visible first-frame latency on
+// cgo builds where initialisation costs are non-trivial. (PR#23
+// review — the prior comment said timing started at `cmd.Start()`,
+// but `start := time.Now()` is taken before the helper call, so the
+// timing includes PTY setup; comment now matches the implementation.)
 //
 // HONESTY NOTE: the spawn-based timing currently measures p95 ≈
 // 116 ms on commodity Linux — over the spec's 100 ms target. The
