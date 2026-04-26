@@ -46,17 +46,17 @@ var storedLineOverheadBytes = int64(unsafe.Sizeof(storedLine{}))
 // renderer access is bursty (one frame at a time), so contention is
 // negligible compared to scan throughput.
 type LineBuffer struct {
-	mu         sync.Mutex
-	lines      []storedLine // index 0 == first resident line; compact repr.
+	mu    sync.Mutex
+	lines []storedLine // index 0 == first resident line; compact repr.
 	// tokens and wrapped are side-channel maps keyed by 1-based line
 	// number. They are nil (zero-allocation) when no line has been
 	// highlighted or word-wrapped, which is the common case during
 	// initial load. Storing them here (rather than in storedLine) is
 	// what lets storedLine stay at 24 bytes.
-	tokens  map[int64][]source.Token
-	wrapped map[int64][]string
-	startLine  int64         // 1-based line number of lines[0]
-	totalLines int64         // last seen total; -1 while streaming
+	tokens     map[int64][]source.Token
+	wrapped    map[int64][]string
+	startLine  int64 // 1-based line number of lines[0]
+	totalLines int64 // last seen total; -1 while streaming
 	// streamStarted flips true on the first [LineBuffer.Append] or
 	// [LineBuffer.MarkComplete] call. While false [LineBuffer.Total]
 	// returns -1 (the "unknown / streaming hasn't begun" sentinel) so
