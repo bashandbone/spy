@@ -9,6 +9,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"sync"
 )
 
 // rejectSpecialMode returns a non-nil error when the supplied [os.FileMode]
@@ -45,10 +46,18 @@ type FileSource struct {
 	hint        string
 	size        int64
 	modified    int64 // unix nanos
-	kind        Kind
-	lexerName   string
-	detectErr   error
-	detected    bool
+
+	// detectMu guards the cached detection results. Production code
+	// shares a *FileSource between the Bubble Tea event loop (which
+	// calls Redetect on reload) and the loader's reader goroutine
+	// (which calls Open / Kind / Metadata via detectOnce). Without a
+	// mutex, a rapid reload can race the prior reload's still-running
+	// goroutine — see PR#24 review (Copilot review acceptance M2).
+	detectMu  sync.Mutex
+	kind      Kind
+	lexerName string
+	detectErr error
+	detected  bool
 }
 
 // NewFileSource opens the path metadata-side: it stat()s the path,
@@ -109,7 +118,9 @@ func newFileSourceWithHint(path, hint string) (*FileSource, error) {
 // first call. Detection errors are surfaced via [Open] / [Reopen] so
 // constructors stay infallible for already-present files.
 func (s *FileSource) Kind() Kind {
-	s.detectOnce()
+	s.detectMu.Lock()
+	defer s.detectMu.Unlock()
+	s.detectOnceLocked()
 	return s.kind
 }
 
@@ -172,7 +183,15 @@ func (s *FileSource) openValidated() (*os.File, error) {
 // place since the original Open is correctly re-classified — without
 // this, a "reload" would silently render the new bytes through the
 // stale lexer/Kind (Copilot review acceptance M2).
+//
+// Thread-safe: holds [FileSource.detectMu] so a concurrent
+// detectOnce / Kind / Metadata call from the loader's reader
+// goroutine (still running from a prior reload that hasn't observed
+// its context cancellation yet) sees a consistent snapshot rather
+// than a torn write (PR#24 review).
 func (s *FileSource) Redetect() {
+	s.detectMu.Lock()
+	defer s.detectMu.Unlock()
 	s.detected = false
 	s.detectErr = nil
 	s.kind = KindUnknown
@@ -184,7 +203,9 @@ func (s *FileSource) Redetect() {
 // loader is responsible for updating it via the metaUpdated message in
 // US6.
 func (s *FileSource) Metadata() Metadata {
-	s.detectOnce()
+	s.detectMu.Lock()
+	defer s.detectMu.Unlock()
+	s.detectOnceLocked()
 	return Metadata{
 		Path:      s.path,
 		Size:      s.size,
@@ -194,7 +215,22 @@ func (s *FileSource) Metadata() Metadata {
 	}
 }
 
+// detectOnce is the lock-acquiring entry point used by Open / Reopen.
+// Kind / Metadata / Redetect take the lock themselves and call
+// detectOnceLocked directly to avoid double-locking.
 func (s *FileSource) detectOnce() error {
+	s.detectMu.Lock()
+	defer s.detectMu.Unlock()
+	return s.detectOnceLocked()
+}
+
+// detectOnceLocked performs the lazy detection. The caller MUST hold
+// s.detectMu. The detection includes a synchronous open(2) + read of
+// the file's first bytes; the lock is therefore held across I/O. This
+// is intentional: detection runs at most once per cached state, and
+// blocking concurrent readers during the rare detect window is much
+// simpler than introducing a separate "detection in progress" gate.
+func (s *FileSource) detectOnceLocked() error {
 	if s.detected {
 		return s.detectErr
 	}
