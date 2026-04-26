@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<config xmlns="https://example.com/spy/v1">
+  <metadata>
+    <name>spy</name>
+    <version>0.1.0</version>
+    <description>Keyboard-driven popup reader for the terminal</description>
+  </metadata>
+  <viewer theme="auto" vim_mode="false">
+    <highlight cap-bytes="5242880" />
+    <buffer max-resident-bytes="268435456" window-size="8192" />
+  </viewer>
+  <graphics mode="auto">
+    <protocol name="kitty" detection="KITTY_WINDOW_ID" />
+    <protocol name="iterm2" detection="TERM_PROGRAM" />
+    <protocol name="sixel" detection="terminfo" />
+  </graphics>
+  <build>
+    <variant name="default" />
+    <variant name="fitz">
+      <tag>fitz</tag>
+      <requires>libmupdf-dev</requires>
+    </variant>
+  </build>
+</config>

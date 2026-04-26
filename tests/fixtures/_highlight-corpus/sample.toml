@@ -1,0 +1,27 @@
+# TOML sample
+title = "spy configuration"
+
+[viewer]
+theme = "auto"
+vim_mode = false
+regex_default = false
+highlight_cap_bytes = 5242880
+max_resident_bytes = 268435456
+
+[graphics]
+mode = "auto"
+allowed = ["kitty", "iterm2", "sixel", "none"]
+
+[[lexers]]
+name = "go"
+extensions = [".go"]
+analyse_priority = 10
+
+[[lexers]]
+name = "python"
+extensions = [".py", ".pyi"]
+analyse_priority = 9
+
+[build.fitz]
+enabled = false
+required_packages = ["libmupdf-dev", "mupdf-tools"]

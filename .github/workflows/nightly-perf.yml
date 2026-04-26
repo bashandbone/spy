@@ -1,0 +1,58 @@
+# SPDX-FileCopyrightText: 2026 Adam Poulemanos
+#
+# SPDX-License-Identifier: MIT OR Apache-2.0
+
+name: nightly-perf
+
+on:
+  schedule:
+    # Daily at 08:00 UTC. Run when CI is otherwise quiet so a single
+    # ubuntu-latest runner gets clean wall-clock measurements.
+    - cron: "0 8 * * *"
+  workflow_dispatch: # allow manual triggers from the Actions tab
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  perf:
+    name: nightly perf suite
+    runs-on: ubuntu-latest
+    env:
+      RUNNER_OS_RAM_HINT: "8192" # SC-005 nightly tier asserts RSS ≤ 500 MiB on an 8 GiB runner
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.26"
+          check-latest: true
+
+      - name: Install mupdf headers
+        run: sudo apt-get update && sudo apt-get install -y libmupdf-dev mupdf-tools
+
+      - name: make perf
+        id: perf
+        run: |
+          set -o pipefail
+          mkdir -p artifacts
+          make perf 2>&1 | tee artifacts/perf-output.txt
+
+      - name: Upload perf output
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: perf-output
+          path: artifacts/perf-output.txt
+
+      - name: File regression issue on failure
+        if: failure()
+        uses: peter-evans/create-issue-from-file@v5
+        with:
+          title: "perf-regression: nightly run on ${{ github.run_id }}"
+          content-filepath: artifacts/perf-output.txt
+          labels: |
+            perf-regression
+            automated

@@ -37,6 +37,14 @@ type codeRenderer struct {
 // Render walks the resident hot region of the buffer and emits one
 // formatted line per source line, with optional gutter line numbers
 // and rune-bound soft-wrap.
+//
+// PERF NOTE (SC-004 gap): this implementation formats every resident
+// line on every paint rather than just the lines that fall inside the
+// viewport's vertical window. At 10 000 lines that's outside the
+// 16 ms p95 theme-swap budget — see tests/perf/theme_swap_bench_test.go.
+// Refactoring to a viewport-windowed render is tracked as a Phase 9
+// follow-up; the per-frame `viewport.SetContent(Render(ctx))` call site
+// in internal/ui/update.go is unchanged once the windowed Render lands.
 func (r *codeRenderer) Render(ctx RenderContext) string {
 	if ctx.Buffer == nil {
 		return "(empty)\n"
@@ -78,8 +86,11 @@ func (r *codeRenderer) Render(ctx RenderContext) string {
 			b.WriteString(prefix)
 			if mono {
 				// Mono mode: bypass lipgloss styling — emit the raw
-				// match line verbatim so no ANSI leaks.
-				b.WriteString(l.Raw)
+				// match line verbatim so no ANSI leaks. The line is
+				// still escape-neutralised (T109b.c) so a file whose
+				// bytes contain OSC / DCS sequences cannot drive the
+				// user's terminal.
+				b.WriteString(neutralizeEscapes(l.Raw))
 			} else {
 				b.WriteString(applyMatchHighlights(l.Raw, lineMatches, active, hasActive, ctx.Theme.SearchHit, ctx.Theme.SearchActive))
 			}
@@ -91,7 +102,7 @@ func (r *codeRenderer) Render(ctx RenderContext) string {
 				// Long line + wrap on: fall back to raw text so wrap math
 				// stays correct. The styled (ANSI) emission is reserved
 				// for lines that fit on a single visual row.
-				writeWrappedLine(&b, prefix, l.Raw, width)
+				writeWrappedLine(&b, prefix, neutralizeEscapes(l.Raw), width)
 				continue
 			}
 			styled := r.styleLine(l)
@@ -117,21 +128,24 @@ func (r *codeRenderer) RowToLine(ctx RenderContext, visualRow int) int64 {
 
 // styleLine returns the line's ANSI-styled rendition. Falls back to
 // raw text when the theme is mono, the highlighter is missing, or
-// formatting fails.
+// formatting fails. All raw-text fallback paths run their content
+// through [neutralizeEscapes] so a file whose bytes include OSC / DCS
+// sequences cannot drive the user's terminal — see T109b.c
+// (specs/001-popup-reader/checklists/security-review.md).
 func (r *codeRenderer) styleLine(l source.Line) string {
 	if r.deps.Theme.Mono {
-		return l.Raw
+		return neutralizeEscapes(l.Raw)
 	}
 	h := r.deps.Highlighter
 	if h == nil {
-		return l.Raw
+		return neutralizeEscapes(l.Raw)
 	}
 	tokens := l.Tokens
 	if tokens == nil {
 		tokens = h.Highlight(r.deps.Language, l.Raw)
 	}
 	if len(tokens) == 0 {
-		return l.Raw
+		return neutralizeEscapes(l.Raw)
 	}
 	style := styles.Get(r.deps.Theme.ChromaStyle)
 	if style == nil {
@@ -142,14 +156,54 @@ func (r *codeRenderer) styleLine(l source.Line) string {
 	}
 	fm := r.formatter()
 	if fm == nil {
-		return l.Raw
+		return neutralizeEscapes(l.Raw)
 	}
-	iter := chromaIterFromTokens(tokens)
+	// Common case: Chroma's Text tokens copy bytes verbatim from
+	// l.Raw, so we can scan l.Raw once and skip the per-token copy
+	// entirely when no ESC / CSI byte is present. Allocates only on
+	// the rare line that actually carries an escape (T109b.c).
+	safeTokens := tokens
+	if needsTokenNeutralisation(l.Raw) {
+		safeTokens = neutralizeTokens(tokens)
+	}
+	iter := chromaIterFromTokens(safeTokens)
 	var buf bytes.Buffer
 	if err := fm.Format(&buf, style, iter); err != nil {
-		return l.Raw
+		return neutralizeEscapes(l.Raw)
 	}
 	return strings.TrimRight(buf.String(), "\n")
+}
+
+// needsTokenNeutralisation reports whether `raw` contains any byte
+// that [neutralizeEscapes] would substitute. Used as a fast pre-scan
+// so the per-token copy in [neutralizeTokens] only runs on lines that
+// actually carry an OSC / DCS / CSI byte. Per-line inputs are typically
+// hundreds of bytes; the IndexAny scan is one cache-line read in the
+// common case.
+func needsTokenNeutralisation(raw string) bool {
+	return strings.ContainsAny(raw, "\x1b\x9b")
+}
+
+// neutralizeTokens returns a copy of `tokens` with every ESC / CSI byte
+// replaced in each token's Value (T109b.c). The Chroma formatter emits
+// Text-token Values verbatim, so any 0x1b that survived tokenisation
+// would still pass through to the user's terminal. Substitutions are
+// byte-for-byte (see neutralizeEscapes) so the formatter's offset math
+// stays valid.
+//
+// Callers should consult [needsTokenNeutralisation] first; this
+// function unconditionally allocates a fresh slice and is intended for
+// the rare line that does carry an escape.
+func neutralizeTokens(tokens []source.Token) []source.Token {
+	if len(tokens) == 0 {
+		return tokens
+	}
+	out := make([]source.Token, len(tokens))
+	for i, tok := range tokens {
+		tok.Value = neutralizeEscapes(tok.Value)
+		out[i] = tok
+	}
+	return out
 }
 
 // formatter selects a Chroma terminal formatter matching the active

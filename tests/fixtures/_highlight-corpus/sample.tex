@@ -1,0 +1,41 @@
+% LaTeX sample
+\documentclass[11pt]{article}
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage{amsmath}
+\usepackage{amssymb}
+\usepackage{listings}
+\usepackage{xcolor}
+
+\definecolor{accent}{RGB}{0, 102, 204}
+
+\title{spy: a popup reader}
+\author{Adam Poulemanos}
+\date{\today}
+
+\lstset{
+  basicstyle=\ttfamily\small,
+  keywordstyle=\color{accent}\bfseries,
+  commentstyle=\itshape\color{gray},
+  showstringspaces=false,
+}
+
+\begin{document}
+\maketitle
+
+\section{Introduction}
+This document is a small \LaTeX{} sample for the highlight corpus.
+
+\subsection{Math}
+The Pythagorean theorem: $a^2 + b^2 = c^2$. In display form:
+\[
+  \int_{0}^{\infty} e^{-x^2}\,dx = \frac{\sqrt{\pi}}{2}.
+\]
+
+\subsection{Code listing}
+\begin{lstlisting}[language=Python]
+def increment(value, n=1):
+    return value + n
+\end{lstlisting}
+
+\end{document}

@@ -80,7 +80,7 @@ func (t *textRenderer) Render(ctx RenderContext) string {
 			if len(lineMatches) > 0 && !mono {
 				b.WriteString(applyMatchHighlights(l.Raw, lineMatches, active, hasActive, ctx.Theme.SearchHit, ctx.Theme.SearchActive))
 			} else {
-				b.WriteString(l.Raw)
+				b.WriteString(neutralizeEscapes(l.Raw))
 			}
 			b.WriteByte('\n')
 			continue
@@ -99,7 +99,7 @@ func (t *textRenderer) Render(ctx RenderContext) string {
 			b.WriteByte('\n')
 			continue
 		}
-		writeWrappedLine(&b, prefix, l.Raw, width)
+		writeWrappedLine(&b, prefix, neutralizeEscapes(l.Raw), width)
 	}
 	return b.String()
 }

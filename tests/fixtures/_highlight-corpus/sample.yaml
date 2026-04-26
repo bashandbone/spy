@@ -1,0 +1,29 @@
+# YAML sample
+name: spy
+version: 0.1.0
+description: |
+  Keyboard-driven popup reader for the terminal — `bat` with a
+  real viewport.
+
+settings:
+  theme: auto
+  vim_mode: false
+  regex_default: false
+  highlight_cap_bytes: 5242880
+  max_resident_bytes: 268435456
+
+graphics_protocols:
+  - name: kitty
+    detection: KITTY_WINDOW_ID
+  - name: iterm2
+    detection: TERM_PROGRAM=iTerm.app
+  - name: sixel
+    detection: terminfo
+
+build:
+  default: { tags: [] }
+  fitz:
+    tags: [fitz]
+    requires:
+      - libmupdf-dev
+      - mupdf-tools

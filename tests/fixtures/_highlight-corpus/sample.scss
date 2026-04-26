@@ -1,0 +1,38 @@
+// SCSS sample
+@use "sass:math";
+@use "sass:color";
+
+$color-accent: #0066cc;
+$breakpoints: (
+  "sm": 640px,
+  "md": 768px,
+  "lg": 1024px,
+);
+
+@mixin breakpoint($name) {
+  $value: map-get($breakpoints, $name);
+  @if $value {
+    @media (min-width: $value) {
+      @content;
+    }
+  } @else {
+    @error "unknown breakpoint #{$name}";
+  }
+}
+
+.card {
+  padding: math.div(1rem, 2);
+  border: 1px solid color.adjust($color-accent, $lightness: 30%);
+
+  &__title {
+    font-weight: 600;
+    color: $color-accent;
+  }
+
+  &--prominent {
+    background: color.scale($color-accent, $alpha: -90%);
+    @include breakpoint("md") {
+      padding: 1rem;
+    }
+  }
+}

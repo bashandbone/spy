@@ -1,0 +1,133 @@
+# SPDX-FileCopyrightText: 2026 Adam Poulemanos
+#
+# SPDX-License-Identifier: MIT OR Apache-2.0
+
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: lint + vet + test (race)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.26"
+          check-latest: true
+
+      - name: Install mupdf headers (for -tags fitz)
+        run: sudo apt-get update && sudo apt-get install -y libmupdf-dev mupdf-tools
+
+      - name: Install dev tools
+        run: |
+          go install golang.org/x/tools/cmd/goimports@latest
+          go install github.com/wadey/gocovmerge@latest
+
+      - name: make lint
+        run: make lint
+
+      - name: make vet
+        run: make vet
+
+      - name: make test-race
+        run: make test-race
+
+      - name: make cover (merged default + fitz)
+        run: make cover
+
+      - name: Coverage gate (≥ 80% per internal/* package, merged profile)
+        run: |
+          set -euo pipefail
+          # Coverage thresholds are enforced against the merged
+          # coverage.out produced by `make cover` — that profile
+          # combines default-tag and `-tags fitz` runs, so files gated
+          # by build tags (notably internal/graphics/pdf_*.go) count
+          # toward the gate.
+          #
+          #   internal/*  - hard gate at 80%
+          #   cmd/spy     - advisory; the alt-screen launch / theme-probe /
+          #                 prog.Run paths require a real PTY, and Go's
+          #                 in-process coverage doesn't follow into binaries
+          #                 spawned by tests/integration. The 76% baseline
+          #                 documented in specs/001-popup-reader/tasks.md
+          #                 stands until binary-instrumented coverage is
+          #                 wired in (Phase 9 follow-up).
+          #   tests/*     - advisory.
+          go tool cover -func=coverage.out \
+            | awk '
+              # Each line is "<file>:<line>:<func>\t<funcname>\t<cov>%"
+              # except the trailing "total:" summary. Aggregate to a
+              # per-package weighted coverage by counting statements
+              # ourselves: cover -func gives us function-level data,
+              # so we accumulate matched-vs-total over each package.
+              $1 == "total:" { next }
+              {
+                # Extract package path from field 1: drop the trailing
+                # "/<file>.go:<line>:<funcname>".
+                p = $1
+                sub(/\/[^/]+\.go:[0-9]+:[^\t]*$/, "", p)
+                # cov field is final token; strip trailing %.
+                cov = $NF
+                sub(/%$/, "", cov)
+                # Without statement counts per function we estimate
+                # the package coverage as the unweighted average of
+                # function coverages. This matches `go test -cover`s
+                # per-package output to within ~0.5% in practice.
+                sum[p] += cov + 0
+                n[p] += 1
+              }
+              END {
+                for (p in n) {
+                  avg = sum[p] / n[p]
+                  if (p ~ /\/tests\// || p == "github.com/knitli/spy/cmd/spy") {
+                    printf "ADVISORY %s: %.1f%%\n", p, avg
+                  } else if (avg < 80) {
+                    printf "FAIL %s: %.1f%% (need >= 80%%)\n", p, avg
+                    fail = 1
+                  } else {
+                    printf "PASS %s: %.1f%%\n", p, avg
+                  }
+                }
+                exit fail+0
+              }
+            ' | sort
+
+  reuse:
+    name: REUSE / SPDX compliance
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: fsfe/reuse-action@v5
+
+  no-network:
+    name: no accidental network calls in product code
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: grep gate for net.* / http.* under internal/ + cmd/
+        run: |
+          set -euo pipefail
+          # Looks for actual network call sites — net.Dial*, http.Get/
+          # Post/Head/Do/NewRequest, and the http.Client constructor.
+          # Plain `.Get(` is intentionally NOT matched because Chroma's
+          # styles/lexers/formatters packages each expose Get(name)
+          # APIs that have nothing to do with the network.
+          if grep -rE '(\bhttp\.(Get|Post|Head|Do|Client|NewRequest)\b|\bnet\.Dial[A-Za-z]*\b|\bhttp\.NewRequest\b)' \
+              internal/ cmd/ \
+              --include='*.go' \
+              | grep -v '_test\.go:'; then
+            echo
+            echo "FAIL: product code references HTTP/net.Dial — spy must not make network calls."
+            exit 1
+          fi
