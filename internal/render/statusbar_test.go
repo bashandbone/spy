@@ -1,0 +1,182 @@
+// SPDX-FileCopyrightText: 2026 Adam Poulemanos
+//
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
+package render
+
+import (
+	"strings"
+	"testing"
+
+	"github.com/charmbracelet/bubbles/viewport"
+
+	"github.com/knitli/spy/internal/source"
+)
+
+func TestStatusBar_StandardFormat(t *testing.T) {
+	vp := viewport.New(80, 23)
+	in := StatusInput{
+		DisplayName: "hello.go",
+		Meta:        source.Metadata{LineCount: 42},
+		Viewport:    vp,
+		Width:       80,
+		Current:     7,
+	}
+	out := StatusBarRender(in, ThemeDark())
+	if !strings.Contains(out, "hello.go") {
+		t.Errorf("expected display name in output: %q", out)
+	}
+	if !strings.Contains(out, "42 lines") {
+		t.Errorf("expected total-line count in output: %q", out)
+	}
+	if !strings.Contains(out, "Line 7") {
+		t.Errorf("expected current-line indicator: %q", out)
+	}
+	if strings.Contains(out, "…") {
+		t.Errorf("non-streaming output should not show '…': %q", out)
+	}
+}
+
+func TestStatusBar_StreamingShowsEllipsis(t *testing.T) {
+	vp := viewport.New(80, 23)
+	in := StatusInput{
+		DisplayName: "big.log",
+		Meta:        source.Metadata{LineCount: -1},
+		Viewport:    vp,
+		Width:       100,
+		Current:     1,
+		Streaming:   true,
+	}
+	out := StatusBarRender(in, ThemeDark())
+	if !strings.Contains(out, "…") {
+		t.Errorf("streaming status bar should include '…' indicator: %q", out)
+	}
+}
+
+func TestStatusBar_PDFShowsPageIndicator(t *testing.T) {
+	vp := viewport.New(120, 23)
+	in := StatusInput{
+		DisplayName: "manual.pdf",
+		Meta:        source.Metadata{PageCount: 5, LineCount: 240},
+		Viewport:    vp,
+		Width:       120,
+		Current:     12,
+		Page:        2,
+		Kind:        source.KindPDF,
+	}
+	out := StatusBarRender(in, ThemeDark())
+	if !strings.Contains(out, "Page 2/5") {
+		t.Errorf("PDF status bar should show 'Page m/n': %q", out)
+	}
+	if !strings.Contains(out, "manual.pdf") {
+		t.Errorf("PDF status bar should show display name: %q", out)
+	}
+}
+
+func TestStatusBar_PDFWithUnknownPageCount(t *testing.T) {
+	// PageCount == 0 is the loader's "not yet known" sentinel; the
+	// status bar must degrade gracefully rather than print "Page 1/0".
+	vp := viewport.New(120, 23)
+	in := StatusInput{
+		DisplayName: "stream.pdf",
+		Meta:        source.Metadata{PageCount: 0, LineCount: 100},
+		Viewport:    vp,
+		Width:       120,
+		Current:     3,
+		Page:        1,
+		Kind:        source.KindPDF,
+	}
+	out := StatusBarRender(in, ThemeDark())
+	if strings.Contains(out, "Page 1/0") {
+		t.Errorf("status bar should not print 'Page 1/0' when total is unknown: %q", out)
+	}
+	if !strings.Contains(out, "Page 1") {
+		t.Errorf("status bar should still show current page: %q", out)
+	}
+}
+
+func TestStatusBar_SubEightyColumnCollapse(t *testing.T) {
+	// Below 80 columns the contract collapses the bar to "<short> · L<N>".
+	vp := viewport.New(40, 23)
+	in := StatusInput{
+		DisplayName: "/very/long/path/to/main.go",
+		Meta:        source.Metadata{LineCount: 120},
+		Viewport:    vp,
+		Width:       40,
+		Current:     5,
+		Mono:        true, // strip ANSI for easier substring assertions
+	}
+	out := StatusBarRender(in, ThemeDark())
+	if strings.Contains(out, " | ") {
+		t.Errorf("collapsed status bar should not use ' | ' separators: %q", out)
+	}
+	if !strings.Contains(out, "·") {
+		t.Errorf("collapsed status bar should use '·' separator: %q", out)
+	}
+	if !strings.Contains(out, "L5") {
+		t.Errorf("collapsed status bar should print 'L<current>': %q", out)
+	}
+	// Width budget honoured.
+	if widthOf(out) > 40 {
+		t.Errorf("collapsed status bar must fit within width=40, got %d cols", widthOf(out))
+	}
+}
+
+func TestStatusBar_AdvisoryAppendedWhenSpaceAllows(t *testing.T) {
+	vp := viewport.New(120, 23)
+	in := StatusInput{
+		DisplayName: "src.go",
+		Meta:        source.Metadata{LineCount: 30},
+		Viewport:    vp,
+		Width:       120,
+		Current:     1,
+		Advisory:    "highlighting disabled",
+	}
+	out := StatusBarRender(in, ThemeDark())
+	if !strings.Contains(out, "highlighting disabled") {
+		t.Errorf("advisory should appear in wide status bar: %q", out)
+	}
+}
+
+func TestStatusBar_AdvisoryDroppedInCollapsedMode(t *testing.T) {
+	// Below 80 columns we drop the advisory rather than truncate awkwardly.
+	vp := viewport.New(40, 23)
+	in := StatusInput{
+		DisplayName: "src.go",
+		Meta:        source.Metadata{LineCount: 30},
+		Viewport:    vp,
+		Width:       40,
+		Current:     1,
+		Advisory:    "highlighting disabled",
+		Mono:        true,
+	}
+	out := StatusBarRender(in, ThemeDark())
+	if strings.Contains(out, "highlighting disabled") {
+		t.Errorf("collapsed bar should drop advisory rather than overflow: %q", out)
+	}
+}
+
+func TestStatusBar_MonoSuppressesANSI(t *testing.T) {
+	vp := viewport.New(80, 23)
+	in := StatusInput{
+		DisplayName: "x.txt",
+		Meta:        source.Metadata{LineCount: 1},
+		Viewport:    vp,
+		Width:       80,
+		Current:     1,
+		Mono:        true,
+	}
+	out := StatusBarRender(in, ThemeDark())
+	if strings.Contains(out, "\x1b[") {
+		t.Errorf("mono status bar must not emit ANSI escapes: %q", out)
+	}
+}
+
+// widthOf returns the rune count of the rendered status bar line, with
+// ANSI escapes stripped so coloured renders fit-check correctly. Reuses
+// stripANSI from code_test.go and runeCount from code.go.
+func widthOf(s string) int {
+	line := strings.TrimRight(s, "\n")
+	stripped := stripANSI(line)
+	return runeCount(stripped)
+}

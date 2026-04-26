@@ -93,6 +93,38 @@ func (b *LineBuffer) Append(in []source.Line) {
 	}
 }
 
+// ClearWrapCaches resets the [source.Line.Wrapped] field on every
+// resident line. Called by the UI when the user toggles word-wrap
+// (Ctrl-W) or the viewport width changes — the cached visual rows are
+// invariant on (raw line, wrap mode, viewport width), so any of those
+// flipping requires a fresh wrap-pass on the next paint.
+//
+// Tracks the same lock as [SetTokens] so concurrent loader appends and
+// renderer slices stay consistent.
+func (b *LineBuffer) ClearWrapCaches() {
+	b.mu.Lock()
+	for i := range b.lines {
+		b.lines[i].Wrapped = nil
+	}
+	b.mu.Unlock()
+}
+
+// SeedWrappedForTest seeds [source.Line.Wrapped] on every resident
+// line with the supplied slice. Used exclusively by tests that
+// pre-populate the wrap cache so they can verify [ClearWrapCaches]
+// (or its production callers — currently the word-wrap toggle handler
+// in internal/ui) actually invalidates it.
+//
+// Production code MUST NOT call this. The renderer is the only legal
+// populator of Line.Wrapped and that path runs through writeWrappedLine.
+func (b *LineBuffer) SeedWrappedForTest(value []string) {
+	b.mu.Lock()
+	for i := range b.lines {
+		b.lines[i].Wrapped = append([]string(nil), value...)
+	}
+	b.mu.Unlock()
+}
+
 // SetTokens propagates highlighter Tokens from `lines` into the
 // matching resident lines (matched by [source.Line.Number]) under the
 // buffer's mutex. Lines whose number falls outside the resident hot

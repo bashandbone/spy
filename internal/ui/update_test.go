@@ -630,6 +630,84 @@ func TestUpdate_JumpToOutOfRangePageClampsToTotal(t *testing.T) {
 	}
 }
 
+// --- T100b: toggle handlers (ActionToggleLineNumbers,
+// ActionToggleWordWrap, ActionOpenFile). ---
+
+func TestUpdate_ToggleLineNumbersFlipsConfigAndRerenders(t *testing.T) {
+	m := newTestModel(t, "alpha\nbeta\ngamma\n")
+	m, _ = applyResize(m, 80, 24)
+	if m.cfg == nil {
+		t.Fatal("cfg should be populated by newTestModel")
+	}
+	before := m.cfg.LineNumbers
+	beforeView := m.viewport.View()
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyCtrlL})
+	mm := updated.(Model)
+	if mm.cfg.LineNumbers == before {
+		t.Errorf("ActionToggleLineNumbers did not flip cfg.LineNumbers (still %v)", before)
+	}
+	// The renderer is rebuilt with the new flag — the rendered frame
+	// must change so the gutter appears or disappears on the next paint.
+	if mm.viewport.View() == beforeView {
+		t.Errorf("ActionToggleLineNumbers did not trigger a re-render (view unchanged)")
+	}
+}
+
+func TestUpdate_ToggleWordWrapFlipsConfigAndInvalidatesWrapCache(t *testing.T) {
+	body := strings.Repeat("alpha beta gamma delta epsilon zeta eta theta iota\n", 20)
+	m := newTestModel(t, body)
+	m, _ = applyResize(m, 40, 24)
+	// Pre-seed Wrapped on every line so we can verify invalidation.
+	if m.stream != nil && m.stream.Buffer != nil {
+		m.stream.Buffer.SeedWrappedForTest([]string{"cached"})
+	}
+	before := m.cfg.WordWrap
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyCtrlW})
+	mm := updated.(Model)
+	if mm.cfg.WordWrap == before {
+		t.Errorf("ActionToggleWordWrap did not flip cfg.WordWrap (still %v)", before)
+	}
+	if mm.stream != nil && mm.stream.Buffer != nil {
+		lines := mm.stream.Buffer.Slice(0, mm.stream.Buffer.Total())
+		for i, l := range lines {
+			if l.Wrapped != nil {
+				t.Errorf("line %d Wrapped cache not invalidated after wrap toggle: %#v", i, l.Wrapped)
+			}
+		}
+	}
+}
+
+func TestUpdate_ActionOpenFileOpensCommandPromptPreFilled(t *testing.T) {
+	m := newTestModel(t, "x\n")
+	m, _ = applyResize(m, 80, 24)
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'o'}})
+	mm := updated.(Model)
+	if !mm.commandLine.Active {
+		t.Fatal("ActionOpenFile should activate the command-line prompt")
+	}
+	if mm.commandLine.Prefix != ':' {
+		t.Errorf("ActionOpenFile prompt prefix: got %q want ':'", mm.commandLine.Prefix)
+	}
+	if mm.commandLine.Buffer != "open " {
+		t.Errorf("ActionOpenFile prompt buffer: got %q want \"open \"", mm.commandLine.Buffer)
+	}
+}
+
+func TestUpdate_ActionOpenFileEscClosesPromptWithoutLoad(t *testing.T) {
+	m := newTestModel(t, "x\n")
+	m, _ = applyResize(m, 80, 24)
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'o'}})
+	mm := updated.(Model)
+	updated2, _ := mm.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	mm2 := updated2.(Model)
+	if mm2.commandLine.Active {
+		t.Errorf("Esc should close the open-file prompt")
+	}
+	if mm2.commandLine.Buffer != "" {
+		t.Errorf("Esc should clear the open-file prompt buffer, got %q", mm2.commandLine.Buffer)
+	}
+}
+
 func TestLoaderConfigFromConfig(t *testing.T) {
 	cfg := &config.Config{MaxResidentBytes: 1024, WindowSize: 8}
 	got := loaderConfigFromConfig(cfg)

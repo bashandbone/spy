@@ -204,6 +204,21 @@ type streamDoneMsg struct {
 // Fired by the keymap's ActionReload binding.
 type reloadMsg struct{}
 
+// metaUpdatedMsg announces that the loader has finalized the source's
+// total line count (or, in the future, page count). The model fires it
+// as a follow-up tea.Cmd whenever it observes an EOF chunk so the
+// status bar can flip from "<running>… lines" to the final "<total>
+// lines" rendering on the next paint without waiting for another
+// scroll / resize / chunk to trigger a redraw.
+//
+// Per T100 (specs/001-popup-reader/tasks.md). The metadata-only update
+// keeps the rest of the model state untouched — it's a render-only
+// signal, not a state mutation, so the [Update] handler simply
+// re-renders.
+type metaUpdatedMsg struct {
+	TotalLines int64
+}
+
 // reloadResultMsg carries the outcome of an in-flight reload request.
 // On success Stream and (optional) Cancel replace the model's; on
 // failure Err is non-nil and the model retains the prior buffer.
