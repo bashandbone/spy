@@ -156,7 +156,7 @@ type Chunk struct {
 type Stream struct {
     First    Chunk             // populated synchronously before Stream is returned
     Updates  <-chan Chunk      // bounded buffer (cap = Config.UpdatesBuffer, default 4); closed on EOF or error
-    Errs     <-chan error      // single-value channel; closed when no more errors
+    Errs     <-chan error      // stream of warnings and/or fatal errors; may yield multiple values; closed after Updates when no more errors remain
     Buffer   *LineBuffer       // resident lines + windowing state; lives in internal/loader (see data-model.md package map). (Acceptance review M13.)
 }
 

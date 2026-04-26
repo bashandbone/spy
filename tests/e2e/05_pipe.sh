@@ -3,36 +3,29 @@
 #
 # SPDX-License-Identifier: MIT OR Apache-2.0
 #
-# US5 E2E: validates the stdin / pipe input paths that don't require a
-# PTY. The interactive parts (alt-screen frame with `<stdin>` in the
-# footer, scroll, `q` exit) need the PTY harness from T104; the
-# scaffolding here exercises the non-TTY pipeline shape — the
-# degenerate-cat contract from contracts/cli.md "Stdin behavior" — for
-# the three SC-011 pipeline shapes:
-#   (a) `cat fixture | spy -l go` (Go highlight; <stdin> footer)
-#   (b) `git diff HEAD~ | spy` when invoked inside the repo (diff highlight)
-#   (c) `grep -n needle fixture | spy` (plain text; <stdin> footer)
-# plus the explicit degenerate-cat case
-#   (d) `echo content | spy | cat` exits 0 with verbatim content.
+# US5 E2E: validates the non-TTY stdin / pipe input paths — the
+# verbatim degenerate-cat contract from contracts/cli.md "Stdin
+# behavior" plus exit-code shape for piped input. The actual shapes
+# tested below are:
+#   (a) `cat hello.go | spy -l go`     — verbatim bytes through (Go --lang)
+#   (b) `cat hello.go | spy`           — same, no --lang hint
+#   (c) `grep -n func hello.go | spy`  — verbatim grep output
+#   (d) `printf … | spy | cat`         — explicit pipe-into-pipe round-trip
+#   (e) `cat hello.go | spy -`         — explicit `-` positional
+#   (f) `spy < /dev/null`              — empty stdin pipe (exit 0)
+# Shape (g) — TTY-stdin without a FILE — is impossible to drive from a
+# shell harness; the equivalent unit test lives in cmd/spy
+# (TestRun_StdinTTYWithoutFileExitsUsage). See the inline note below.
 #
-# SC-011 deferral note (acceptance review M11): this script is intentionally
-# non-TTY only — it matches the text-only ScHelp model and cannot assert the
-# interactive `<stdin>`-in-footer contract from SC-011. That assertion (the
-# alt-screen footer literally rendering `<stdin>` rather than a basename)
-# is **deferred** to the PTY-driven integration suite at
-# `tests/integration/stdin_test.go` and `tests/integration/footer_test.go`,
-# both of which depend on the PTY harness shipped with T104. The shell
-# scaffolding here only pins the non-TTY pipeline shapes — the verbatim
-# degenerate-cat and exit-code contracts — and explicitly does NOT claim
-# to cover the footer-rendering half of SC-011.
-#
-# When the deferred PTY-driven tests lift their `t.Skip`s the assertions
-# they will land are:
-#   - the alt-screen frame's footer reads `<stdin>` (not a basename)
-#   - syntax highlighting is applied for shape (a) and (b)
-#   - `q` exits cleanly with code 0.
-# Until then, this script keeps US5 from regressing the `-` positional,
-# the auto-stdin pickup, and the verbatim-cat exit-0 contract.
+# SC-011 split (acceptance review M11): the interactive half of SC-011
+# — the alt-screen footer literally rendering `<stdin>` rather than a
+# basename, syntax highlighting for displayed content, and `q` exiting
+# cleanly — is asserted by the PTY-driven integration tests at
+# `tests/integration/stdin_test.go` and `tests/integration/footer_test.go`.
+# Those tests are live (no `t.Skip`); this shell scaffolding deliberately
+# covers only the non-TTY half — verbatim degenerate-cat and exit-code
+# contracts — and explicitly does NOT claim to cover the alt-screen
+# footer / highlighting / `q`-exit assertions.
 
 # pipefail is critical here: shape (d) (`printf | spy | cat`) would
 # otherwise mask a non-zero spy exit because `cat` succeeds (Copilot
