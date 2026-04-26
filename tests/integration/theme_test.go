@@ -20,19 +20,22 @@ const goSample = "package main\n\nimport \"fmt\"\n\nfunc main() {\n\tfmt.Println
 // spec.md US3 #3: flag > env > config > auto-detect.
 //
 // Each subtest spawns spy with a different override and asserts
-// the relevant ANSI footprint:
-//   - --theme dark / --theme light → SGR present, distinct foreground
-//   - SPY_THEME=light → SGR present
-//   - NO_COLOR=1 → no SGR escapes anywhere in the rendered area
+// the relevant ANSI footprint. The dark/light pair additionally
+// asserts that the two override values produce DIFFERENT SGR
+// palettes — without this cross-check the test would pass even if
+// the override were ignored and both resolved to the same theme.
 //
 // The OSC 11 auto-detect path requires a PTY responder (the harness
 // would have to capture spy's `\x1b]11;?\x1b\\` query and reply with
-// a fixed RGB triplet) — left as TestTheme_AutoDetectFromOSC11_Skipped
+// a fixed RGB triplet) — left as TestTheme_AutoDetectFromOSC11
 // below until the harness gains an interactive responder.
 func TestTheme_OverridePrecedence(t *testing.T) {
+	var darkSGR, lightSGR map[string]struct{}
+
 	t.Run("flag_dark", func(t *testing.T) {
 		runThemeProbe(t, []string{"--theme", "dark"}, nil, func(t *testing.T, frame string) {
-			if !regexp.MustCompile(`\x1b\[[0-9;]+m`).MatchString(frame) {
+			darkSGR = extractSGRSet(frame)
+			if len(darkSGR) == 0 {
 				t.Errorf("--theme dark: no SGR escapes in frame")
 			}
 		})
@@ -40,10 +43,20 @@ func TestTheme_OverridePrecedence(t *testing.T) {
 
 	t.Run("flag_light", func(t *testing.T) {
 		runThemeProbe(t, []string{"--theme", "light"}, nil, func(t *testing.T, frame string) {
-			if !regexp.MustCompile(`\x1b\[[0-9;]+m`).MatchString(frame) {
+			lightSGR = extractSGRSet(frame)
+			if len(lightSGR) == 0 {
 				t.Errorf("--theme light: no SGR escapes in frame")
 			}
 		})
+	})
+
+	t.Run("dark_and_light_palettes_differ", func(t *testing.T) {
+		if len(darkSGR) == 0 || len(lightSGR) == 0 {
+			t.Skip("prerequisite subtest(s) failed — palette comparison would be misleading")
+		}
+		if !sgrSetsDiffer(darkSGR, lightSGR) {
+			t.Errorf("--theme dark and --theme light produced identical SGR palettes — override may be ignored\n  dark=%v\n  light=%v", darkSGR, lightSGR)
+		}
 	})
 
 	t.Run("env_SPY_THEME_light", func(t *testing.T) {
@@ -88,7 +101,7 @@ func TestTheme_RuntimeSwap(t *testing.T) {
 		t.Fatalf("write fixture: %v", err)
 	}
 
-	p := NewPTYProgram(t, []string{"--no-config", "--theme", "light", fixture}, nil)
+	p := NewPTYProgram(t, []string{"--no-config", "--theme", "light", fixture}, colorTermEnv())
 	if !p.WaitFor(AltScreenEnter, 5*time.Second) {
 		t.Fatalf("alt-screen entry not observed; snapshot tail=%q", truncTail(p.Snapshot(), 200))
 	}
@@ -105,19 +118,33 @@ func TestTheme_RuntimeSwap(t *testing.T) {
 	// snapshot is the union of both themes' frames.
 	_ = p.Read()
 
-	// Switch theme at runtime. Use sendUntil to retry through the
-	// dropped-first-keystroke quirk: we wait until ANY new SGR
-	// appears in the post-Read snapshot.
-	p.Send(":set theme dark\r")
-	deadline := time.Now().Add(2 * time.Second)
+	// Switch theme at runtime. Send byte-by-byte through the same
+	// sendUntil pattern as the search tests so the prompt state
+	// machine sees discrete keystrokes — bundling ":set theme
+	// dark\r" as one Send leaves the prompt closed (acceptance review
+	// note in pty_sanity_test.go). We poll for ANY new SGR escape
+	// after the post-Read baseline.
+	deadline := time.Now().Add(3 * time.Second)
 	var afterSGR map[string]struct{}
+	keys := ":set theme dark\r"
 	for time.Now().Before(deadline) {
-		time.Sleep(100 * time.Millisecond)
-		snap := string(p.Snapshot())
-		afterSGR = extractSGRSet(snap)
-		if len(afterSGR) > 0 && sgrSetsDiffer(firstSGR, afterSGR) {
-			break
+		for i := 0; i < len(keys); i++ {
+			p.Send(string(keys[i]))
+			time.Sleep(15 * time.Millisecond)
 		}
+		windowEnd := time.Now().Add(700 * time.Millisecond)
+		for time.Now().Before(windowEnd) && time.Now().Before(deadline) {
+			snap := string(p.Snapshot())
+			afterSGR = extractSGRSet(snap)
+			if len(afterSGR) > 0 && sgrSetsDiffer(firstSGR, afterSGR) {
+				goto observed
+			}
+			time.Sleep(20 * time.Millisecond)
+		}
+	}
+observed:
+	if len(afterSGR) == 0 {
+		t.Fatalf(":set theme dark: no post-swap SGR escapes observed — runtime swap may not have re-rendered\n  first=%v\n  snapshot tail=%q", firstSGR, truncTail(p.Snapshot(), 400))
 	}
 	if !sgrSetsDiffer(firstSGR, afterSGR) {
 		t.Errorf(":set theme dark: SGR escape set unchanged from light theme — runtime swap may not have re-rendered\n  first=%v\n  after=%v", firstSGR, afterSGR)
@@ -147,6 +174,11 @@ func TestTheme_AutoDetectFromOSC11(t *testing.T) {
 // runThemeProbe is the shared helper: spawn spy against a small Go
 // fixture with the given args + env, wait for first paint, run the
 // caller-supplied frame check, and quit cleanly.
+//
+// The spawn env is layered on top of [colorTermEnv] (TERM=xterm-256color
+// + COLORTERM=truecolor) so the highlighter actually engages on CI
+// runners — caller-supplied keys override the colour defaults
+// (e.g. NO_COLOR=1 still wins).
 func runThemeProbe(t *testing.T, extraArgs []string, env map[string]string, check func(*testing.T, string)) {
 	t.Helper()
 	dir := t.TempDir()
@@ -157,7 +189,11 @@ func runThemeProbe(t *testing.T, extraArgs []string, env map[string]string, chec
 	args := append([]string{"--no-config"}, extraArgs...)
 	args = append(args, fixture)
 
-	p := NewPTYProgram(t, args, env)
+	merged := colorTermEnv()
+	for k, v := range env {
+		merged[k] = v
+	}
+	p := NewPTYProgram(t, args, merged)
 	if !p.WaitFor(AltScreenEnter, 5*time.Second) {
 		t.Fatalf("alt-screen entry not observed; snapshot tail=%q", truncTail(p.Snapshot(), 200))
 	}

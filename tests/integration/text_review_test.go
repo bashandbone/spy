@@ -38,7 +38,11 @@ func TestTextReview_HighlightedFile(t *testing.T) {
 		t.Fatalf("write fixture: %v", err)
 	}
 
-	p := NewPTYProgram(t, []string{"--no-config", fixture}, nil)
+	// Force a 256-color-capable PTY env so the highlighter actually
+	// emits SGR escapes — GitHub Actions runners don't set TERM by
+	// default, and `term.Detect` defaults to mono when COLORTERM /
+	// TERM=*-256color are both absent.
+	p := NewPTYProgram(t, []string{"--no-config", fixture}, colorTermEnv())
 	if !p.WaitFor(AltScreenEnter, 5*time.Second) {
 		t.Fatalf("alt-screen entry not observed; snapshot=%q", truncTail(p.Snapshot(), 200))
 	}
@@ -94,5 +98,32 @@ func truncTail(b []byte, n int) string {
 	return string(b[len(b)-n:])
 }
 
-// stripANSI is shared with resize_test.go (same package); declared
-// there.
+// stripANSI is shared across integration tests in the same package
+// (declared in helpers.go).
+
+// colorTermEnv returns the minimal environment overrides that force
+// the spawned spy binary to detect a 256-color-capable terminal
+// WITHOUT triggering Bubble Tea's interactive terminal probes.
+//
+// We set only COLORTERM=truecolor — internal/term.detectColorDepth
+// short-circuits to ColorTrueColor when COLORTERM is set, so spy's
+// renderer engages without needing TERM. Setting TERM=xterm-256color
+// would also work for spy but causes Bubble Tea (via termenv) to
+// query OSC 11 + cursor position interactively, hanging indefinitely
+// when the test PTY doesn't run a responder. Leaving TERM empty
+// keeps Bubble Tea in its conservative no-probe path.
+//
+// COLORFGBG=15;0 short-circuits any termenv background probe by
+// providing the foreground+background colour directly (per the
+// xterm-style env contract termenv reads).
+//
+// Without these overrides, GH Actions runners don't carry COLORTERM
+// in their CI shell and `term.Detect` returns ColorMono — every
+// highlighter-dependent assertion (US1, US3, US5) fails on CI even
+// though the product is correct.
+func colorTermEnv() map[string]string {
+	return map[string]string{
+		"COLORTERM": "truecolor",
+		"COLORFGBG": "15;0",
+	}
+}

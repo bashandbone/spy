@@ -245,20 +245,27 @@ func run(args []string, stdin *os.File) int {
 	// `caught` so the post-Run path can decide between exit-on-signal
 	// (128+signum) and exit-on-clean-quit (exitOK).
 	//
-	// `caught` is buffered (cap 1) so the send never blocks; the
-	// goroutine exits as soon as either a signal arrives or the
-	// notification is stopped (sigCh delivers no further values after
-	// the deferred signal.Stop above, but the goroutine remains
-	// blocked on <-sigCh until process exit — acceptable since run()
-	// itself is about to return).
+	// `caught` is buffered (cap 1) so the send never blocks. A
+	// separate `done` channel lets the forwarding goroutine exit
+	// cleanly when run() returns without receiving a signal —
+	// `signal.Stop(sigCh)` unregisters delivery but does not close
+	// sigCh, so a bare `<-sigCh` would leak the goroutine across
+	// every test invocation that exercises run() (Copilot review
+	// PR#15 #8).
 	caught := make(chan os.Signal, 1)
+	done := make(chan struct{})
+	defer close(done)
 	go func() {
-		sig, ok := <-sigCh
-		if !ok {
+		select {
+		case sig, ok := <-sigCh:
+			if !ok {
+				return
+			}
+			caught <- sig
+			prog.Send(tea.Quit())
+		case <-done:
 			return
 		}
-		caught <- sig
-		prog.Send(tea.Quit())
 	}()
 
 	if _, err := prog.Run(); err != nil {

@@ -6,23 +6,46 @@ package integration
 
 import (
 	"regexp"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
 )
 
-// TestStdinPipe_HighlightedDiff is the US5 PTY-driven integration
+// itoa is a tiny convenience for assembling the per-iteration
+// fixture body inline; using strconv keeps the dep surface
+// honest.
+func itoa(i int) string { return strconv.Itoa(i) }
+
+// TestStdinPipe_HighlightedGoSource is the US5 PTY-driven integration
 // test (T088): spawn `spy -l go` with stdin connected to a pipe (NOT
 // a PTY) carrying a Go source snippet, and stdout connected to a
-// PTY. Assert the alt-screen frame surfaces the highlighted content
-// and the footer reads `<stdin>` (not a basename), then quit cleanly.
+// PTY. Assert the alt-screen frame surfaces the highlighted content,
+// the footer reads `<stdin>` (not a basename), the down-arrow scroll
+// advances the viewport, then quit cleanly.
 //
 // `-l go` pins the lexer so the assertion isn't sensitive to Chroma's
 // content-sniff heuristic for short snippets.
-func TestStdinPipe_HighlightedDiff(t *testing.T) {
-	input := []byte("package main\n\nimport \"fmt\"\n\nfunc bar() {\n\tfmt.Println(\"hi\")\n}\n")
+//
+// Renamed from TestStdinPipe_HighlightedDiff after Copilot review on
+// PR#15: the test never carried diff content, so the prior name was
+// misleading.
+func TestStdinPipe_HighlightedGoSource(t *testing.T) {
+	// 50-line Go source — enough to overflow the default 24-row
+	// viewport so down-arrow scroll has somewhere to scroll TO.
+	// (Earlier 7-line input fit on one screen; down-arrow was a
+	// no-op and the post-scroll diff assertion always failed.)
+	var src []byte
+	src = append(src, "package main\n\nimport \"fmt\"\n\nfunc bar() {\n"...)
+	for i := 0; i < 50; i++ {
+		src = append(src, []byte("\tfmt.Println(\"line "+itoa(i)+"\")\n")...)
+	}
+	src = append(src, "}\n"...)
+	input := src
 
-	p, stdin := NewPTYProgramWithStdin(t, []string{"--no-config", "-l", "go"}, nil, PTYOptions{})
+	// Force a 256-color PTY env so the highlighter engages —
+	// see the comment on colorTermEnv (text_review_test.go) for why.
+	p, stdin := NewPTYProgramWithStdin(t, []string{"--no-config", "-l", "go"}, colorTermEnv(), PTYOptions{})
 
 	// Write input synchronously, close to signal EOF (the loader
 	// then collapses the streaming "…" to the final line count).
@@ -56,14 +79,21 @@ func TestStdinPipe_HighlightedDiff(t *testing.T) {
 	}
 
 	// Down arrow exercises the scroll path on stdin-sourced buffers
-	// (FR-002 plus FR-005). The viewport is short, so any movement
-	// is fine — we just want to confirm the input handler reaches
-	// the renderer through the stdin source path.
-	for i := 0; i < 3; i++ {
+	// (FR-002 + FR-005). Capture the pre-scroll content and assert
+	// the post-scroll snapshot differs — without this, a broken
+	// input handler that silently drops keystrokes would still
+	// pass since "the screen renders something" trivially holds.
+	preScroll := stripANSI(string(p.Snapshot()))
+	for i := 0; i < 5; i++ {
 		p.Send("\x1b[B")
-		time.Sleep(20 * time.Millisecond)
+		time.Sleep(30 * time.Millisecond)
 	}
-	time.Sleep(150 * time.Millisecond)
+	time.Sleep(200 * time.Millisecond)
+	postScroll := stripANSI(string(p.Snapshot()))
+	if postScroll == preScroll {
+		t.Fatalf("down-arrow input did not change rendered content; pre-tail=%q post-tail=%q",
+			truncTail([]byte(preScroll), 200), truncTail([]byte(postScroll), 200))
+	}
 
 	for i := 0; i < 5 && !waitExitShort(p, 250*time.Millisecond); i++ {
 		p.Send("q")

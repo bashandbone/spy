@@ -9,14 +9,9 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 	"time"
 )
-
-// silence unused-import warnings during incremental edits — bytes
-// and strings are referenced by the helpers below.
-var _ = bytes.MinRead
 
 // TestSearch_NavigatesAndJumps is the US2 PTY-driven integration test
 // (T051): drive the search prompt against a 10 000-line file (one
@@ -65,6 +60,18 @@ func TestSearch_NavigatesAndJumps(t *testing.T) {
 		t.Fatalf(":$ jump did not reach end; snapshot tail=%q", truncTail(p.Snapshot(), 600))
 	}
 
+	// 4. Re-search /9999 then `n` — the wrap-around path. With one
+	//    literal "9999" in the buffer, `n` immediately wraps; the
+	//    UI surfaces "search wrapped" as a status advisory. We
+	//    assert on the advisory text rather than viewport state
+	//    because the cursor stays on the same match across wrap.
+	if !sendUntil(p, "/9999\r", "9999", 5*time.Second) {
+		t.Fatalf("re-search /9999 did not surface match; snapshot tail=%q", truncTail(p.Snapshot(), 600))
+	}
+	if !sendUntil(p, "n", "search wrapped", 3*time.Second) {
+		t.Fatalf("`n` did not surface 'search wrapped' advisory; snapshot tail=%q", truncTail(p.Snapshot(), 600))
+	}
+
 	// Quit.
 	for i := 0; i < 5 && !waitExitShort(p, 250*time.Millisecond); i++ {
 		p.Send("q")
@@ -77,13 +84,17 @@ func TestSearch_NavigatesAndJumps(t *testing.T) {
 	}
 }
 
-// TestSearch_VimMode_GG_G_Ctrl_D_Ctrl_U exercises the vim-mode
-// additive bindings against the same 10 000-line fixture.
+// TestSearch_VimMode_GG_G exercises the vim-mode jump bindings
+// against the same 10 000-line fixture.
 //
-// `--vim` enables `gg`, `G`, `Ctrl-D`, `Ctrl-U` on top of the default
-// arrow keymap. The default arrow keys still work (additive, not
-// replacement) but this test focuses on the vim-only additions.
-func TestSearch_VimMode_GG_G_Ctrl_D_Ctrl_U(t *testing.T) {
+// `--vim` enables `gg` and `G` on top of the default arrow keymap.
+// The default arrow keys still work (additive, not replacement) but
+// this test focuses on the vim jump bindings covered below.
+// Ctrl-D / Ctrl-U coverage is deferred — they're bound (default.go
+// `ActionHalfPage{Up,Down}` routed via `WithVim`) but the half-page
+// distance assertion needs viewport-anchor introspection that the
+// current PTY harness doesn't expose.
+func TestSearch_VimMode_GG_G(t *testing.T) {
 	dir := t.TempDir()
 	fixture := filepath.Join(dir, "big.txt")
 	var src bytes.Buffer
@@ -164,9 +175,3 @@ func sendUntil(p *PTYProgram, keys, needle string, timeout time.Duration) bool {
 	}
 	return false
 }
-
-// keep imports live across edits.
-var (
-	_ = strings.Contains
-	_ = bytes.Contains
-)

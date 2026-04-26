@@ -6,6 +6,7 @@ package integration
 
 import (
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -68,16 +69,36 @@ func TestPDF_MultiPage_PageNavigation(t *testing.T) {
 		t.Fatalf("first paint missing PDF sentinel; snapshot tail=%q", truncTail([]byte(first), 400))
 	}
 
-	// `]` advances Page from 1 to 2.
-	p.Send("]")
-	time.Sleep(300 * time.Millisecond)
-
-	frame := string(p.Snapshot())
-	// The footer should now indicate page 2 of 3 (statusbar PDF format).
-	// We don't pin the exact format string; "2" near "3" near a footer
-	// marker is enough signal.
-	if !strings.Contains(frame, "2") || !strings.Contains(frame, "3") {
-		t.Fatalf("footer did not advance to page 2/3; snapshot tail=%q", truncTail([]byte(frame), 400))
+	// `]` advances Page from 1 to 2. We assert on the structured
+	// `Page N` footer marker (from internal/render/statusbar.go's
+	// PDF format) rather than bare digits — page numbers appear
+	// inside gutters / content / file-size strings, which made the
+	// prior "contains 2 and 3" check trivially true regardless of
+	// whether the page actually advanced.
+	//
+	// The total-page suffix (`/3`) is not pinned because pdfcpu's
+	// page-count discovery on multi-page.pdf isn't always populated
+	// by the time the first paint ships in the no-fitz path
+	// (statusbar branches to bare `Page N` when Meta.PageCount == 0).
+	// Asserting on the prefix alone keeps the test honest about what
+	// the v0.1.0 footer guarantees.
+	//
+	// The `]` keystroke is sent through a small retry loop because
+	// the first keystroke after first paint is occasionally dropped
+	// (same quirk documented in pty_sanity_test.go's quit loop).
+	pageAdvanced := false
+	for i := 0; i < 5; i++ {
+		p.Send("]")
+		time.Sleep(150 * time.Millisecond)
+		frame := stripANSI(string(p.Snapshot()))
+		if regexp.MustCompile(`Page\s*2\b`).MatchString(frame) {
+			pageAdvanced = true
+			break
+		}
+	}
+	if !pageAdvanced {
+		t.Fatalf("footer did not advance to 'Page 2' after 5 retries; stripped tail=%q",
+			truncTail([]byte(stripANSI(string(p.Snapshot()))), 400))
 	}
 
 	for i := 0; i < 5 && !waitExitShort(p, 250*time.Millisecond); i++ {
