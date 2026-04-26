@@ -112,12 +112,18 @@ func pollReadOSC(ctx context.Context, fd int) []byte {
 				break
 			}
 		}
-		if err == syscall.EAGAIN {
+		switch err {
+		case syscall.EAGAIN:
 			time.Sleep(5 * time.Millisecond)
-			continue
-		}
-		if err != nil {
-			break
+		case syscall.EINTR:
+			// Signal interrupted the read; retry immediately.
+		case nil:
+			// n==0 with no error means EOF/hangup on the tty.
+			if n == 0 {
+				return out
+			}
+		default:
+			return out
 		}
 	}
 	return out
