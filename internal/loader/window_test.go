@@ -231,8 +231,8 @@ func TestLineBuffer_SetTokensRespectsWindowedStartLine(t *testing.T) {
 	// Trigger windowed mode: maxResidentBytes very small.
 	buf := NewLineBuffer(8, 2, nil)
 	buf.Append([]source.Line{
-		{Number: 1, Raw: "aaaaa"}, // 5 bytes
-		{Number: 2, Raw: "bbbbb"}, // 10 bytes total → over cap → evict 1
+		{Number: 1, Raw: "aaaaa"}, // 5 bytes raw + 24 struct overhead → over 8-byte cap
+		{Number: 2, Raw: "bbbbb"},
 		{Number: 3, Raw: "ccccc"},
 	})
 	if !buf.Windowed() {
@@ -263,12 +263,11 @@ func TestLineBuffer_SetTokensRespectsWindowedStartLine(t *testing.T) {
 
 // TestLineBuffer_ClearWrapCaches verifies the wrap-cache invalidation
 // contract used by the UI's Ctrl-W toggle (T100c) and future
-// width-change handlers. Seeds [source.Line.Wrapped] on every resident
-// line via direct field access (same package), then confirms
-// [LineBuffer.ClearWrapCaches] resets every entry to nil. Living in
-// the loader package means we don't have to expose a test-only
-// SeedWrapped affordance on the production [LineBuffer] API
-// (Copilot review PR#13 #2).
+// width-change handlers. Seeds the wrapped side-channel map directly
+// (same package), then confirms [LineBuffer.ClearWrapCaches] resets
+// every entry to nil. Living in the loader package means we don't have
+// to expose a test-only SeedWrapped affordance on the production
+// [LineBuffer] API (Copilot review PR#13 #2).
 func TestLineBuffer_ClearWrapCaches(t *testing.T) {
 	src := &fakeSource{body: repeatLines(8, "alpha beta gamma"), kind: source.KindText}
 	s, err := Open(context.Background(), src, Config{})
@@ -280,14 +279,17 @@ func TestLineBuffer_ClearWrapCaches(t *testing.T) {
 	if buf == nil {
 		t.Fatal("expected non-nil Buffer")
 	}
-	// Seed Wrapped on every resident line via direct field access.
+	// Seed the wrapped side-channel map directly (same package access).
 	buf.mu.Lock()
 	if len(buf.lines) == 0 {
 		buf.mu.Unlock()
 		t.Fatal("buffer is empty; can't seed wrap caches")
 	}
-	for i := range buf.lines {
-		buf.lines[i].Wrapped = []string{"cached"}
+	if buf.wrapped == nil {
+		buf.wrapped = make(map[int64][]string)
+	}
+	for _, sl := range buf.lines {
+		buf.wrapped[sl.Number] = []string{"cached"}
 	}
 	buf.mu.Unlock()
 
@@ -295,9 +297,9 @@ func TestLineBuffer_ClearWrapCaches(t *testing.T) {
 
 	buf.mu.Lock()
 	defer buf.mu.Unlock()
-	for i, l := range buf.lines {
-		if l.Wrapped != nil {
-			t.Errorf("line %d Wrapped not cleared: %#v", i, l.Wrapped)
+	for _, sl := range buf.lines {
+		if w := buf.wrapped[sl.Number]; w != nil {
+			t.Errorf("line %d Wrapped not cleared: %#v", sl.Number, w)
 		}
 	}
 }
