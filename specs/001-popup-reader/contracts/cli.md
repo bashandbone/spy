@@ -137,7 +137,7 @@ Stable across patch releases; backward-incompatible only with major version
 bumps. Exact format produced by Go's `flag.Usage`. Example shape:
 
 ```text
-Usage: spy [OPTIONS] [FILE]
+Usage: spy [OPTIONS] [FILE | -]
 A focused popup viewer for text, code, PDFs, and images.
 
 Options:

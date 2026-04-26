@@ -41,14 +41,19 @@ const (
 )
 
 func main() {
-	os.Exit(run(os.Args[1:]))
+	os.Exit(run(os.Args[1:], os.Stdin))
 }
 
-// run is the testable entry point: takes argv (without argv[0]) and
-// returns the exit code. Side effects (alt-screen, panic-safe restore,
-// graphics cleanup) all live here so tests can drive the parse path
-// without spinning up tea.NewProgram.
-func run(args []string) int {
+// run is the testable entry point: takes argv (without argv[0]) and a
+// stdin handle, returning the exit code. Side effects (alt-screen,
+// panic-safe restore, graphics cleanup) all live here so tests can
+// drive the parse path without spinning up tea.NewProgram.
+//
+// Tests pass nil for `stdin` to exercise the "no input available"
+// branch deterministically; production wiring threads `os.Stdin`
+// through so the contract from contracts/cli.md "Stdin behavior"
+// applies.
+func run(args []string, stdin *os.File) int {
 	pf, err := ParseFlags(args)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "spy: %v\n", err)
@@ -113,11 +118,11 @@ func run(args []string) int {
 	// auto-detected protocol alone (Copilot review PR#7 #1).
 	caps.Graphics = applyGraphicsOverride(caps.Graphics, cfg.Graphics)
 
-	// 3. Pick source. FromArgs honours file paths; "-" / stdin
-	//    construction is deferred to US5 so we surface ErrNoInput here
-	//    as exit 2 (matching contracts/cli.md "missing argument when
-	//    stdin is a TTY").
-	src, err := source.FromArgs(pf.Args, os.Stdin, pf.Lang)
+	// 3. Pick source. FromArgs handles the full resolution table from
+	//    contracts/cli.md: file paths, "-" forced stdin, auto-stdin
+	//    when stdin is non-TTY and no FILE was given. ErrNoInput here
+	//    means "missing FILE and stdin is a TTY" — exit 2.
+	src, err := source.FromArgs(pf.Args, stdin, pf.Lang)
 	if err != nil {
 		return exitForSourceError(err, pf.Args)
 	}
@@ -281,10 +286,19 @@ func exitForSourceError(err error, args []string) int {
 	}
 	switch {
 	case errors.Is(err, source.ErrNoInput):
-		// Phase 2 returns ErrNoInput regardless of stdin TTY state
-		// because StdinSource lands in US5; the message reflects the
-		// real condition (Copilot review PR#7 #18).
-		fmt.Fprintf(os.Stderr, "spy: no input: missing FILE; stdin is not supported yet\n")
+		// US5 turned StdinSource on: ErrNoInput now reflects the
+		// real "no FILE and stdin is a TTY (or absent)" condition.
+		// contracts/cli.md row "absent no yes yes" expects exit 2
+		// with usage printed (Copilot review PR#12 round-3 #8) — the
+		// short error line precedes the full --help output so the
+		// user sees both the cause and the available flags.
+		fmt.Fprintf(os.Stderr, "spy: no input: missing FILE; pipe content via stdin or pass a path\n\n")
+		WriteHelp(os.Stderr)
+		return exitUsageError
+	case errors.Is(err, source.ErrAmbiguousArgs):
+		// `-` alongside FILE, or multiple FILEs — the contract row
+		// "present yes — yes" is a usage error mapped to exit 2.
+		fmt.Fprintf(os.Stderr, "spy: usage: %v\n", err)
 		return exitUsageError
 	case errors.Is(err, source.ErrNotFound):
 		fmt.Fprintf(os.Stderr, "spy: cannot open: %s: not found\n", target)

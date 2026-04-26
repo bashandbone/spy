@@ -293,6 +293,33 @@ func TestPromptLine_SuppressesAnsiInMonoTheme(t *testing.T) {
 	}
 }
 
+// TestFooter_StdinDisplayName pins T094 — when the source is a
+// [source.StdinSource], its DisplayName ("<stdin>") flows verbatim
+// through the footer plumbing without being mistaken for a path. The
+// foundational footer wraps the name with [filepath.Base], which is a
+// no-op on a token containing no separators.
+func TestFooter_StdinDisplayName(t *testing.T) {
+	t.Parallel()
+	stdinSrc := source.NewStdinSource(strings.NewReader("alpha\nbeta\n"), "")
+	stream, err := loader.Open(context.Background(), stdinSrc, loader.Config{})
+	if err != nil {
+		t.Fatalf("loader.Open(stdin): %v", err)
+	}
+	m := NewModel(ModelOptions{
+		Source:       stdinSrc,
+		Stream:       stream,
+		Capabilities: term.Capabilities{Cols: 80, Rows: 24},
+		Config:       config.Defaults(),
+		Theme:        render.ThemeDark(),
+		KeyMap:       keys.Default(),
+	})
+	m, _ = applyResize(m, 80, 10)
+	out := m.View()
+	if !strings.Contains(out, "<stdin>") {
+		t.Errorf("stdin footer should contain <stdin>; got %q", out)
+	}
+}
+
 func TestFooter_SuppressesAnsiInColorMonoCaps(t *testing.T) {
 	t.Parallel()
 	// ColorMono caps (TERM=dumb / NO_COLOR=1) must suppress chrome
