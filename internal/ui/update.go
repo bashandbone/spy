@@ -235,6 +235,7 @@ func (m Model) onKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		if m.searchCancel != nil {
 			m.searchCancel()
+			m.searchCancel = nil
 		}
 		return m, tea.Quit
 	}
@@ -461,6 +462,22 @@ func (m Model) runSearch(query string, dir search.Direction) (tea.Model, tea.Cmd
 		caseMode = caseModeFromConfig(m.cfg.CaseMode, caseMode)
 	}
 	cleaned, regex, caseMode := stripSearchPrefixes(query, regex, caseMode)
+	// Cancel any in-flight scan and invalidate its result BEFORE
+	// validating the new query. If compile fails or the cleaned query
+	// is empty we still need to drop the prior search's pending state
+	// so its result can't clobber the error advisory we set below
+	// (PR#22 Copilot review — failed compile while a search is Pending
+	// would otherwise leave the prior gen unchanged and let the slow
+	// scan apply over the "invalid pattern" advisory).
+	if m.searchCancel != nil {
+		m.searchCancel()
+		m.searchCancel = nil
+	}
+	m.searchGen++
+	// Clear Pending now; the success path below re-installs Pending=true
+	// with the new query, while early returns leave it false so the
+	// renderer / footer don't lie about a scan in flight.
+	m.search.Pending = false
 	if cleaned == "" {
 		// All-prefix queries (e.g. typed `\c` then immediately Enter)
 		// don't have anything to match — surface a soft advisory rather
@@ -480,15 +497,8 @@ func (m Model) runSearch(query string, dir search.Direction) (tea.Model, tea.Cmd
 			from = 1
 		}
 	}
-	// Cancel any in-flight scan so its goroutine exits before we spawn
-	// a fresh one (rapid-typing pile-up guard).
-	if m.searchCancel != nil {
-		m.searchCancel()
-		m.searchCancel = nil
-	}
-	// Bump the generation BEFORE installing the new state so the
-	// captured value the goroutine ships back is the post-bump gen.
-	m.searchGen++
+	// Capture the post-bump gen for the goroutine to ship back, then
+	// install a fresh searchCancel for the supersede / reload paths.
 	gen := m.searchGen
 	ctx, cancel := context.WithCancel(context.Background())
 	m.searchCancel = cancel
@@ -734,6 +744,7 @@ func (m Model) runCommand(cmd string) (tea.Model, tea.Cmd) {
 		}
 		if m.searchCancel != nil {
 			m.searchCancel()
+			m.searchCancel = nil
 		}
 		return m, tea.Quit
 	}
@@ -1055,6 +1066,16 @@ func (m Model) onReload() (tea.Model, tea.Cmd) {
 	// Bump searchGen so any post-cancel result that races through still
 	// gets dropped by onSearchResult's stale guard.
 	m.searchGen++
+	// Reload swaps the underlying buffer; any prior matches no longer
+	// map to valid line offsets, and the in-flight result will be
+	// dropped on arrival (gen mismatch). Clear the transient search
+	// state explicitly so the UI doesn't display stale highlights or
+	// a stuck "scan in flight" indicator after the buffer swap (PR#22
+	// Copilot review — without this, Pending stays true indefinitely
+	// when reload races with a Pending search).
+	m.search.Pending = false
+	m.search.Matches = nil
+	m.search.CurrentMatch = 0
 	src := m.source
 	cfg := m.cfg
 	return m, func() tea.Msg {

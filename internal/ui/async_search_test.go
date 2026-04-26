@@ -397,3 +397,107 @@ func TestH5_CompileErrorPathStaysSynchronous(t *testing.T) {
 		t.Errorf("compile-error path must not leave Pending=true")
 	}
 }
+
+// TestH5_CompileErrorCancelsPriorInFlightSearch regression-guards the
+// fix from PR#22 Copilot review: if the user submits a query that
+// fails [search.Compile] while a prior async search is still Pending,
+// runSearch MUST cancel that prior scan and bump searchGen so its
+// result is dropped on arrival. Pre-fix the cancel/bump happened only
+// after a successful compile, so the prior scan's matches would land
+// AFTER the "invalid pattern" advisory and silently overwrite it.
+func TestH5_CompileErrorCancelsPriorInFlightSearch(t *testing.T) {
+	t.Parallel()
+	m := newTestModel(t, "alpha\nfoo\nbar\nfoo\n")
+	m.cfg.RegexDefault = true
+	m, _ = applyResize(m, 80, 24)
+	m = drainStream(t, m)
+
+	// First search — capture its cmd without applying the result yet.
+	mm, cmd1 := m.runSearch("foo", search.DirForward)
+	m = mm.(Model)
+	priorGen := m.searchGen
+	realPriorCancel := m.searchCancel
+	if realPriorCancel == nil {
+		t.Fatalf("first runSearch should install searchCancel")
+	}
+	priorCancelCalled := false
+	m.searchCancel = func() {
+		priorCancelCalled = true
+		realPriorCancel()
+	}
+	res1Msg := cmd1()
+	res1, ok := res1Msg.(searchResultMsg)
+	if !ok {
+		t.Fatalf("cmd1: expected searchResultMsg; got %T", res1Msg)
+	}
+	staleGen := res1.gen
+
+	// Second submission: invalid regex. Must cancel the prior scan
+	// AND bump gen so the still-pending res1 is now stale.
+	mm2, cmd2 := m.runSearch("[invalid", search.DirForward)
+	post := mm2.(Model)
+	if cmd2 != nil {
+		t.Errorf("invalid pattern should not dispatch a cmd; got non-nil")
+	}
+	if !strings.Contains(post.statusAdvisory, "invalid pattern") {
+		t.Errorf("expected 'invalid pattern' advisory; got %q", post.statusAdvisory)
+	}
+	if !priorCancelCalled {
+		t.Errorf("compile-error path MUST cancel a prior in-flight search — " +
+			"without this its result would clobber the error advisory")
+	}
+	if post.searchGen <= priorGen {
+		t.Errorf("compile-error path must bump searchGen (was %d, now %d) so the prior result is stale",
+			priorGen, post.searchGen)
+	}
+	if post.searchGen == staleGen {
+		t.Fatalf("post-error searchGen still matches the prior cmd's gen %d — its result would not be dropped", staleGen)
+	}
+
+	// Now feed the prior scan's result through Update; it must be
+	// dropped (gen mismatch) and must NOT clobber the advisory.
+	updated, _ := post.Update(res1)
+	final := updated.(Model)
+	if !strings.Contains(final.statusAdvisory, "invalid pattern") {
+		t.Errorf("stale prior-scan result clobbered the error advisory: %q", final.statusAdvisory)
+	}
+	if len(final.search.Matches) != 0 {
+		t.Errorf("stale prior-scan result populated Matches: got %d", len(final.search.Matches))
+	}
+	if final.search.Pending {
+		t.Errorf("Pending must stay false after compile-error + stale result")
+	}
+}
+
+// TestH5_ReloadClearsInFlightSearchState regression-guards the fix
+// from PR#22 Copilot review: a reload that races with a Pending
+// search must explicitly clear Pending / Matches / CurrentMatch.
+// Pre-fix, the gen bump invalidated the result on arrival but the
+// model still showed Pending=true indefinitely (the cancelled result
+// drops Pending, but a gen-mismatched result is a no-op so the flag
+// would have stayed stuck forever).
+func TestH5_ReloadClearsInFlightSearchState(t *testing.T) {
+	t.Parallel()
+	m := newTestModel(t, "foo\nbar\nfoo\n")
+	m, _ = applyResize(m, 80, 24)
+	m = drainStream(t, m)
+
+	mm, _ := m.runSearch("foo", search.DirForward)
+	m = mm.(Model)
+	if !m.search.Pending {
+		t.Fatalf("precondition: search should be Pending after dispatch")
+	}
+
+	updated, _ := m.Update(reloadMsg{})
+	post := updated.(Model)
+	if post.search.Pending {
+		t.Errorf("reload must clear search.Pending; otherwise a Pending+stale-gen race leaves Pending stuck on")
+	}
+	if post.search.Matches != nil {
+		t.Errorf("reload must clear search.Matches (offsets no longer map to the new buffer); got len=%d",
+			len(post.search.Matches))
+	}
+	if post.search.CurrentMatch != 0 {
+		t.Errorf("reload must reset search.CurrentMatch to 0; got %d", post.search.CurrentMatch)
+	}
+}
