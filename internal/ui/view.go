@@ -5,11 +5,12 @@
 package ui
 
 import (
-	"fmt"
 	"path/filepath"
 
 	"github.com/charmbracelet/lipgloss"
 
+	"github.com/knitli/spy/internal/render"
+	"github.com/knitli/spy/internal/source"
 	"github.com/knitli/spy/internal/term"
 )
 
@@ -53,49 +54,58 @@ func (m Model) promptLine() string {
 	return m.theme.PromptLine.Render(line)
 }
 
-// footerLine renders the foundational footer: <displayname> | <total>
-// lines | Line <current>. Streaming renders a "…" indicator until the
-// loader emits its EOF chunk.
+// footerLine renders the US6 status bar via [render.StatusBarRender].
+// The model collects the dynamic state (current line, streaming flag,
+// PDF page cursor, advisory) into a [render.StatusInput] and lets the
+// status-bar package handle the format + collapse logic.
 func (m Model) footerLine() string {
 	name := "<no source>"
+	kind := source.KindUnknown
+	var meta source.Metadata
 	if m.source != nil {
 		name = filepath.Base(m.source.DisplayName())
+		kind = m.source.Kind()
+		meta = m.source.Metadata()
 	}
-	total := int64(0)
-	if m.stream != nil && m.stream.Buffer != nil {
-		total = m.stream.Buffer.Total()
+	// Surface the running / finalized total via Metadata.LineCount so
+	// the status bar's "<n>… lines" indicator stays accurate while the
+	// loader is still streaming AND flips to the final count after
+	// EOF. Prefer the [metaUpdatedMsg]-cached m.totalLines once it's
+	// non-zero so the footer doesn't take the buffer mutex on every
+	// paint; while streaming the cache is zero and we read the
+	// running total from the buffer instead.
+	if m.totalLines > 0 {
+		meta.LineCount = m.totalLines
+	} else if m.stream != nil && m.stream.Buffer != nil {
+		meta.LineCount = m.stream.Buffer.Total()
 	}
-	// Ask the renderer to map the viewport's visual row at top to the
-	// matching source line; that's the only path that stays consistent
-	// across windowed-mode eviction (Copilot review PR#7 #15) and
-	// word-wrap inflation (Copilot review PR#7 #24). For empty input
-	// the renderer returns 0 which doubles as the contracts/cli.md
-	// "Line 0" footer sentinel (Copilot review PR#7 #6).
 	current := int64(0)
 	if m.renderer != nil {
+		// Map the viewport's visual top row to the matching source
+		// line; that's the only path that stays consistent across
+		// windowed-mode eviction (Copilot review PR#7 #15) and
+		// word-wrap inflation (Copilot review PR#7 #24). For empty
+		// input the renderer returns 0 which doubles as the
+		// contracts/cli.md "Line 0" footer sentinel.
 		current = m.renderer.RowToLine(m.renderContext(), m.viewport.YOffset)
 	}
-
-	totalDisplay := fmt.Sprintf("%d", total)
-	if m.streaming {
-		totalDisplay = fmt.Sprintf("%d…", total)
+	page := 0
+	if kind == source.KindPDF {
+		page = m.page
 	}
-	advisory := ""
-	if m.statusAdvisory != "" {
-		advisory = " | " + m.statusAdvisory
+	in := render.StatusInput{
+		DisplayName: name,
+		Meta:        meta,
+		Viewport:    m.viewport,
+		Width:       m.width,
+		Current:     current,
+		Page:        page,
+		Streaming:   m.streaming,
+		Advisory:    m.statusAdvisory,
+		Mono:        m.isMono(),
+		Kind:        kind,
 	}
-	line := fmt.Sprintf(" %s | %s lines | Line %d%s ", name, totalDisplay, current, advisory)
-	// Pad to full width; lipgloss Width() handles ANSI / wide chars.
-	pad := m.width - lipgloss.Width(line)
-	if pad > 0 {
-		line += pads(pad)
-	}
-	if m.isMono() {
-		// Mono mode: bypass lipgloss styling so the footer stays
-		// ANSI-free (Copilot review PR#9 round-3 #3).
-		return line
-	}
-	return m.theme.Footer.Render(line)
+	return render.StatusBarRender(in, m.theme)
 }
 
 // isMono reports whether the active session is in mono / no-color

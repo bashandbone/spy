@@ -59,13 +59,29 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.status == render.StatusStreaming {
 			m.status = render.StatusIdle
 		}
-		return m, nil
+		return m, metaUpdatedCmd(m.stream)
 	case reloadMsg:
 		return m.onReload()
 	case reloadResultMsg:
 		return m.onReloadResult(msg)
 	case openResultMsg:
 		return m.onOpenResult(msg)
+	case metaUpdatedMsg:
+		// Cache the finalized line count on the model so the footer
+		// reads it on subsequent paints without taking the buffer
+		// mutex (Copilot review PR#13 round-2 #4 + #5 — TotalLines
+		// has an observable consumer). No re-render is issued here:
+		// the model state that drives the footer (m.streaming, the
+		// buffer's pinned Total) has already been mutated by
+		// [onChunk] / [streamDoneMsg] before metaUpdatedMsg arrives,
+		// and Bubble Tea re-invokes [View] after every Update — so
+		// the footer flips from "…" to the final count automatically
+		// without doubling the EOF render work (Copilot review PR#13
+		// round-1 #3).
+		if msg.TotalLines > 0 {
+			m.totalLines = msg.TotalLines
+		}
+		return m, nil
 	}
 	return m, nil
 }
@@ -109,7 +125,8 @@ func (m Model) onOpenResult(msg openResultMsg) (tea.Model, tea.Cmd) {
 		Source:       m.source,
 	}
 	m.renderer = render.ForKind(kind, deps)
-	m.page = 1 // reset PDF page cursor on source swap
+	m.page = 1       // reset PDF page cursor on source swap
+	m.totalLines = 0 // clear the cached finalized count; new source restarts streaming
 	m.streaming = true
 	m.status = render.StatusStreaming
 	if m.stream != nil && m.stream.First.EOF {
@@ -188,6 +205,15 @@ func (m Model) onKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	}
 	if matchAction(m.keyMap, keys.ActionReload, msg) {
 		return m, func() tea.Msg { return reloadMsg{} }
+	}
+	if matchAction(m.keyMap, keys.ActionToggleLineNumbers, msg) {
+		return m.onToggleLineNumbers()
+	}
+	if matchAction(m.keyMap, keys.ActionToggleWordWrap, msg) {
+		return m.onToggleWordWrap()
+	}
+	if matchAction(m.keyMap, keys.ActionOpenFile, msg) {
+		return m.onOpenFilePrompt()
 	}
 	if matchAction(m.keyMap, keys.ActionSearchForward, msg) {
 		m.openPrompt('/')
@@ -700,13 +726,89 @@ func (m Model) runOpenCommand(path string) (tea.Model, tea.Cmd) {
 	}
 }
 
+// onToggleLineNumbers flips [config.Config.LineNumbers] and rebuilds
+// the renderer so the gutter appears or disappears on the next paint.
+// T100c.
+func (m Model) onToggleLineNumbers() (tea.Model, tea.Cmd) {
+	if m.cfg == nil {
+		return m, nil
+	}
+	m.cfg.LineNumbers = !m.cfg.LineNumbers
+	m.rebuildRenderer()
+	if m.renderer != nil {
+		m.viewport.SetContent(m.renderer.Render(m.renderContext()))
+	}
+	return m, nil
+}
+
+// onToggleWordWrap flips [config.Config.WordWrap], invalidates the
+// loader buffer's wrap cache, and rebuilds the renderer so the next
+// paint re-wraps from scratch at the active width. T100c.
+func (m Model) onToggleWordWrap() (tea.Model, tea.Cmd) {
+	if m.cfg == nil {
+		return m, nil
+	}
+	m.cfg.WordWrap = !m.cfg.WordWrap
+	if m.stream != nil && m.stream.Buffer != nil {
+		m.stream.Buffer.ClearWrapCaches()
+	}
+	m.rebuildRenderer()
+	if m.renderer != nil {
+		m.viewport.SetContent(m.renderer.Render(m.renderContext()))
+	}
+	return m, nil
+}
+
+// onOpenFilePrompt opens the command-line prompt pre-populated with
+// the `:open ` prefix. The user types the path and presses Enter; on
+// Enter the existing `:open` command handler in [runCommand] does the
+// loader.Open + source swap. Esc closes the prompt without loading.
+// T100c.
+func (m Model) onOpenFilePrompt() (tea.Model, tea.Cmd) {
+	m.commandLine.Active = true
+	m.commandLine.Prefix = ':'
+	m.commandLine.Buffer = "open "
+	m.commandLine.HistoryCursor = -1
+	return m, nil
+}
+
+// rebuildRenderer reconstructs [render.Dependencies] from the current
+// session state and invokes [render.ForKind] so the renderer's cached
+// LineNumbers / WordWrap / Theme reflect the latest config. Used by
+// the toggle handlers and the `:set theme …` runtime swap.
+func (m *Model) rebuildRenderer() {
+	kind := source.KindUnknown
+	lang := ""
+	if m.source != nil {
+		kind = m.source.Kind()
+		lang = m.source.Metadata().Language
+	}
+	deps := render.Dependencies{
+		Theme:        m.theme,
+		Capabilities: m.caps,
+		Highlighter:  m.highlighter,
+		LineNumbers:  m.cfg != nil && m.cfg.LineNumbers,
+		WordWrap:     m.cfg != nil && m.cfg.WordWrap,
+		Language:     lang,
+		Source:       m.source,
+	}
+	m.renderer = render.ForKind(kind, deps)
+}
+
 // onChunk re-renders the viewport on every chunk arrival so streamed
 // content appears progressively. The buffer is updated by the loader
 // itself; the highlighter populates Tokens, then [LineBuffer.SetTokens]
 // pushes those tokens into the buffer's stored copies so subsequent
 // renders / scrolls don't re-lex (Copilot review PR#8 #3).
+//
+// On EOF the handler fires a follow-up [metaUpdatedMsg] so the status
+// bar's "<running>… lines" indicator flips to the final pinned total
+// on the next paint (T100). The follow-up is sequenced after the
+// in-line [viewport.SetContent] so the footer's "…" disappears
+// immediately rather than waiting for the next user keystroke.
 func (m Model) onChunk(msg chunkLoadedMsg) (tea.Model, tea.Cmd) {
-	if msg.chunk.EOF {
+	hitEOF := msg.chunk.EOF
+	if hitEOF {
 		m.streaming = false
 		if m.status == render.StatusStreaming {
 			m.status = render.StatusIdle
@@ -723,7 +825,21 @@ func (m Model) onChunk(msg chunkLoadedMsg) (tea.Model, tea.Cmd) {
 	if m.streaming {
 		return m, waitForChunk(m.stream)
 	}
+	if hitEOF {
+		return m, metaUpdatedCmd(m.stream)
+	}
 	return m, nil
+}
+
+// metaUpdatedCmd returns a tea.Cmd that yields a [metaUpdatedMsg]
+// carrying the buffer's pinned total. nil-safe for streams without a
+// buffer (degenerate test models).
+func metaUpdatedCmd(s *loader.Stream) tea.Cmd {
+	if s == nil || s.Buffer == nil {
+		return nil
+	}
+	total := s.Buffer.Total()
+	return func() tea.Msg { return metaUpdatedMsg{TotalLines: total} }
 }
 
 // onReload implements ActionReload. Cancels the in-flight loader,
@@ -769,6 +885,7 @@ func (m Model) onReloadResult(msg reloadResultMsg) (tea.Model, tea.Cmd) {
 	m.status = render.StatusStreaming
 	m.streaming = true
 	m.lastError = nil
+	m.totalLines = 0 // reload restarts streaming; finalized cache must clear
 	if m.stream.First.EOF {
 		m.streaming = false
 		m.status = render.StatusIdle

@@ -117,6 +117,14 @@ type Model struct {
 	// Defaults to 1 so the first paint shows page 1 even when the
 	// user hasn't pressed `]` / `[` yet.
 	page int
+
+	// totalLines caches the source's finalized line count once
+	// [metaUpdatedMsg] arrives. Zero while streaming (the footer
+	// falls back to [loader.LineBuffer.Total] in that case). The
+	// cache lets the footer read the post-EOF total without hitting
+	// the buffer mutex on every paint and gives the metaUpdatedMsg
+	// payload an observable consumer.
+	totalLines int64
 }
 
 // NewModel constructs the viewer's Bubble Tea model. The first frame
@@ -203,6 +211,24 @@ type streamDoneMsg struct {
 // reloadMsg requests a fresh loader.Open against the current Source.
 // Fired by the keymap's ActionReload binding.
 type reloadMsg struct{}
+
+// metaUpdatedMsg announces that the loader has finalized the source's
+// total line count. The model fires it as a follow-up tea.Cmd
+// whenever it observes an EOF chunk so the status bar can flip from
+// "<running>… lines" to the final "<total> lines" rendering on the
+// next paint without waiting for another scroll / resize / chunk to
+// trigger a redraw.
+//
+// Per T100 (specs/001-popup-reader/tasks.md). The handler stores
+// TotalLines on [Model.totalLines] so the footer reads the cached
+// finalized count instead of taking the buffer mutex on every paint;
+// while streaming the cache is zero and the footer falls back to
+// [loader.LineBuffer.Total]. This is the message's observable effect
+// (Copilot review PR#13 round-2 #4 + #5 — TotalLines is consumed,
+// the docstring no longer claims the handler "simply re-renders").
+type metaUpdatedMsg struct {
+	TotalLines int64
+}
 
 // reloadResultMsg carries the outcome of an in-flight reload request.
 // On success Stream and (optional) Cancel replace the model's; on
