@@ -11,15 +11,37 @@ import (
 	"testing"
 )
 
-// FromArgs in Phase 2 only constructs FileSource; stdin/StdinSource is
-// added in US5 (T090–T091). When stdin would be required, the result is
-// ErrNoInput so callers can produce the documented "spy: no input"
-// stderr message.
+// FromArgs is the entry point picking between FileSource (US1) and
+// StdinSource (US5). The resolution table is in contracts/cli.md. The
+// tests below exercise every distinguishable cell.
 //
-// The compile-time `var _ source.LineProvider = (*loader.LineBuffer)(nil)`
-// assertion called for in T017 is added in T020 once loader.LineBuffer
-// exists; placing it here now would break the source phase's `go test
-// ./internal/source/...` until the loader phase lands.
+// Stdin TTY-state is detected via xterm.IsTerminal(int(stdin.Fd())); the
+// pipe-backed `*os.File` from os.Pipe() reports false (i.e., non-TTY)
+// which is the path the integration suite drives in CI. Tests passing
+// `nil` exercise the "no stdin available at all" branch the binary uses
+// when a caller explicitly forwards no stream.
+
+// pipeFile returns an `*os.File` that satisfies "non-TTY stdin" without
+// requiring a real pty. The read end of an os.Pipe is a regular fd that
+// `xterm.IsTerminal` reports as false.
+func pipeFile(t *testing.T) *os.File {
+	t.Helper()
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("os.Pipe: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = r.Close()
+		_ = w.Close()
+	})
+	if _, err := w.WriteString("hello from pipe\n"); err != nil {
+		t.Fatalf("pipe write: %v", err)
+	}
+	if err := w.Close(); err != nil {
+		t.Fatalf("pipe close: %v", err)
+	}
+	return r
+}
 
 func TestFromArgs_FilePath(t *testing.T) {
 	p := filepath.Join(t.TempDir(), "x.txt")
@@ -38,9 +60,9 @@ func TestFromArgs_FilePath(t *testing.T) {
 	}
 }
 
-func TestFromArgs_NoArgs(t *testing.T) {
-	// Phase 2: stdin construction is deferred to US5; no args + no stdin
-	// → ErrNoInput regardless of TTY state.
+func TestFromArgs_NoArgsNoStdin(t *testing.T) {
+	// Both args and stdin are empty: nothing to display. ErrNoInput is
+	// the documented exit-2 condition.
 	_, err := FromArgs(nil, nil, "")
 	if err == nil {
 		t.Fatal("expected ErrNoInput")
@@ -50,15 +72,52 @@ func TestFromArgs_NoArgs(t *testing.T) {
 	}
 }
 
-func TestFromArgs_DashIsNoInputUntilUS5(t *testing.T) {
-	// Phase 2 contract: explicit "-" returns ErrNoInput (StdinSource is
-	// US5). After US5 this test will be replaced/extended.
-	_, err := FromArgs([]string{"-"}, nil, "")
-	if err == nil {
-		t.Fatal("expected ErrNoInput for '-' positional")
+func TestFromArgs_NoArgsNonTTYStdin(t *testing.T) {
+	// `... | spy` shape: no args, stdin is a pipe (non-TTY) →
+	// StdinSource auto-selected.
+	src, err := FromArgs(nil, pipeFile(t), "")
+	if err != nil {
+		t.Fatalf("FromArgs: %v", err)
 	}
-	if !errors.Is(err, ErrNoInput) {
-		t.Errorf("expected ErrNoInput, got %v", err)
+	if src == nil {
+		t.Fatal("nil source")
+	}
+	if src.DisplayName() != "<stdin>" {
+		t.Errorf("DisplayName: got %q want %q", src.DisplayName(), "<stdin>")
+	}
+}
+
+func TestFromArgs_DashForcesStdin(t *testing.T) {
+	// `spy -` shape: explicit dash forces StdinSource regardless of
+	// TTY state. We pass the pipe so detection works in tests; in
+	// production this is `os.Stdin` and would block on a TTY until
+	// Ctrl-D, which is the documented contract.
+	src, err := FromArgs([]string{"-"}, pipeFile(t), "")
+	if err != nil {
+		t.Fatalf("FromArgs: %v", err)
+	}
+	if src == nil {
+		t.Fatal("nil source")
+	}
+	if src.DisplayName() != "<stdin>" {
+		t.Errorf("DisplayName: got %q want %q", src.DisplayName(), "<stdin>")
+	}
+}
+
+func TestFromArgs_FileWinsOverStdin(t *testing.T) {
+	// File argument plus a non-TTY stdin: file wins, stdin is ignored.
+	// Per contracts/cli.md "When a file argument is present, stdin is
+	// never read, even if it is non-TTY."
+	p := filepath.Join(t.TempDir(), "x.txt")
+	if err := os.WriteFile(p, []byte("hi"), 0o644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	src, err := FromArgs([]string{p}, pipeFile(t), "")
+	if err != nil {
+		t.Fatalf("FromArgs: %v", err)
+	}
+	if src.DisplayName() != "x.txt" {
+		t.Errorf("file should win; DisplayName got %q", src.DisplayName())
 	}
 }
 

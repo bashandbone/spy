@@ -186,3 +186,60 @@ func TestDetectKind_HintWinsOverContent(t *testing.T) {
 		t.Errorf("hint .go: got %v want %v", got, KindCode)
 	}
 }
+
+// Stdin language inference (US5 / T086) — `detectKind` is the one place
+// where shebang detection and content sniffing meet. The fallback rules
+// match research R5 step 5.
+func TestDetectKind_ShebangPython(t *testing.T) {
+	body := "#!/usr/bin/env python\nprint('hi')\n"
+	got, lex, err := detectKind(strings.NewReader(body), "")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got != KindCode {
+		t.Errorf("python shebang: got %v want %v", got, KindCode)
+	}
+	if !strings.EqualFold(lex, "python") {
+		t.Errorf("python shebang lexer: got %q want %q", lex, "python")
+	}
+}
+
+func TestDetectKind_ShebangBash(t *testing.T) {
+	body := "#!/usr/bin/env bash\nset -euo pipefail\necho hi\n"
+	got, _, err := detectKind(strings.NewReader(body), "")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got != KindCode {
+		t.Errorf("bash shebang: got %v want %v", got, KindCode)
+	}
+}
+
+func TestDetectKind_HintOverridesShebang(t *testing.T) {
+	// Hint always wins, even when the shebang would have classified
+	// differently. Mirrors `--lang go` over a piped Python script.
+	body := "#!/usr/bin/env python\nfmt.Println(\"hi\")\n"
+	got, lex, err := detectKind(strings.NewReader(body), "go")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got != KindCode {
+		t.Errorf("hint=go over shebang: got %v want %v", got, KindCode)
+	}
+	if !strings.EqualFold(lex, "go") {
+		t.Errorf("hint=go lexer: got %q want %q", lex, "go")
+	}
+}
+
+func TestDetectKind_PlainTextWhenNothingMatches(t *testing.T) {
+	// No shebang, no language signal, no extension. detectKind degrades
+	// to KindText so the renderer just prints the lines verbatim.
+	body := "the quick brown fox jumps over the lazy dog\n"
+	got, _, err := detectKind(strings.NewReader(body), "")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got != KindText {
+		t.Errorf("plain text fallback: got %v want %v", got, KindText)
+	}
+}

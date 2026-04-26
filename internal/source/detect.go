@@ -58,7 +58,18 @@ func detectKind(r io.Reader, hint string) (Kind, string, error) {
 		return KindBinary, "", fmt.Errorf("%w: %d control bytes in first %d", ErrBinary, controlByteCount(buf), len(buf))
 	}
 
-	// 3. Chroma Analyse.
+	// 3a. Shebang (US5 / T092). Stdin and unhinted files may carry an
+	// interpreter declaration on line 1 — Chroma's `Analyse` doesn't
+	// score short snippets reliably, so we look for the shebang
+	// explicitly. The interpreter name is mapped to a Chroma lexer; an
+	// unknown interpreter falls through to the rest of the pipeline.
+	if interp := shebangInterpreter(buf); interp != "" {
+		if lex := lexers.Get(interp); lex != nil && !isPlaintextLexer(lex.Config().Name) {
+			return KindCode, lex.Config().Name, nil
+		}
+	}
+
+	// 3b. Chroma Analyse.
 	if lex := lexers.Analyse(string(buf)); lex != nil {
 		cfg := lex.Config()
 		// Plaintext / fallback lexer is not "code" — degrade to KindText.
@@ -69,6 +80,74 @@ func detectKind(r io.Reader, hint string) (Kind, string, error) {
 
 	// 4. Text fallback.
 	return KindText, "", nil
+}
+
+// shebangInterpreter inspects the first line of `buf` for a `#!` line
+// and returns the interpreter basename (e.g. "python", "bash") that a
+// Chroma lexer name lookup will recognise. Returns "" when the buffer
+// has no shebang or the interpreter is unrecognisable.
+//
+// Forms handled:
+//
+//	#!/usr/bin/env python      → "python"
+//	#!/usr/bin/env -S python3  → "python3" (collapses to "python" via fallback)
+//	#!/usr/local/bin/python3.11 → "python3" → fallback "python"
+//	#!/bin/bash                → "bash"
+//	#!/usr/bin/perl -w         → "perl"
+//
+// Trailing version digits (e.g. "python3", "ruby2.7") are tried
+// verbatim first, then with the digits trimmed so language hints land
+// on a real Chroma lexer in the common case.
+func shebangInterpreter(buf []byte) string {
+	if len(buf) < 2 || buf[0] != '#' || buf[1] != '!' {
+		return ""
+	}
+	end := bytes.IndexByte(buf, '\n')
+	if end < 0 {
+		end = len(buf)
+	}
+	line := strings.TrimSpace(string(buf[2:end]))
+	if line == "" {
+		return ""
+	}
+	// Tokenise on whitespace; drop `env` / `-S` flags so
+	// `/usr/bin/env -S python3` collapses to "python3".
+	fields := strings.Fields(line)
+	for i, f := range fields {
+		base := filepath.Base(f)
+		switch base {
+		case "env":
+			continue
+		}
+		if strings.HasPrefix(f, "-") && i > 0 {
+			continue
+		}
+		// Strip a trailing version suffix like "3.11" but keep the leading
+		// language token so chroma's `lexers.Get("python")` resolves.
+		name := strings.ToLower(base)
+		if name != "" {
+			if trimmed := trimVersionSuffix(name); trimmed != "" {
+				return trimmed
+			}
+			return name
+		}
+	}
+	return ""
+}
+
+// trimVersionSuffix returns the language portion of an interpreter name
+// like "python3.11" → "python", "ruby2.7" → "ruby", "node18" → "node".
+// If the name has no digits the input is returned unchanged.
+func trimVersionSuffix(name string) string {
+	for i, r := range name {
+		if r >= '0' && r <= '9' {
+			if i == 0 {
+				return name
+			}
+			return name[:i]
+		}
+	}
+	return name
 }
 
 // classifyByName picks a Kind from a filename / hint. The hint may be a

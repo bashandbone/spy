@@ -59,12 +59,8 @@ func ParseFlags(args []string) (*ParsedFlags, error) {
 // flag surface and `--help` output cannot drift (Copilot review PR#7
 // #30). Includes the usage header and examples; the flag list itself
 // comes from [flag.FlagSet.PrintDefaults].
-//
-// Stdin examples (`cat ... | spy`, `git diff | spy`) are intentionally
-// omitted because Phase 2 has not yet implemented StdinSource — those
-// land in US5.
 func WriteHelp(w io.Writer) {
-	fmt.Fprintln(w, "Usage: spy [OPTIONS] [FILE]")
+	fmt.Fprintln(w, "Usage: spy [OPTIONS] [FILE | -]")
 	fmt.Fprintln(w, "A focused popup viewer for text, code, PDFs, and images.")
 	fmt.Fprintln(w)
 	fmt.Fprintln(w, "Options:")
@@ -77,6 +73,8 @@ func WriteHelp(w io.Writer) {
 	fmt.Fprintln(w, "  spy README.md")
 	fmt.Fprintln(w, "  spy --theme=light README.md")
 	fmt.Fprintln(w, "  spy -l go ./cmd/spy/main.go")
+	fmt.Fprintln(w, "  cat hello.go | spy -l go")
+	fmt.Fprintln(w, "  git diff HEAD~ | spy")
 }
 
 // buildFlagSet wires every flag the contracts/cli.md surface defines
