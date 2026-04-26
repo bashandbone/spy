@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/alecthomas/chroma/v2/styles"
+	"github.com/charmbracelet/bubbles/viewport"
 
 	"github.com/knitli/spy/internal/highlight"
 	"github.com/knitli/spy/internal/loader"
@@ -247,5 +248,105 @@ func TestKindCode_FormatterMatchesColorDepth(t *testing.T) {
 		if (fm != nil) != tc.want {
 			t.Errorf("depth=%v: formatter present=%v want %v", tc.depth, fm != nil, tc.want)
 		}
+	}
+}
+
+// TestKindCode_ViewportWindowLimitsHighlighting verifies that when a
+// viewport height is supplied, only lines within the visible window
+// receive ANSI syntax highlighting while lines outside are emitted as
+// raw text. This is the SC-004 viewport-bounded behaviour.
+func TestKindCode_ViewportWindowLimitsHighlighting(t *testing.T) {
+	deps := newCodeDeps(t, "go", false, false)
+	r := ForKind(source.KindCode, deps)
+
+	// Build a 20-line buffer; viewport shows rows 5-9 (5 lines starting at yOffset=5).
+	const totalLines = 20
+	var lines []string
+	for i := 0; i < totalLines; i++ {
+		lines = append(lines, "x := 1")
+	}
+	buf := loadLines(t, strings.Join(lines, "\n")+"\n")
+
+	vp := viewport.New(80, 5)
+	vp.YOffset = 5
+
+	out := r.Render(RenderContext{
+		Buffer:       buf,
+		Viewport:     vp,
+		Theme:        deps.Theme,
+		Capabilities: deps.Capabilities,
+	})
+
+	rows := strings.Split(strings.TrimRight(out, "\n"), "\n")
+	if len(rows) != totalLines {
+		t.Fatalf("expected %d output rows, got %d", totalLines, len(rows))
+	}
+
+	// Rows 5–9 (0-indexed) should have ANSI; the rest should not.
+	for i, row := range rows {
+		hasANSI := strings.Contains(row, "\x1b[")
+		wantANSI := i >= 5 && i < 10
+		if hasANSI != wantANSI {
+			t.Errorf("row %d: hasANSI=%v wantANSI=%v (row=%q)", i, hasANSI, wantANSI, row)
+		}
+	}
+}
+
+// TestKindCode_ViewportUnknownHeightRendersAll verifies that when the
+// viewport height is zero (before the first WindowSizeMsg), all lines
+// are treated as visible and receive syntax highlighting.
+func TestKindCode_ViewportUnknownHeightRendersAll(t *testing.T) {
+	deps := newCodeDeps(t, "go", false, false)
+	r := ForKind(source.KindCode, deps)
+	buf := loadLines(t, "a := 1\nb := 2\nc := 3\n")
+
+	// Zero viewport → viewportKnown=false → all lines visible.
+	out := r.Render(RenderContext{
+		Buffer:       buf,
+		Theme:        deps.Theme,
+		Capabilities: deps.Capabilities,
+	})
+
+	if !strings.Contains(out, "\x1b[") {
+		t.Error("zero viewport: expected ANSI escapes for all lines, got none")
+	}
+	rows := strings.Split(strings.TrimRight(out, "\n"), "\n")
+	for i, row := range rows {
+		if !strings.Contains(row, "\x1b[") {
+			t.Errorf("zero viewport: row %d missing ANSI escape (row=%q)", i, row)
+		}
+	}
+}
+
+// TestKindCode_ViewportCacheReusesFormattedOutput verifies that the
+// per-line cache in codeRenderer avoids re-invoking styleLine for lines
+// that have already been rendered in the same renderer's lifetime.
+func TestKindCode_ViewportCacheReusesFormattedOutput(t *testing.T) {
+	deps := newCodeDeps(t, "go", false, false)
+	cr := ForKind(source.KindCode, deps).(*codeRenderer)
+	buf := loadLines(t, "func main() {}\n")
+
+	vp := viewport.New(80, 10)
+	ctx := RenderContext{
+		Buffer:       buf,
+		Viewport:     vp,
+		Theme:        deps.Theme,
+		Capabilities: deps.Capabilities,
+	}
+
+	// First render populates the cache.
+	out1 := cr.Render(ctx)
+	if cr.cache == nil {
+		t.Fatal("cache should be non-nil after first render")
+	}
+	if len(cr.cache) == 0 {
+		t.Fatal("cache should have at least one entry after first render")
+	}
+
+	// Second render with the same context should produce identical output
+	// (served from cache).
+	out2 := cr.Render(ctx)
+	if out1 != out2 {
+		t.Errorf("second render produced different output:\nfirst:  %q\nsecond: %q", out1, out2)
 	}
 }

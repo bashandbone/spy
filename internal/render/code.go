@@ -30,21 +30,27 @@ import (
 // line so colour escapes don't straddle wrap boundaries. The mixed
 // behaviour is the documented Phase 3 limitation; an ANSI-aware wrap
 // arrives in Phase 9 polish.
+//
+// The renderer maintains a per-line formatted-output cache (lineNum →
+// styled string) so subsequent repaints in the same theme avoid
+// re-invoking Chroma for lines that were already visible. The cache is
+// implicitly invalidated whenever the renderer is rebuilt (theme swap,
+// word-wrap toggle, line-number toggle, etc.).
 type codeRenderer struct {
-	deps Dependencies
+	deps               Dependencies
+	cache              map[int64]string // lineNum → Chroma-formatted string; populated on demand
+	lastResidentStart  int64            // last known resident start line; used to prune stale cache entries
 }
 
-// Render walks the resident hot region of the buffer and emits one
-// formatted line per source line, with optional gutter line numbers
-// and rune-bound soft-wrap.
+// Render walks the resident buffer and emits one formatted line per
+// source line, with optional gutter line numbers and rune-bound
+// soft-wrap.
 //
-// PERF NOTE (SC-004 gap): this implementation formats every resident
-// line on every paint rather than just the lines that fall inside the
-// viewport's vertical window. At 10 000 lines that's outside the
-// 16 ms p95 theme-swap budget — see tests/perf/theme_swap_bench_test.go.
-// Refactoring to a viewport-windowed render is tracked as a Phase 9
-// follow-up; the per-frame `viewport.SetContent(Render(ctx))` call site
-// in internal/ui/update.go is unchanged once the windowed Render lands.
+// Only lines within the viewport's visible window are syntax-highlighted
+// (SC-004); lines outside that window are emitted as raw text so
+// re-render cost is bounded by the viewport height, not by the total
+// buffer size. Wrap is still applied to out-of-window lines so the
+// viewport's row-count arithmetic and max-scroll position stay correct.
 func (r *codeRenderer) Render(ctx RenderContext) string {
 	if ctx.Buffer == nil {
 		return "(empty)\n"
@@ -65,6 +71,14 @@ func (r *codeRenderer) Render(ctx RenderContext) string {
 		width = ctx.Capabilities.Cols
 	}
 
+	// Viewport window in visual-row coordinates. When height is zero
+	// (first paint before WindowSizeMsg arrives), treat every line as
+	// visible so the initial render populates the cache.
+	yOffset := ctx.Viewport.YOffset
+	height := ctx.Viewport.Height
+	viewportKnown := height > 0
+	viewEnd := yOffset + height
+
 	active, hasActive := activeMatch(ctx.Search)
 	// In mono mode (`--no-color` / NO_COLOR=1 / TERM=dumb), the match
 	// overlay must not emit ANSI — even via lipgloss styles applied
@@ -72,17 +86,52 @@ func (r *codeRenderer) Render(ctx RenderContext) string {
 	// violation (Copilot review PR#9 round-3 #1). When mono is active
 	// we still mark matched lines but as raw text without colouring.
 	mono := ctx.Theme.Mono || ctx.Capabilities.ColorDepth == term.ColorMono
+
+	// Prune cache entries for lines that the LineBuffer has already
+	// evicted from its resident window. This keeps the cache bounded by
+	// the live resident range rather than the cumulative set of all
+	// lines ever scrolled through.
+	residentStart := ctx.Buffer.ResidentStartLine()
+	if residentStart > r.lastResidentStart {
+		r.pruneCacheBefore(residentStart)
+		r.lastResidentStart = residentStart
+	}
+
+	visualRow := 0
 	for _, l := range lines {
 		prefix := ""
 		if r.deps.LineNumbers {
 			prefix = fmt.Sprintf("%*d  ", gutter, l.Number)
 		}
+		prefixLen := len(prefix)
+
 		// Lines with search matches use the dedicated overlay path so
 		// the highlight wraps tightly around the match span. The
 		// documented limitation: matched lines lose chroma syntax
 		// colour; the caret/active match is still visible.
 		lineMatches := matchesForLine(ctx.Search, l.Number)
-		if len(lineMatches) > 0 {
+		hasMatches := len(lineMatches) > 0
+
+		// Compute the visual rows this source line will actually occupy in
+		// the rendered output. Match-overlay lines always emit exactly one
+		// row (no wrapping); all other lines may wrap when WordWrap is on.
+		// Using the actual row count here keeps visualRow in sync with the
+		// rendered output so inViewport stays accurate for subsequent lines.
+		lineRows := 1
+		if !hasMatches && r.deps.WordWrap && width > prefixLen {
+			lineRows = visualRowsForLine(l.Raw, width-prefixLen)
+		}
+		lineVisualEnd := visualRow + lineRows
+
+		// Is this line within the visible viewport window?
+		// Interval overlap: line [visualRow, lineVisualEnd) overlaps viewport
+		// [yOffset, viewEnd) when lineVisualEnd > yOffset && visualRow < viewEnd.
+		// A line whose last row equals yOffset is just above the window (excluded);
+		// a line whose first row equals viewEnd is just below (excluded).
+		inViewport := !viewportKnown || (lineVisualEnd > yOffset && visualRow < viewEnd)
+
+		switch {
+		case hasMatches:
 			b.WriteString(prefix)
 			if mono {
 				// Mono mode: bypass lipgloss styling — emit the raw
@@ -95,28 +144,66 @@ func (r *codeRenderer) Render(ctx RenderContext) string {
 				b.WriteString(applyMatchHighlights(l.Raw, lineMatches, active, hasActive, ctx.Theme.SearchHit, ctx.Theme.SearchActive))
 			}
 			b.WriteByte('\n')
-			continue
-		}
-		if !r.deps.WordWrap || width <= 0 || lineExceedsWidth(l.Raw, len(prefix), width) {
-			if r.deps.WordWrap && width > 0 {
-				// Long line + wrap on: fall back to raw text so wrap math
-				// stays correct. The styled (ANSI) emission is reserved
-				// for lines that fit on a single visual row.
-				writeWrappedLine(&b, prefix, neutralizeEscapes(l.Raw), width)
-				continue
-			}
-			styled := r.styleLine(l)
+
+		case inViewport && r.deps.WordWrap && width > 0 && lineExceedsWidth(l.Raw, prefixLen, width):
+			// In viewport, long line, wrap on: fall back to raw text so
+			// wrap math stays correct. The styled emission is reserved for
+			// lines that fit on a single visual row.
+			writeWrappedLine(&b, prefix, neutralizeEscapes(l.Raw), width)
+
+		case inViewport:
+			// In viewport, fits or no-wrap mode: emit syntax-highlighted.
+			styled := r.styledCached(l)
 			b.WriteString(prefix)
 			b.WriteString(styled)
 			b.WriteByte('\n')
-			continue
+
+		case r.deps.WordWrap && width > 0 && lineExceedsWidth(l.Raw, prefixLen, width):
+			// Outside viewport, long line, wrap on: emit raw wrapped to
+			// preserve the correct visual row count for scroll arithmetic.
+			writeWrappedLine(&b, prefix, neutralizeEscapes(l.Raw), width)
+
+		default:
+			// Outside viewport, short line or no-wrap: emit raw text.
+			b.WriteString(prefix)
+			b.WriteString(neutralizeEscapes(l.Raw))
+			b.WriteByte('\n')
 		}
-		styled := r.styleLine(l)
-		b.WriteString(prefix)
-		b.WriteString(styled)
-		b.WriteByte('\n')
+
+		visualRow = lineVisualEnd
 	}
 	return b.String()
+}
+
+// styledCached returns the Chroma-formatted rendition of l, using the
+// renderer's per-line cache to avoid re-invoking Chroma for lines that
+// have already been painted in this renderer's lifetime. The cache is
+// implicitly invalidated when the renderer is rebuilt (theme swap,
+// word-wrap toggle, line-number toggle, etc.).
+func (r *codeRenderer) styledCached(l source.Line) string {
+	if r.cache != nil {
+		if cached, ok := r.cache[l.Number]; ok {
+			return cached
+		}
+	}
+	styled := r.styleLine(l)
+	if r.cache == nil {
+		r.cache = make(map[int64]string)
+	}
+	r.cache[l.Number] = styled
+	return styled
+}
+
+// pruneCacheBefore deletes all cache entries for line numbers strictly
+// less than `firstResident`. Called when the LineBuffer's resident
+// window advances (windowed-mode eviction) so styled strings for
+// evicted lines don't accumulate indefinitely.
+func (r *codeRenderer) pruneCacheBefore(firstResident int64) {
+	for lineNum := range r.cache {
+		if lineNum < firstResident {
+			delete(r.cache, lineNum)
+		}
+	}
 }
 
 // RowToLine reuses the textRenderer's wrap math so the footer's "Line N"
