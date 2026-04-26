@@ -630,6 +630,115 @@ func TestUpdate_JumpToOutOfRangePageClampsToTotal(t *testing.T) {
 	}
 }
 
+// --- metaUpdatedMsg payload consumption ---
+
+func TestUpdate_MetaUpdatedMsgCachesTotalLines(t *testing.T) {
+	// Copilot review PR#13 round-2 #4 + #5: TotalLines must have an
+	// observable consumer. The handler stores the payload on
+	// m.totalLines; the footer then reads the cache instead of
+	// hitting the buffer mutex.
+	m := newTestModel(t, "alpha\nbeta\ngamma\n")
+	m, _ = applyResize(m, 80, 24)
+	if m.totalLines != 0 {
+		t.Errorf("totalLines should start at 0, got %d", m.totalLines)
+	}
+	updated, _ := m.Update(metaUpdatedMsg{TotalLines: 42})
+	mm := updated.(Model)
+	if mm.totalLines != 42 {
+		t.Errorf("metaUpdatedMsg payload not cached: got %d want 42", mm.totalLines)
+	}
+}
+
+func TestUpdate_MetaUpdatedMsgZeroPayloadIsIgnored(t *testing.T) {
+	// Defensive: a zero TotalLines (e.g. fired from a stream that
+	// closed before any lines were read) must not blow away an
+	// already-set cache.
+	m := newTestModel(t, "x\n")
+	m, _ = applyResize(m, 80, 24)
+	m.totalLines = 5
+	updated, _ := m.Update(metaUpdatedMsg{TotalLines: 0})
+	if updated.(Model).totalLines != 5 {
+		t.Errorf("zero payload should not stomp an existing cache; got %d want 5", updated.(Model).totalLines)
+	}
+}
+
+// --- T100b: toggle handlers (ActionToggleLineNumbers,
+// ActionToggleWordWrap, ActionOpenFile). ---
+
+func TestUpdate_ToggleLineNumbersFlipsConfigAndRerenders(t *testing.T) {
+	m := newTestModel(t, "alpha\nbeta\ngamma\n")
+	m, _ = applyResize(m, 80, 24)
+	if m.cfg == nil {
+		t.Fatal("cfg should be populated by newTestModel")
+	}
+	before := m.cfg.LineNumbers
+	beforeView := m.viewport.View()
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyCtrlL})
+	mm := updated.(Model)
+	if mm.cfg.LineNumbers == before {
+		t.Errorf("ActionToggleLineNumbers did not flip cfg.LineNumbers (still %v)", before)
+	}
+	// The renderer is rebuilt with the new flag — the rendered frame
+	// must change so the gutter appears or disappears on the next paint.
+	if mm.viewport.View() == beforeView {
+		t.Errorf("ActionToggleLineNumbers did not trigger a re-render (view unchanged)")
+	}
+}
+
+func TestUpdate_ToggleWordWrapFlipsConfigAndRerenders(t *testing.T) {
+	// The wrap-cache invalidation contract itself (ClearWrapCaches
+	// resets Line.Wrapped on every resident line) is exercised in
+	// internal/loader/window_test.go where the test can poke private
+	// buffer fields directly. Here we just verify that the toggle
+	// path flips the config flag and triggers a fresh render frame
+	// (Copilot review PR#13 #2 — no test-only affordance leaked into
+	// the production LineBuffer API).
+	body := strings.Repeat("alpha beta gamma delta epsilon zeta eta theta iota\n", 20)
+	m := newTestModel(t, body)
+	m, _ = applyResize(m, 40, 24)
+	before := m.cfg.WordWrap
+	beforeView := m.viewport.View()
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyCtrlW})
+	mm := updated.(Model)
+	if mm.cfg.WordWrap == before {
+		t.Errorf("ActionToggleWordWrap did not flip cfg.WordWrap (still %v)", before)
+	}
+	if mm.viewport.View() == beforeView {
+		t.Errorf("ActionToggleWordWrap did not trigger a re-render (view unchanged)")
+	}
+}
+
+func TestUpdate_ActionOpenFileOpensCommandPromptPreFilled(t *testing.T) {
+	m := newTestModel(t, "x\n")
+	m, _ = applyResize(m, 80, 24)
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'o'}})
+	mm := updated.(Model)
+	if !mm.commandLine.Active {
+		t.Fatal("ActionOpenFile should activate the command-line prompt")
+	}
+	if mm.commandLine.Prefix != ':' {
+		t.Errorf("ActionOpenFile prompt prefix: got %q want ':'", mm.commandLine.Prefix)
+	}
+	if mm.commandLine.Buffer != "open " {
+		t.Errorf("ActionOpenFile prompt buffer: got %q want \"open \"", mm.commandLine.Buffer)
+	}
+}
+
+func TestUpdate_ActionOpenFileEscClosesPromptWithoutLoad(t *testing.T) {
+	m := newTestModel(t, "x\n")
+	m, _ = applyResize(m, 80, 24)
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'o'}})
+	mm := updated.(Model)
+	updated2, _ := mm.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	mm2 := updated2.(Model)
+	if mm2.commandLine.Active {
+		t.Errorf("Esc should close the open-file prompt")
+	}
+	if mm2.commandLine.Buffer != "" {
+		t.Errorf("Esc should clear the open-file prompt buffer, got %q", mm2.commandLine.Buffer)
+	}
+}
+
 func TestLoaderConfigFromConfig(t *testing.T) {
 	cfg := &config.Config{MaxResidentBytes: 1024, WindowSize: 8}
 	got := loaderConfigFromConfig(cfg)
