@@ -215,7 +215,9 @@ func TestUpdate_ScrollHighlightsNewlyVisibleLines(t *testing.T) {
 		m = updated.(Model)
 	}
 	if m.viewport.YOffset == 0 {
-		t.Skip("viewport did not scroll; can't exercise this path")
+		view := m.viewport.View()
+		t.Fatalf("viewport did not scroll after %d KeyDown events; yOffset=%d, height=%d, view=%q",
+			viewHeight+5, m.viewport.YOffset, m.viewport.Height, view)
 	}
 
 	// The visible content must contain ANSI escapes — if the bug

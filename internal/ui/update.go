@@ -1027,15 +1027,43 @@ func (m *Model) rebuildRenderer() {
 	m.renderer = render.ForKind(kind, deps)
 }
 
+// needsScrollRerender reports whether a scroll operation must trigger a
+// full re-render of the viewport content. The only renderer that
+// requires this is [codeRenderer] when active syntax highlighting is
+// turned on: it deliberately limits Chroma to the visible window (the
+// SC-004 optimization), so a change in YOffset leaves newly-scrolled-in
+// lines un-highlighted unless we regenerate the content string.
+//
+// All other renderers (text, markdown, image, PDF, binary) produce
+// output that is independent of the scroll position and therefore don't
+// need their full frame regenerated on every keypress.
+func (m *Model) needsScrollRerender() bool {
+	if m.renderer == nil || m.viewport.Height == 0 {
+		return false
+	}
+	if m.source == nil || m.source.Kind() != source.KindCode {
+		return false
+	}
+	if m.highlighter == nil || m.highlighter.Disabled() {
+		return false
+	}
+	return !m.isMono()
+}
+
 // rerender updates the viewport content to reflect the current render
 // context, including the active YOffset. Called after any scroll
 // operation that changes the viewport position so lines newly scrolled
-// into view are syntax-highlighted. The renderer's per-line cache means
-// previously-visible lines are served from cache rather than
-// re-tokenised, keeping the re-render cost bounded by the number of
-// newly-visible lines.
+// into view are syntax-highlighted.
+//
+// The Chroma token cache means previously-visible lines are not
+// re-tokenised on subsequent re-renders, but Render() still iterates
+// every resident line to rebuild the full content string, so the cost
+// is proportional to the resident buffer size rather than only the
+// newly-visible lines. The [needsScrollRerender] gate keeps this call
+// path active only for code sources where window-bounded highlighting
+// is in play; all other source kinds are a no-op.
 func (m *Model) rerender() {
-	if m.renderer != nil {
+	if m.needsScrollRerender() {
 		m.viewport.SetContent(m.renderer.Render(m.renderContext()))
 	}
 }
