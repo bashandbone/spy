@@ -15,12 +15,24 @@
 # plus the explicit degenerate-cat case
 #   (d) `echo content | spy | cat` exits 0 with verbatim content.
 #
-# When T104 lands the script grows assertions that:
+# SC-011 deferral note (acceptance review M11): this script is intentionally
+# non-TTY only — it matches the text-only ScHelp model and cannot assert the
+# interactive `<stdin>`-in-footer contract from SC-011. That assertion (the
+# alt-screen footer literally rendering `<stdin>` rather than a basename)
+# is **deferred** to the PTY-driven integration suite at
+# `tests/integration/stdin_test.go` and `tests/integration/footer_test.go`,
+# both of which depend on the PTY harness shipped with T104. The shell
+# scaffolding here only pins the non-TTY pipeline shapes — the verbatim
+# degenerate-cat and exit-code contracts — and explicitly does NOT claim
+# to cover the footer-rendering half of SC-011.
+#
+# When the deferred PTY-driven tests lift their `t.Skip`s the assertions
+# they will land are:
 #   - the alt-screen frame's footer reads `<stdin>` (not a basename)
 #   - syntax highlighting is applied for shape (a) and (b)
 #   - `q` exits cleanly with code 0.
-# For now the script keeps US5 from regressing the `-` positional, the
-# auto-stdin pickup, and the verbatim-cat exit-0 contract.
+# Until then, this script keeps US5 from regressing the `-` positional,
+# the auto-stdin pickup, and the verbatim-cat exit-0 contract.
 
 # pipefail is critical here: shape (d) (`printf | spy | cat`) would
 # otherwise mask a non-zero spy exit because `cat` succeeds (Copilot

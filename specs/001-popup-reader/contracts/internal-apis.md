@@ -157,6 +157,7 @@ type Stream struct {
     First    Chunk             // populated synchronously before Stream is returned
     Updates  <-chan Chunk      // bounded buffer (cap = Config.UpdatesBuffer, default 4); closed on EOF or error
     Errs     <-chan error      // single-value channel; closed when no more errors
+    Buffer   *LineBuffer       // resident lines + windowing state; lives in internal/loader (see data-model.md package map)
 }
 
 // Open begins streaming. cfg.MaxResidentBytes triggers windowed mode.
@@ -254,11 +255,15 @@ func Cleanup(proto term.Graphics) string
 // panic. No-op for GraphicsNone, GraphicsITerm2, GraphicsSixel. Idempotent.
 func CleanupFunc(proto term.Graphics) func()
 
-// PDFPage rasterizes page n (1-indexed) of an open PDF into an image.Image.
-// Built only when the `fitz` build tag is present; the no-fitz stub returns
-// (nil, ErrPDFGraphicsUnavailable).
-func PDFPage(path string, n int, dpi float64) (image.Image, error)
 ```
+
+PDF rasterization lives in `internal/render` (not `internal/graphics`) and is
+unexported: `rasterizePDFPage(src source.Source, page int) (image.Image, error)`
+in `internal/render/pdf_fitz.go`, gated by the `fitz` build tag. The no-fitz
+stub in `internal/render/pdf_nofitz.go` returns `ErrPDFGraphicsUnavailable`.
+`page` is 0-indexed; there is no DPI parameter (the resolution is fixed by
+go-fitz's default rasterizer). The renderer in `internal/render/pdf.go` is the
+sole caller.
 
 ## `internal/render`
 
@@ -290,6 +295,14 @@ const (
 
 type Renderer interface {
     Render(ctx RenderContext) string
+    // RowToLine maps a 0-based visual row offset (relative to the rendered
+    // frame's first row) to the source line number visible at that row. Used
+    // by the status bar to keep the reported line number consistent with the
+    // rendered gutter once word-wrap inflates one source line into multiple
+    // visual rows. Returns 0 when the buffer is empty or the row is out of
+    // range; the caller treats 0 as the "Line 0" footer sentinel for empty
+    // input.
+    RowToLine(ctx RenderContext, visualRow int) int64
 }
 
 func ForKind(k source.Kind, deps Dependencies) Renderer
@@ -299,6 +312,24 @@ type Dependencies struct {
     Capabilities term.Capabilities
     Graphics     graphics.Renderer
     Highlighter  *highlight.Highlighter
+
+    // LineNumbers and WordWrap mirror the active config for the current
+    // session; renderers branch on them per frame so toggles
+    // (Ctrl-L / Ctrl-W) take effect on the next tick.
+    LineNumbers bool
+    WordWrap    bool
+
+    // Language is the Chroma lexer name picked at source detection time.
+    // Empty for non-code kinds; populated by `internal/ui` from
+    // source.Metadata.Language before constructing the renderer.
+    Language string
+
+    // Source is the active source.Source for the session. The image
+    // renderer re-opens it at render time (per research R2) so large GIFs
+    // don't pin a decoded copy in memory; the PDF renderer reads it for
+    // text extraction. Foundational text/code/markdown renderers ignore
+    // the field and pull lines from the loader's LineBuffer instead.
+    Source source.Source
 }
 ```
 
@@ -394,6 +425,21 @@ type ModelOptions struct {
     Config       *config.Config
     Theme        render.Theme
     KeyMap       keys.KeyMap
+
+    // BaseKeyMap is the non-vim keymap (defaults plus user [keys] overrides).
+    // The Model retains this so a runtime `:set novim` can restore it
+    // verbatim and `:set vim` can layer keys.WithVim on top without losing
+    // user overrides. When zero/nil, NewModel uses KeyMap as the base.
+    BaseKeyMap keys.KeyMap
+
+    // Highlighter is the per-session syntax highlighter. nil disables
+    // highlighting (used by the foundational text path and tests).
+    Highlighter *highlight.Highlighter
+
+    // Cancel cancels the loader's background streaming goroutine; the model
+    // fires it on tea.Quit so Open's goroutine exits before the program
+    // returns. Optional; nil is safe.
+    Cancel context.CancelFunc
 }
 
 // Implements tea.Model: Init, Update, View.
