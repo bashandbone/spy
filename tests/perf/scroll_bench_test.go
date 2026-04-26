@@ -82,9 +82,18 @@ func TestScroll_60fps(t *testing.T) {
 	sort.Slice(durations, func(i, j int) bool { return durations[i] < durations[j] })
 	p95 := durations[(len(durations)*95)/100]
 	const limit = 16 * time.Millisecond
+	// SC-002 has two clauses: p95 ≤ 16 ms AND zero dropped frames.
+	// Until this fix the dropped count was only mentioned in the p95
+	// failure message, so a regression that kept p95 under budget but
+	// produced (say) 4 dropped frames would silently pass. Assert
+	// both clauses independently.
 	if p95 > limit {
-		t.Fatalf("SC-002: scroll p95 %v exceeds %v budget (%d/%d frames over 16ms)",
+		t.Errorf("SC-002: scroll p95 %v exceeds %v budget (%d/%d frames over 16ms)",
 			p95, limit, dropped, scrolls)
+	}
+	if dropped > 0 {
+		t.Errorf("SC-002: %d/%d frames exceeded the 16 ms budget (zero-dropped-frames clause)",
+			dropped, scrolls)
 	}
 	t.Logf("SC-002: scroll p95=%v, dropped=%d/%d (limit %v); fastest=%v slowest=%v",
 		p95, dropped, scrolls, limit, durations[0], durations[len(durations)-1])
