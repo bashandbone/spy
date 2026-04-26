@@ -15,7 +15,7 @@ import (
 
 // markdownRenderer is the [KindMarkdown] renderer: passes the buffer's
 // raw lines through Glamour for prose-aware styling. Falls back to a
-// passthrough textRenderer when Glamour can't be initialised, the
+// passthrough textRenderer when Glamour can't be initialized, the
 // theme is mono, or the active color depth is mono.
 //
 // Glamour does its own word-wrap when given a non-zero width, so the
@@ -48,7 +48,7 @@ func (r *markdownRenderer) Render(ctx RenderContext) string {
 		return "(empty)\n"
 	}
 
-	// Glamour bypass when colour is suppressed: either the user / config
+	// Glamour bypass when color is suppressed: either the user / config
 	// flagged the theme Mono (NO_COLOR=1, --no-color, mono profile) or
 	// the terminal advertises ColorMono (TERM=dumb, no SGR support).
 	// Without this second check Glamour would still emit ANSI escapes
@@ -99,7 +99,7 @@ func (r *markdownRenderer) Render(ctx RenderContext) string {
 // inflation isn't perfectly mappable to source lines (it adds blank
 // rows around headings, etc.); the footer's "Line N" therefore tracks
 // the underlying source row, not the rendered visual row. This is the
-// documented Phase 3 behaviour — a perfect mapping arrives in the US6
+// documented Phase 3 behavior — a perfect mapping arrives in the US6
 // status-bar polish (T098).
 func (r *markdownRenderer) RowToLine(ctx RenderContext, visualRow int) int64 {
 	return r.fallback.RowToLine(ctx, visualRow)
@@ -121,7 +121,7 @@ func glamourStyleForTheme(theme Theme) string {
 // assembleRaw joins the raw line content with newlines so Glamour sees
 // the document as one Markdown blob.
 //
-// Each line is funnelled through [Neutralize] before concatenation:
+// Each line is funneled through [Neutralize] before concatenation:
 // Glamour's goldmark backend does not strip `\x1b` / `\x9b` bytes
 // from non-code-block content, so a markdown file with an embedded
 // OSC sequence (e.g. ` <!-- \x1b]2;evil\x07 --> `) would otherwise

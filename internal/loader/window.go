@@ -434,7 +434,7 @@ func (b *LineBuffer) Warnings() []error {
 // what makes the send race-free with the producer's close.
 //
 // The defer recover() is retained as belt-and-suspenders for any
-// future call site that fails to honour the contract; the only
+// future call site that fails to honor the contract; the only
 // expected panic is "send on closed channel" and recovering from it
 // is strictly safer than crashing the loader from a UI-driven
 // Slice() call. Re-panic on anything else so unrelated runtime
@@ -486,7 +486,7 @@ func (b *LineBuffer) SetWarningSink(ch chan<- error) {
 // recover() to swallow send-on-closed" pattern (LOW-4).
 //
 // Idempotent: safe to call from the producer's defer chain even if
-// the close has already been signalled (e.g. Open's error-path
+// the close has already been signaled (e.g. Open's error-path
 // returns before launching the streaming goroutine).
 func (b *LineBuffer) CloseWarningSink() {
 	b.mu.Lock()

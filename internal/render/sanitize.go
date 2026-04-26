@@ -24,7 +24,7 @@ func containsRawEscByte(s string) bool {
 // design: len(Neutralize(s)) == len(s) and every byte position other
 // than the replaced one is unchanged. Several callers (notably
 // [applyMatchHighlights] in match.go) compute byte offsets against
-// the pre-neutralised string and slice the post-neutralised string
+// the pre-neutralized string and slice the post-neutralized string
 // using those offsets — any change in length would misalign the
 // slices and could split a multi-byte UTF-8 sequence across a
 // highlight boundary.
@@ -32,13 +32,13 @@ func containsRawEscByte(s string) bool {
 // Why: a file whose content includes `\x1b]2;malicious\x07` — the OSC 2
 // "set window title" sequence — would, if rendered verbatim, change the
 // user's terminal title (or worse, with longer DCS / OSC payloads).
-// Neutralising at every emit boundary gives the user a faithful
+// Neutralizing at every emit boundary gives the user a faithful
 // representation of the file's bytes (the offsets, line numbers, and
 // search positions are unchanged) while removing the active payload.
 //
-// The trade-off: files that intentionally contain ANSI colour escapes
+// The trade-off: files that intentionally contain ANSI color escapes
 // (e.g., output from `git diff --color=always` redirected to disk) lose
-// their colour. That is an acceptable v0.1.0 default; a future
+// their color. That is an acceptable v0.1.0 default; a future
 // `--allow-ansi-passthrough` flag can opt back in once the
 // SGR-but-not-OSC discriminator is wired in.
 //
@@ -49,9 +49,9 @@ func containsRawEscByte(s string) bool {
 // marks in source files vs. correct match-highlight offsets across
 // every call site.
 //
-// Exported because cmd/spy uses it to sanitise file paths before
+// Exported because cmd/spy uses it to sanitize file paths before
 // stderr error writes — every byte that reaches the user's terminal
-// is funnelled through here when it could carry attacker-controlled
+// is funneled through here when it could carry attacker-controlled
 // content (filename, file body, PDF text-extraction output, status-bar
 // advisories).
 //

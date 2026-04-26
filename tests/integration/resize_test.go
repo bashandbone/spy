@@ -43,7 +43,7 @@ import (
 // p95 measurement is uncontaminated by PTY drain / terminal echo
 // latency. The PTY-driven dispatch is a separate test
 // (TestTextReview_HighlightedFile) that verifies end-to-end alt-screen
-// behaviour.
+// behavior.
 func TestResize_PreservesViewportAnchor(t *testing.T) {
 	body := buildSyntheticTextBuffer(10000)
 	src := &resizeMemSource{body: body, kind: source.KindText}
@@ -134,7 +134,7 @@ func TestResize_PreservesViewportAnchor(t *testing.T) {
 	p95 := durations[(len(durations)*95)/100]
 	// SC-008(c) target: ≤ 16 ms p95 — that's the spec's 60 fps
 	// promise. Asserting against 16 ms directly was flaky under
-	// commodity-CI load: a 15-run characterisation on a Linux dev
+	// commodity-CI load: a 15-run characterization on a Linux dev
 	// box (`worktree-agent-a3f8de9005071ecd4`) measured p95 in the
 	// 10.9 ms – 14.0 ms band on the 12 typical runs (mean ≈
 	// 12.6 ms, stdev ≈ 1.0 ms) but produced four tail observations

@@ -374,7 +374,7 @@ func TestSeenTerminator_LonelyBackslash(t *testing.T) {
 
 // --- readOSCReply ---
 
-// readerFunc lets a test inject ad-hoc Read behaviour (e.g.
+// readerFunc lets a test inject ad-hoc Read behavior (e.g.
 // "hand back a byte then cancel ctx") without declaring a full mock
 // type. The function value is the Read implementation directly.
 type readerFunc func(p []byte) (int, error)
@@ -476,7 +476,7 @@ func TestReadOSCReply_StopsOnContextCancel(t *testing.T) {
 
 func TestReadOSCReply_PreCancelledContextReturnsNil(t *testing.T) {
 	// A ctx already cancelled before the first Read must yield nil
-	// (not an empty slice that callers might mis-interpret as a
+	// (not an empty slice that callers might misinterpret as a
 	// well-formed reply).
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()

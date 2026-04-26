@@ -93,7 +93,7 @@ func TestStdinSource_KindFromHint(t *testing.T) {
 }
 
 func TestStdinSource_KindFromShebang(t *testing.T) {
-	// No hint; first line is a shebang. Chroma's per-lexer AnalyseText
+	// No hint; first line is a shebang. Chroma's per-lexer AnalyzeText
 	// picks Python from "#!/usr/bin/env python".
 	body := "#!/usr/bin/env python\nprint('hi')\n"
 	src := NewStdinSource(strings.NewReader(body), "")
@@ -135,7 +135,7 @@ func TestStdinSource_OpenReplaysPeekedBytes(t *testing.T) {
 }
 
 // blockingReader is an [io.Reader] that returns one chunk and then
-// blocks indefinitely on the next call — modelling `tail -f` and
+// blocks indefinitely on the next call — modeling `tail -f` and
 // other long-lived producers that don't write 8 KiB up front. Used to
 // pin the Copilot review PR#12 #6 contract: detectOnce must not
 // require the full peek window before returning.

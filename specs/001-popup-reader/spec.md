@@ -67,7 +67,7 @@ A developer wants to use spy with their preferred terminal theme (dark or light 
 
 **Primary actor**: developer triaging a bug report or reviewing a design artifact.
 **Trigger**: a teammate has shared a screenshot, diagram, or PDF (e.g., a Slack drop, a `gh issue view` attachment, a research paper from a download folder), and the developer wants to confirm the visual content matches the description without leaving the terminal or context-switching to a GUI viewer.
-**Goal**: see the image/PDF clearly enough to read embedded text and identify diagram structure (not just confirm a thumbnail is "the right colour"), or — when the terminal can't — get an honest, useful metadata fallback that names the file, dimensions, and size.
+**Goal**: see the image/PDF clearly enough to read embedded text and identify diagram structure (not just confirm a thumbnail is "the right color"), or — when the terminal can't — get an honest, useful metadata fallback that names the file, dimensions, and size.
 
 **Why this priority**: This is a differentiator feature that extends spy beyond text-only viewers. While text is the primary use case, supporting PDFs and images in capable terminals adds significant value without disrupting the text workflow.
 
@@ -92,7 +92,7 @@ A developer wants to pipe command output directly to spy without saving to a fil
 **Acceptance Scenarios**:
 
 1. **Given** stdin is non-TTY and no `FILE` argument is provided (e.g., `git diff | spy`), **When** spy starts, **Then** stdin content streams into the viewer; the footer shows `<stdin> | … lines | Line 1` (line count shows `…` until EOF, then the final count).
-2. **Given** piped content is displayed, **When** language detection runs, **Then** the order is: explicit `--lang` > shebang on first line (`#!/usr/bin/env python3` → `python`) > Chroma `lexers.Analyse` content sniffing > plain text fallback. Detection result appears in the footer when non-empty.
+2. **Given** piped content is displayed, **When** language detection runs, **Then** the order is: explicit `--lang` > shebang on first line (`#!/usr/bin/env python3` → `python`) > Chroma `lexers.Analyze` content sniffing > plain text fallback. Detection result appears in the footer when non-empty.
 3. **Given** piped content has been displayed and the viewer is dismissed, **When** the process exits, **Then** no file is created under `$TMPDIR`, `/tmp`, `$XDG_CACHE_HOME`, or the current working directory; verified by `tests/integration/stdin_test.go` snapshotting the relevant directories pre/post.
 
 ---

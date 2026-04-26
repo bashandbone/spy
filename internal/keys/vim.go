@@ -41,7 +41,7 @@ import (
 // both default and vim modes — contracts/keys.md was updated to match
 // (Copilot review PR#9 round-2 #5; the contract previously listed `?`
 // as a vim help addition, which conflicted with the search-backward
-// binding the implementation has always honoured).
+// binding the implementation has always honored).
 //
 // `ZZ` and `:q` (vim quit) are not bound here because:
 //   - `:q` is a command-line command resolved by [internal/ui]'s

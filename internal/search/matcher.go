@@ -26,7 +26,7 @@ type Matcher interface {
 	Find(line string) []Match
 }
 
-// Compile builds a [Matcher] for the given query, honouring the supplied
+// Compile builds a [Matcher] for the given query, honoring the supplied
 // regex flag and case mode. Smart-case (the default) downgrades to
 // case-insensitive when the query is entirely lowercase; any uppercase
 // rune in the query forces case-sensitive matching. An empty query

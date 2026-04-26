@@ -28,7 +28,7 @@ type textRenderer struct {
 // "(empty)" placeholder so the viewer has something to display. The
 // 0-line footer is produced by [internal/ui/view.go]'s footerLine.
 //
-// Word-wrap honours [Dependencies.WordWrap]: when true (the contract
+// Word-wrap honors [Dependencies.WordWrap]: when true (the contract
 // default), lines longer than the active viewport width are wrapped
 // across multiple visual rows with the gutter blanked on continuation
 // rows. When false (--no-wrap), long lines emit verbatim so the
@@ -115,7 +115,7 @@ func (t *textRenderer) Render(ctx RenderContext) string {
 // the rune budget despite consuming zero cells. KindText itself has
 // no ANSI in Phase 2 (no syntax highlighting); US1's KindCode renderer
 // (T043) replaces this with a chroma/lipgloss-aware wrapper that
-// honours [lipgloss.Width] (Copilot review PR#7 #26 deferred).
+// honors [lipgloss.Width] (Copilot review PR#7 #26 deferred).
 func writeWrappedLine(b *strings.Builder, prefix, raw string, total int) {
 	contentWidth := total - len(prefix)
 	if contentWidth <= 0 {

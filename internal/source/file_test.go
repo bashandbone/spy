@@ -88,7 +88,7 @@ func TestFileSource_Reopen(t *testing.T) {
 		t.Fatalf("Read: %v", err)
 	}
 	if string(b) != "cdef" {
-		t.Errorf("seeked read: got %q want %q", b, "cdef")
+		t.Errorf("sought read: got %q want %q", b, "cdef")
 	}
 }
 

@@ -17,12 +17,12 @@ import (
 
 // TestTextReview_HighlightedFile is the US1 PTY-driven integration
 // test (T040): start `spy hello.go`, observe an alt-screen frame with
-// Go syntax colours, scroll down via arrow key, and exit cleanly with
+// Go syntax colors, scroll down via arrow key, and exit cleanly with
 // `q`.
 //
 // SGR escape detection is permissive: any non-default foreground SGR
 // adjacent to a Go keyword satisfies the "highlighted" contract — the
-// exact colour is theme-dependent and not pinned here (theme pinning
+// exact color is theme-dependent and not pinned here (theme pinning
 // is TestTheme_OverridePrecedence's job).
 func TestTextReview_HighlightedFile(t *testing.T) {
 	dir := t.TempDir()
@@ -114,7 +114,7 @@ func truncTail(b []byte, n int) string {
 // keeps Bubble Tea in its conservative no-probe path.
 //
 // COLORFGBG=15;0 short-circuits any termenv background probe by
-// providing the foreground+background colour directly (per the
+// providing the foreground+background color directly (per the
 // xterm-style env contract termenv reads).
 //
 // Without these overrides, GH Actions runners don't carry COLORTERM

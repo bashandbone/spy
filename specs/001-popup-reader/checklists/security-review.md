@@ -66,21 +66,21 @@ campaign on a developer workstation is sufficient pre-tag work.
 > [tests/integration/escape_injection_test.go](../../../tests/integration/escape_injection_test.go)
 
 Files containing `\x1b]2;...\x07` (OSC 2 "set window title") would,
-without sanitisation, drive the user's terminal title. Every emit
-boundary now neutralises ESC (0x1b) and CSI (0x9b) bytes via the
+without sanitization, drive the user's terminal title. Every emit
+boundary now neutralizes ESC (0x1b) and CSI (0x9b) bytes via the
 exported `render.Neutralize`:
 
 | Layer | Site | Notes |
 |---|---|---|
 | Code (US1) | `code.go` styleLine fallbacks + Render match overlay | T109b.c original scope |
-| Match overlay | `match.go` applyMatchHighlights | sanitises before slicing |
+| Match overlay | `match.go` applyMatchHighlights | sanitizes before slicing |
 | Text passthrough | `text.go` no-wrap + wrap paths | |
 | Markdown | `markdown.go` assembleRaw | Glamour does NOT strip ESC from non-code-block content |
 | PDF text | `pdf.go` formatTextPage (text + DisplayName) | the default path on no-fitz builds |
 | PDF metadata | `pdf.go` metadataBlock (DisplayName + note) | graphics-unavailable fallback |
 | Image metadata | `image.go` metadataBlock (DisplayName + path + note) | terminal-lacks-graphics fallback |
-| Status bar | `statusbar.go` StatusBarRender (DisplayName + Advisory) | sanitised at entry-point so wide / collapsed both protected |
-| stderr | `cmd/spy/main.go` ParseFlags / config warnings / keymap warnings / exitForSourceError / runDegenerate / tea.Program error | every stderr write now sanitises the user-controlled error message |
+| Status bar | `statusbar.go` StatusBarRender (DisplayName + Advisory) | sanitized at entry-point so wide / collapsed both protected |
+| stderr | `cmd/spy/main.go` ParseFlags / config warnings / keymap warnings / exitForSourceError / runDegenerate / tea.Program error | every stderr write now sanitizes the user-controlled error message |
 
 The substitution is byte-for-byte (`\x1b` / `\x9b` → `?`) so
 search-match offsets and visual width math stay valid.
@@ -94,8 +94,8 @@ already covers the integration-level rendered-frame contract.
 code/match/text. Acceptance review C4 surfaced the markdown / PDF /
 image / statusbar / stderr bypasses, all closed in the same patch.*
 
-Trade-off: files with intentional ANSI colour escapes (e.g.,
-`git diff --color=always > /tmp/diff.txt`) lose their colour. A
+Trade-off: files with intentional ANSI color escapes (e.g.,
+`git diff --color=always > /tmp/diff.txt`) lose their color. A
 future `--allow-ansi-passthrough` flag with an SGR-but-not-OSC
 discriminator can opt back in.
 

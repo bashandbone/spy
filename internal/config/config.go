@@ -41,7 +41,7 @@ type Config struct {
 	Lang map[string]LangOverride `toml:"lang"`
 }
 
-// LangOverride is the subset of Config keys honoured inside a
+// LangOverride is the subset of Config keys honored inside a
 // `[lang.<name>]` table. Excludes Keys (a global concern) and Min{Cols,
 // Rows} (terminal-bound).
 type LangOverride struct {

@@ -133,7 +133,7 @@ evidence it was run.
 - **File:** `/home/knitli/spy/tests/integration/pty.go` and `/home/knitli/spy/tests/integration/helpers.go`
 - **Status:** Coverage on the harness package is 61.0%; the unused functions are all signals of deferred work that never landed:
   - `pty.go:141 Read` (0%): never called — every consumer uses `Snapshot` then `Read`-style consumption is replaced by re-snapshot.
-  - `pty.go:198 Resize` (0%): never called — SC-008 resize test bypasses the binary and exercises the model directly. Real PTY resize behaviour is unverified.
+  - `pty.go:198 Resize` (0%): never called — SC-008 resize test bypasses the binary and exercises the model directly. Real PTY resize behavior is unverified.
   - `pty.go:210 Signal` (0%): never called — directly proves C8 (signal tests skipped).
   - `pty.go:412 CopyOutput` (0%): debugging helper — fine to leave but flag it as such.
   - `pty.go:399 indexByte` (0%): reimplementation of `bytes.IndexByte` for `mergeEnv` — `mergeEnv` itself is at 21.4% coverage because no test passes a non-nil env (the test that would, doesn't exist yet — likely the theme env-override test from C3).
@@ -187,7 +187,7 @@ evidence it was run.
 - **Status:** Comment says "tiny helper ... so we don't pull in strings.Contains for a one-liner". `strings` is already imported transitively in this package via other test files. Not a bug.
 
 ### L2. Test names are descriptive — no findings
-- All test names follow `TestThing_BehaviourWhenCondition` shape. Constitution-compliant.
+- All test names follow `TestThing_BehaviorWhenCondition` shape. Constitution-compliant.
 
 ### L3. Skip messages are accurate for harness-not-implemented but stale post-T104
 - The "PTY harness not yet implemented — Phase 9 T104 will provide the runtime" string appears in 8+ locations. Post-T104 these messages are wrong-on-the-merits. Update or delete.
@@ -222,7 +222,7 @@ The repo's test infrastructure is **structurally sound**: real PTY harness,
 real fuzz fixture, sensible build tags (`!race` for wall-clock benches,
 `perf` for nightly), CI gates documented. The product code quality of the
 tests is also fine where they exist (table-driven, descriptive names,
-neutralisation-byte-by-byte sanitiser asserts, etc.).
+neutralization-byte-by-byte sanitizer asserts, etc.).
 
 The problem is **completion**: the same staging strategy ("ship a `t.Skip`
 that documents the assertions; lift them when the harness ships") was

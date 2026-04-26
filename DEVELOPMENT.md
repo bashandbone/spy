@@ -86,7 +86,7 @@ PTY. Driver: `tests/e2e/run.sh`.
 
 ### Integration (`tests/integration/`)
 
-PTY-driven tests for behaviour that requires a real terminal: alt-screen
+PTY-driven tests for behavior that requires a real terminal: alt-screen
 entry/exit, signal handling, graphics protocol emission, theme detection
 probes. The harness in `tests/integration/pty.go` builds the binary
 inside `t.TempDir()` and spawns it under a PTY (via

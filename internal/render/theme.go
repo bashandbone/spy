@@ -25,7 +25,7 @@ const luminanceLightThreshold = 0.5
 // Theme is the active styling profile for a viewer session. It bundles
 // the Chroma style name (used by the highlighter), the lipgloss styles
 // for chrome (status bar, error banner, footer), and the Mono override
-// that disables colour entirely.
+// that disables color entirely.
 type Theme struct {
 	Name        string // "dark" | "light" | "<chroma-style>"
 	ChromaStyle string
@@ -38,7 +38,7 @@ type Theme struct {
 	// SearchHit highlights a non-current search match (US2). The default
 	// uses reverse-video so the chroma syntax foreground stays readable
 	// underneath; renderers fall back to inserting raw ANSI when the
-	// theme is Mono so even no-colour terminals see a visible marker.
+	// theme is Mono so even no-color terminals see a visible marker.
 	SearchHit lipgloss.Style
 	// SearchActive highlights the currently-selected search match
 	// (driven by `n`/`N` cycling). Brighter than SearchHit so the user
@@ -88,7 +88,7 @@ func ThemeLight() Theme {
 // `noColor` forces the [Theme.Mono] flag so Chroma + lipgloss styling
 // is suppressed at render time. The Mono override is applied after
 // the underlying theme is chosen so the renderer still has the right
-// chrome palette to fall back on if the user toggles colour back on
+// chrome palette to fall back on if the user toggles color back on
 // later via `:set`.
 func ResolveTheme(spec string, caps term.Capabilities, noColor bool) Theme {
 	spec = strings.ToLower(strings.TrimSpace(spec))

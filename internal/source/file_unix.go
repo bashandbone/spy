@@ -24,7 +24,7 @@ import (
 // open() returns. Without O_NONBLOCK the open of a read-only FIFO
 // blocks until a writer is connected, which would deadlock the test
 // suite and any user who pointed `spy` at a stray FIFO. The flag
-// affects only the open(2) blocking behaviour, not reads — and we
+// affects only the open(2) blocking behavior, not reads — and we
 // never read from rejected fds anyway (Copilot review acceptance M1).
 //
 // The Unix kernels return ELOOP when a path component is a symlink and

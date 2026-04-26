@@ -24,7 +24,7 @@ const (
 )
 
 // scanChunk is the number of lines we pull from the [source.LineProvider]
-// per Slice() call. Bounded so very large sources don't realise the
+// per Slice() call. Bounded so very large sources don't realize the
 // entire buffer up-front, while large enough that the per-call overhead
 // stays a small fraction of the scan time.
 const scanChunk int64 = 1024
@@ -216,7 +216,7 @@ func scanRangeReverse(ctx context.Context, provider source.LineProvider, m Match
 				lines = append(lines, filtered...) // ascending order preserved
 			}
 		}
-		// Iterate in descending order to honour DirBackward.
+		// Iterate in descending order to honor DirBackward.
 		for i := len(lines) - 1; i >= 0; i-- {
 			if ctx != nil {
 				select {
@@ -248,7 +248,7 @@ func scanRangeReverse(ctx context.Context, provider source.LineProvider, m Match
 	return true
 }
 
-// sendMatch routes a Match to `out` while honouring ctx cancellation so
+// sendMatch routes a Match to `out` while honoring ctx cancellation so
 // the goroutine can exit even if no consumer is ready.
 func sendMatch(ctx context.Context, out chan<- Match, mm Match) bool {
 	if ctx == nil {
