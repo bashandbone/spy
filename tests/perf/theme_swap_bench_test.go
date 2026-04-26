@@ -54,6 +54,9 @@ func (m *memSource) Reopen() (io.ReadSeeker, error) {
 // within the active viewport window, bounding work to O(viewport height)
 // regardless of total buffer size.
 func TestThemeSwap_Under16ms(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping 10000-line theme swap regression in -short mode")
+	}
 	const visibleScaleLines = 10000
 	measureThemeSwap(t, visibleScaleLines, 16*time.Millisecond, true)
 }

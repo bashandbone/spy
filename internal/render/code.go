@@ -37,8 +37,9 @@ import (
 // implicitly invalidated whenever the renderer is rebuilt (theme swap,
 // word-wrap toggle, line-number toggle, etc.).
 type codeRenderer struct {
-	deps  Dependencies
-	cache map[int64]string // lineNum → Chroma-formatted string; populated on demand
+	deps               Dependencies
+	cache              map[int64]string // lineNum → Chroma-formatted string; populated on demand
+	lastResidentStart  int64            // last known resident start line; used to prune stale cache entries
 }
 
 // Render walks the resident buffer and emits one formatted line per
@@ -86,6 +87,16 @@ func (r *codeRenderer) Render(ctx RenderContext) string {
 	// we still mark matched lines but as raw text without colouring.
 	mono := ctx.Theme.Mono || ctx.Capabilities.ColorDepth == term.ColorMono
 
+	// Prune cache entries for lines that the LineBuffer has already
+	// evicted from its resident window. This keeps the cache bounded by
+	// the live resident range rather than the cumulative set of all
+	// lines ever scrolled through.
+	residentStart := ctx.Buffer.ResidentStartLine()
+	if residentStart > r.lastResidentStart {
+		r.pruneCacheBefore(residentStart)
+		r.lastResidentStart = residentStart
+	}
+
 	visualRow := 0
 	for _, l := range lines {
 		prefix := ""
@@ -94,9 +105,20 @@ func (r *codeRenderer) Render(ctx RenderContext) string {
 		}
 		prefixLen := len(prefix)
 
-		// Compute visual rows this source line occupies in the current layout.
+		// Lines with search matches use the dedicated overlay path so
+		// the highlight wraps tightly around the match span. The
+		// documented limitation: matched lines lose chroma syntax
+		// colour; the caret/active match is still visible.
+		lineMatches := matchesForLine(ctx.Search, l.Number)
+		hasMatches := len(lineMatches) > 0
+
+		// Compute the visual rows this source line will actually occupy in
+		// the rendered output. Match-overlay lines always emit exactly one
+		// row (no wrapping); all other lines may wrap when WordWrap is on.
+		// Using the actual row count here keeps visualRow in sync with the
+		// rendered output so inViewport stays accurate for subsequent lines.
 		lineRows := 1
-		if r.deps.WordWrap && width > prefixLen {
+		if !hasMatches && r.deps.WordWrap && width > prefixLen {
 			lineRows = visualRowsForLine(l.Raw, width-prefixLen)
 		}
 		lineVisualEnd := visualRow + lineRows
@@ -108,14 +130,8 @@ func (r *codeRenderer) Render(ctx RenderContext) string {
 		// a line whose first row equals viewEnd is just below (excluded).
 		inViewport := !viewportKnown || (lineVisualEnd > yOffset && visualRow < viewEnd)
 
-		// Lines with search matches use the dedicated overlay path so
-		// the highlight wraps tightly around the match span. The
-		// documented limitation: matched lines lose chroma syntax
-		// colour; the caret/active match is still visible.
-		lineMatches := matchesForLine(ctx.Search, l.Number)
-
 		switch {
-		case len(lineMatches) > 0:
+		case hasMatches:
 			b.WriteString(prefix)
 			if mono {
 				// Mono mode: bypass lipgloss styling — emit the raw
@@ -176,6 +192,18 @@ func (r *codeRenderer) styledCached(l source.Line) string {
 	}
 	r.cache[l.Number] = styled
 	return styled
+}
+
+// pruneCacheBefore deletes all cache entries for line numbers strictly
+// less than `firstResident`. Called when the LineBuffer's resident
+// window advances (windowed-mode eviction) so styled strings for
+// evicted lines don't accumulate indefinitely.
+func (r *codeRenderer) pruneCacheBefore(firstResident int64) {
+	for lineNum := range r.cache {
+		if lineNum < firstResident {
+			delete(r.cache, lineNum)
+		}
+	}
 }
 
 // RowToLine reuses the textRenderer's wrap math so the footer's "Line N"
