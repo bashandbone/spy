@@ -262,7 +262,13 @@ func run(args []string, stdin *os.File) int {
 				return
 			}
 			caught <- sig
-			prog.Send(tea.Quit())
+			// Send the QuitMsg directly. `tea.Quit` is a Cmd
+			// constructor (a func returning a Msg) — passing it
+			// as `prog.Send(tea.Quit())` would deliver the Cmd
+			// itself as a Msg, which the update loop ignores.
+			// The QuitMsg value is what the renderer's teardown
+			// path watches for.
+			prog.Send(tea.QuitMsg{})
 		case <-done:
 			return
 		}

@@ -173,10 +173,11 @@ func TestTheme_AutoDetectFromOSC11(t *testing.T) {
 // fixture with the given args + env, wait for first paint, run the
 // caller-supplied frame check, and quit cleanly.
 //
-// The spawn env is layered on top of [colorTermEnv] (TERM=xterm-256color
-// + COLORTERM=truecolor) so the highlighter actually engages on CI
-// runners — caller-supplied keys override the colour defaults
-// (e.g. NO_COLOR=1 still wins).
+// The spawn env is layered on top of [colorTermEnv] (which sets
+// COLORTERM=truecolor + COLORFGBG=15;0 — deliberately NOT TERM, to
+// avoid Bubble Tea / termenv interactive probes) so the highlighter
+// actually engages on CI runners. Caller-supplied keys override the
+// colour defaults (e.g. NO_COLOR=1 still wins).
 func runThemeProbe(t *testing.T, extraArgs []string, env map[string]string, check func(*testing.T, string)) {
 	t.Helper()
 	dir := t.TempDir()

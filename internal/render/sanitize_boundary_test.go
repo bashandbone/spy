@@ -16,8 +16,8 @@ import (
 	"github.com/knitli/spy/internal/source"
 )
 
-// All four tests below pin the acceptance-review C4 contract: every
-// emit boundary that can carry user-controlled bytes (markdown content,
+// The tests below pin the acceptance-review C4 contract: every emit
+// boundary that can carry user-controlled bytes (markdown content,
 // PDF text extraction, image / PDF / status-bar DisplayName) MUST
 // neutralize ESC (0x1b) and CSI (0x9b) bytes before they reach the
 // terminal. Without this guard, a hostile filename or content blob
