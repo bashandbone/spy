@@ -16,7 +16,7 @@ on:
         default: ""
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   build:
@@ -35,6 +35,8 @@ jobs:
             goarch: arm64
           - goos: windows
             goarch: amd64
+          - goos: windows
+            goarch: arm64
     steps:
       - uses: actions/checkout@v4
 
@@ -48,10 +50,24 @@ jobs:
         id: version
         run: |
           if [ -n "${{ github.event.inputs.tag }}" ]; then
-            echo "tag=${{ github.event.inputs.tag }}" >> "$GITHUB_OUTPUT"
+            TAG="${{ github.event.inputs.tag }}"
+          elif [ "${{ github.ref_type }}" = "tag" ]; then
+            TAG="${GITHUB_REF_NAME}"
           else
-            echo "tag=${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
+            echo "Error: workflow_dispatch requires a tag input or a tag ref." >&2
+            exit 1
           fi
+
+          case "$TAG" in
+            v[0-9]*.[0-9]*.[0-9]*)
+              ;;
+            *)
+              echo "Error: invalid release tag '$TAG'. Expected format: v*.*.*" >&2
+              exit 1
+              ;;
+          esac
+
+          echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
 
       - name: Build
         env:
@@ -75,6 +91,7 @@ jobs:
         with:
           name: spy-${{ matrix.goos }}-${{ matrix.goarch }}
           path: dist/spy-*
+          if-no-files-found: error
 
   build-fitz:
     name: build linux/amd64 (fitz)
@@ -95,10 +112,24 @@ jobs:
         id: version
         run: |
           if [ -n "${{ github.event.inputs.tag }}" ]; then
-            echo "tag=${{ github.event.inputs.tag }}" >> "$GITHUB_OUTPUT"
+            TAG="${{ github.event.inputs.tag }}"
+          elif [ "${{ github.ref_type }}" = "tag" ]; then
+            TAG="${GITHUB_REF_NAME}"
           else
-            echo "tag=${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
+            echo "Error: workflow_dispatch requires a tag input or a tag ref." >&2
+            exit 1
           fi
+
+          case "$TAG" in
+            v[0-9]*.[0-9]*.[0-9]*)
+              ;;
+            *)
+              echo "Error: invalid release tag '$TAG'. Expected format: v*.*.*" >&2
+              exit 1
+              ;;
+          esac
+
+          echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
 
       - name: Build (fitz)
         run: |
@@ -113,11 +144,14 @@ jobs:
         with:
           name: spy-linux-amd64-fitz
           path: dist/spy-*
+          if-no-files-found: error
 
   release:
     name: create GitHub release
     runs-on: ubuntu-latest
     needs: [build, build-fitz]
+    permissions:
+      contents: write
     steps:
       - uses: actions/checkout@v4
 
@@ -125,10 +159,24 @@ jobs:
         id: version
         run: |
           if [ -n "${{ github.event.inputs.tag }}" ]; then
-            echo "tag=${{ github.event.inputs.tag }}" >> "$GITHUB_OUTPUT"
+            TAG="${{ github.event.inputs.tag }}"
+          elif [ "${{ github.ref_type }}" = "tag" ]; then
+            TAG="${GITHUB_REF_NAME}"
           else
-            echo "tag=${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
+            echo "Error: workflow_dispatch requires a tag input or a tag ref." >&2
+            exit 1
           fi
+
+          case "$TAG" in
+            v[0-9]*.[0-9]*.[0-9]*)
+              ;;
+            *)
+              echo "Error: invalid release tag '$TAG'. Expected format: v*.*.*" >&2
+              exit 1
+              ;;
+          esac
+
+          echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
 
       - name: Download all artifacts
         uses: actions/download-artifact@v4
