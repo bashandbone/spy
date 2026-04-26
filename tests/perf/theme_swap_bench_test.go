@@ -50,36 +50,24 @@ func (m *memSource) Reopen() (io.ReadSeeker, error) {
 // TestThemeSwap_Under16ms is the SC-004 gate: 100 `:set theme dark|light`
 // swaps must re-render the visible viewport at p95 ≤ 16 ms (60 fps).
 // The token cache is reused — Chroma styles apply at format time per
-// research R7, not at tokenisation.
-//
-// KNOWN GAP: the current [render.codeRenderer.Render] formats every
-// resident line on every paint rather than just the visible viewport,
-// so the strict 16 ms budget cannot be met at the spec's 10 000 lines
-// today. The TestThemeSwap_FullSpecCase test below reports the actual
-// wall-clock so regression deltas are visible at PR review time, and
-// this gate is staged as a small-buffer regression check (60 lines —
-// covers viewport content) until the viewport-only render lands. Once
-// it does, lift the line count to 10 000 and remove this comment.
+// research R7, not at tokenisation. The renderer formats only the lines
+// within the active viewport window, bounding work to O(viewport height)
+// regardless of total buffer size.
 func TestThemeSwap_Under16ms(t *testing.T) {
-	// 60 lines: the active viewport window in this test (30 rows ×
-	// soft-wrap factor 2). The current per-line formatting cost is the
-	// dominant factor; this scale catches algorithmic regressions
-	// without exposing the architectural gap.
-	const visibleScaleLines = 60
+	if testing.Short() {
+		t.Skip("skipping 10000-line theme swap regression in -short mode")
+	}
+	const visibleScaleLines = 10000
 	measureThemeSwap(t, visibleScaleLines, 16*time.Millisecond, true)
 }
 
-// TestThemeSwap_FullSpecCase exercises the 10 000-line case from the
-// spec and reports the wall-clock without failing the build. Once the
-// renderer formats only the visible viewport on theme swap, the strict
-// gate at the top of this file picks it up automatically; until then
-// this test prints the per-swap p95 so PR-time regression deltas are
-// visible to reviewers.
+// TestThemeSwap_FullSpecCase is the SC-004 spec-level gate: 100 theme
+// swaps against the full 10 000-line buffer must meet p95 ≤ 16 ms.
 func TestThemeSwap_FullSpecCase(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping 10000-line spec case in -short mode")
 	}
-	measureThemeSwap(t, 10000, 16*time.Millisecond, false)
+	measureThemeSwap(t, 10000, 16*time.Millisecond, true)
 }
 
 // measureThemeSwap is the shared driver for both theme-swap benchmark
