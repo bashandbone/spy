@@ -97,6 +97,14 @@ func measureDismiss(t *testing.T, iterations int, limit time.Duration, failOnBud
 		// reflects the keystroke the binary actually saw rather than
 		// the harness's input-pipeline race.
 		//
+		// Acceptance review M7 investigated the root cause:
+		// specs/001-popup-reader/acceptance_review/
+		// pty_flake_investigation.md — the most likely cause is a
+		// missing input-ready barrier in Bubble Tea v1's bootstrap
+		// (renderer-prologue emit races input-reader subscribe).
+		// Fixing it requires upstream changes; the retry pattern
+		// here is the conservative v0.1.0 workaround.
+		//
 		// The first-pass timeout (firstQTimeout) is a measurement
 		// floor: every iteration whose first `q` propagates is
 		// credited with this value as a strict upper bound on the
