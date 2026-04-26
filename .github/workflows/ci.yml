@@ -65,13 +65,16 @@ jobs:
           # toward the gate.
           #
           #   internal/*  - hard gate at 80%
-          #   cmd/spy     - advisory; the alt-screen launch / theme-probe /
-          #                 prog.Run paths require a real PTY, and Go's
-          #                 in-process coverage doesn't follow into binaries
-          #                 spawned by tests/integration. The 76% baseline
-          #                 documented in specs/001-popup-reader/tasks.md
-          #                 stands until binary-instrumented coverage is
-          #                 wired in (Phase 9 follow-up).
+          #   cmd/*       - advisory; binary entry points that require a
+          #                 real PTY or special execution environment.
+          #                 cmd/spy: alt-screen launch / theme-probe /
+          #                   prog.Run paths require a real PTY, and Go's
+          #                   in-process coverage doesn't follow into
+          #                   binaries spawned by tests/integration.
+          #                 cmd/memprof: developer utility that writes a
+          #                   200 MiB synthetic file and reads
+          #                   /proc/self/status — not suitable for unit
+          #                   tests; intentionally has no test files.
           #   tests/*     - advisory.
           go tool cover -func=coverage.out \
             | awk '
@@ -99,7 +102,7 @@ jobs:
               END {
                 for (p in n) {
                   avg = sum[p] / n[p]
-                  if (p ~ /\/tests\// || p == "github.com/knitli/spy/cmd/spy") {
+                  if (p ~ /\/tests\// || p ~ /github\.com\/knitli\/spy\/cmd\//) {
                     printf "ADVISORY %s: %.1f%%\n", p, avg
                   } else if (avg < 80) {
                     printf "FAIL %s: %.1f%% (need >= 80%%)\n", p, avg
