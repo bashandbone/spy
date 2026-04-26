@@ -47,13 +47,23 @@ type Capabilities struct {
 }
 
 // Detect probes the current process's terminal. Honours SPY_GRAPHICS,
-// SPY_THEME, NO_COLOR, COLORTERM. The total probe budget is bounded by
-// `ctx`; in Phase 2 there is no slow probe, so cancellation only causes
-// an early return with a default-shaped Capabilities. The OSC 11
-// luminance probe (US3) is what makes the budget load-bearing.
+// SPY_THEME, NO_COLOR, COLORTERM. Cancellation of `ctx` causes an
+// early return with a default-shaped [Capabilities].
 //
-// The function is goroutine-safe: it reads global env once and does not
-// mutate it.
+// `Detect` deliberately does NOT run the OSC 11 background-color
+// probe — that's reserved for [DetectBackgroundLuminance] so callers
+// can skip the probe entirely when the user has already chosen an
+// explicit theme via flag or config (Copilot review PR#10 round-3 #2:
+// running the 50 ms probe is wasted budget when the result will be
+// thrown away by an explicit `--theme dark`). [Capabilities.BackgroundLuminance]
+// is left as `math.NaN` here; callers fill it in when they need it.
+//
+// The function is goroutine-safe: it reads global env vars and does
+// not mutate them. The reads are not snapshotted — the order is
+// Detect → detectColorDepth → detectGraphics — each calling
+// [os.Getenv] for the keys it needs — so a concurrent process that
+// mutates the env between probes can technically see inconsistent
+// values, but spy itself never does that.
 func Detect(ctx context.Context) Capabilities {
 	caps := Capabilities{
 		BackgroundLuminance: math.NaN(),
@@ -85,6 +95,21 @@ func Detect(ctx context.Context) Capabilities {
 	caps.Graphics = detectGraphics(caps.InTmux)
 
 	return caps
+}
+
+// DetectBackgroundLuminance runs the OSC 11 + COLORFGBG luminance
+// probe and returns a value in [0, 1] (or `math.NaN` when the probe
+// is bypassed or yields no usable signal). Callers should invoke this
+// only when they actually need the luminance — typically when the
+// user-facing theme spec is "auto" or empty — so an explicit
+// `--theme dark` doesn't pay the 50 ms budget for a value it'll
+// discard.
+//
+// Bypass conditions match research R6: SPY_THEME set, NO_COLOR set,
+// or stdout non-TTY all short-circuit to NaN.
+func DetectBackgroundLuminance(ctx context.Context) float64 {
+	isTTY := xterm.IsTerminal(int(os.Stdout.Fd()))
+	return detectBackgroundLuminance(ctx, envFromOS{}, isTTY, probeOSC11Background)
 }
 
 func detectColorDepth() ColorDepth {

@@ -5,6 +5,7 @@
 package render
 
 import (
+	"math"
 	"strings"
 
 	"github.com/alecthomas/chroma/v2/styles"
@@ -12,6 +13,14 @@ import (
 
 	"github.com/knitli/spy/internal/term"
 )
+
+// luminanceLightThreshold is the boundary above which an
+// [term.Capabilities.BackgroundLuminance] reading is considered "light"
+// for the purposes of auto-theme selection. Per research R6 the cutoff
+// is ≥ 0.5 → light, < 0.5 → dark. Unexported because it's an internal
+// resolution detail; callers care about the resulting [Theme.Name],
+// not the boundary number.
+const luminanceLightThreshold = 0.5
 
 // Theme is the active styling profile for a viewer session. It bundles
 // the Chroma style name (used by the highlighter), the lipgloss styles
@@ -71,18 +80,22 @@ func ThemeLight() Theme {
 }
 
 // ResolveTheme picks the active Theme from the user-facing theme spec.
-// Per T029 the auto-detect branch falls back to dark until US3 wires
-// the OSC 11 luminance probe in T066.
+// The auto-detect branch reads [term.Capabilities.BackgroundLuminance]:
+// luminance ≥ [luminanceLightThreshold] selects [ThemeLight], anything
+// lower (or NaN) selects [ThemeDark]. Explicit `dark` / `light` and
+// named Chroma styles bypass the auto branch entirely.
 //
-// The supplied capabilities give US3 the luminance signal; ignored in
-// Phase 2. NoColor forces the [Theme.Mono] flag so chroma + lipgloss
-// styling is suppressed at render time.
-func ResolveTheme(spec string, _ term.Capabilities, noColor bool) Theme {
+// `noColor` forces the [Theme.Mono] flag so Chroma + lipgloss styling
+// is suppressed at render time. The Mono override is applied after
+// the underlying theme is chosen so the renderer still has the right
+// chrome palette to fall back on if the user toggles colour back on
+// later via `:set`.
+func ResolveTheme(spec string, caps term.Capabilities, noColor bool) Theme {
 	spec = strings.ToLower(strings.TrimSpace(spec))
 	var tm Theme
 	switch spec {
 	case "", "auto":
-		tm = ThemeDark()
+		tm = autoTheme(caps)
 	case "dark":
 		tm = ThemeDark()
 	case "light":
@@ -94,6 +107,18 @@ func ResolveTheme(spec string, _ term.Capabilities, noColor bool) Theme {
 		tm.Mono = true
 	}
 	return tm
+}
+
+// autoTheme implements the auto-detect branch of [ResolveTheme]. NaN
+// luminance — the value [term.Detect] uses when the OSC 11 probe and
+// the COLORFGBG fallback both came up empty — defaults to dark, which
+// matches the most common terminal default and the research R6
+// fallback.
+func autoTheme(caps term.Capabilities) Theme {
+	if !math.IsNaN(caps.BackgroundLuminance) && caps.BackgroundLuminance >= luminanceLightThreshold {
+		return ThemeLight()
+	}
+	return ThemeDark()
 }
 
 // resolveByName looks up a Chroma style name and produces a Theme that

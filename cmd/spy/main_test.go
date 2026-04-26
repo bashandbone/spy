@@ -211,6 +211,25 @@ func TestApplyGraphicsOverride(t *testing.T) {
 	}
 }
 
+func TestWantsAutoTheme(t *testing.T) {
+	cases := map[string]bool{
+		"":         true,
+		"auto":     true,
+		"AUTO":     true, // case-insensitive
+		"  auto  ": true, // trim leading/trailing whitespace
+		"dark":     false,
+		"light":    false,
+		"monokai":  false,
+		"github":   false,
+		"garbage":  false, // unknown styles still bypass — the renderer falls back to dark
+	}
+	for in, want := range cases {
+		if got := wantsAutoTheme(in); got != want {
+			t.Errorf("wantsAutoTheme(%q): got %v want %v", in, got, want)
+		}
+	}
+}
+
 func TestNewHighlighter_KnownStyle(t *testing.T) {
 	caps := term.Capabilities{ColorDepth: term.ColorANSI256}
 	theme := render.ThemeDark()

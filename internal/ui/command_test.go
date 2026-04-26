@@ -6,6 +6,7 @@ package ui
 
 import (
 	"context"
+	"math"
 	"os"
 	"path/filepath"
 	"strings"
@@ -329,6 +330,51 @@ func TestCommand_SetTheme(t *testing.T) {
 	m = updated.(Model)
 	if m.theme.Name != "light" {
 		t.Errorf(":set theme light: got theme %q want light", m.theme.Name)
+	}
+}
+
+// TestCommand_SetThemeAutoUsesCaps confirms that `:set theme auto` —
+// the runtime equivalent of the cli auto branch — re-resolves through
+// [term.Capabilities.BackgroundLuminance] (T067 verifies the wiring is
+// in place after T066 lands).
+func TestCommand_SetThemeAutoUsesCaps(t *testing.T) {
+	t.Parallel()
+	m := newTestModel(t, numberedBody(20))
+	// Pin a "light" luminance directly on the model's caps so the auto
+	// branch has something to resolve against. The Capabilities struct
+	// is copied by value into the model, so reaching in here only
+	// touches the test's copy.
+	m.caps.BackgroundLuminance = 0.85
+	m.theme = render.ThemeDark() // start in dark so the swap is observable
+	m, _ = applyResize(m, 80, 24)
+	for _, r := range ":set theme auto" {
+		updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}})
+		m = updated.(Model)
+	}
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = updated.(Model)
+	if m.theme.Name != "light" {
+		t.Errorf(":set theme auto with light caps: got %q want light", m.theme.Name)
+	}
+}
+
+// TestCommand_SetThemeAutoFallsBackToDark covers the symmetric case:
+// NaN luminance — the "we couldn't probe" signal from [term.Detect] —
+// must keep the model on the dark theme.
+func TestCommand_SetThemeAutoFallsBackToDark(t *testing.T) {
+	t.Parallel()
+	m := newTestModel(t, numberedBody(20))
+	m.caps.BackgroundLuminance = math.NaN()
+	m.theme = render.ThemeLight()
+	m, _ = applyResize(m, 80, 24)
+	for _, r := range ":set theme auto" {
+		updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}})
+		m = updated.(Model)
+	}
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = updated.(Model)
+	if m.theme.Name != "dark" {
+		t.Errorf(":set theme auto with NaN caps: got %q want dark", m.theme.Name)
 	}
 }
 
