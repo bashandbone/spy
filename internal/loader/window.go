@@ -9,6 +9,7 @@ import (
 	"errors"
 	"io"
 	"sync"
+	"unsafe"
 
 	"github.com/knitli/spy/internal/source"
 )
@@ -31,9 +32,9 @@ type storedLine struct {
 // storedLineOverheadBytes is the per-line fixed memory cost of storedLine
 // itself (struct layout: int64 + string header). Added to residentBytes
 // accounting so windowing triggers on actual bytes-in-use, not just
-// len(Raw). Hardcoded rather than computed via unsafe.Sizeof so it does
-// not need an unsafe import and is enforced by the struct definition.
-const storedLineOverheadBytes = 24 // int64 (8) + string header (16)
+// len(Raw). Computed via unsafe.Sizeof so it stays correct across
+// architectures if the struct layout ever changes.
+var storedLineOverheadBytes = int64(unsafe.Sizeof(storedLine{}))
 
 // LineBuffer is the resident hot region the renderer slices into. Below
 // `maxResidentBytes` it holds every line; above it, the buffer flips to
@@ -137,7 +138,7 @@ func newLineBuffer(maxResidentBytes int64, windowSize int, maxLineBytes int64, s
 // to "0 confirmed" rather than "-1 still unknown".
 //
 // residentBytes now accounts for both the string content (len(l.Raw))
-// AND the per-struct overhead (storedLineOverheadBytes = 24 bytes) so
+// AND the per-struct overhead (storedLineOverheadBytes bytes) so
 // the windowing threshold reflects actual bytes-in-use rather than just
 // raw content bytes. Previously only len(l.Raw) was tracked, causing the
 // threshold to fire too late and the RSS to overshoot the budget.
@@ -395,6 +396,14 @@ func (b *LineBuffer) Slice(start, end int64) []source.Line {
 // any Tokens and Wrapped from the side-channel maps. Caller must hold b.mu.
 func (b *LineBuffer) buildLines(from, to int) []source.Line {
 	out := make([]source.Line, to-from)
+	// Fast path: no tokens or wrapped data has been set yet (the common
+	// case during initial load). Skip both map lookups entirely.
+	if b.tokens == nil && b.wrapped == nil {
+		for i, sl := range b.lines[from:to] {
+			out[i] = source.Line{Number: sl.Number, Raw: sl.Raw}
+		}
+		return out
+	}
 	for i, sl := range b.lines[from:to] {
 		out[i] = source.Line{
 			Number:  sl.Number,
