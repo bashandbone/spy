@@ -17,6 +17,7 @@ require (
 	github.com/gen2brain/go-fitz v1.24.15
 	github.com/ledongthuc/pdf v0.0.0-20250511090121-5959a4027728
 	github.com/mattn/go-sixel v0.0.9
+	github.com/muesli/termenv v0.16.0
 	golang.org/x/image v0.39.0
 	golang.org/x/term v0.42.0
 )
@@ -45,7 +46,6 @@ require (
 	github.com/muesli/ansi v0.0.0-20230316100256-276c6243b2f6 // indirect
 	github.com/muesli/cancelreader v0.2.2 // indirect
 	github.com/muesli/reflow v0.3.0 // indirect
-	github.com/muesli/termenv v0.16.0 // indirect
 	github.com/rivo/uniseg v0.4.7 // indirect
 	github.com/soniakeys/quant v1.0.0 // indirect
 	github.com/xo/terminfo v0.0.0-20220910002029-abceb7e1c41e // indirect
