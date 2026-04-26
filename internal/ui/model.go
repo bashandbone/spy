@@ -111,6 +111,12 @@ type Model struct {
 	// `:set novim` toggles flip this so the UI's prompt-mode + nav
 	// dispatch picks up the new keymap and `gg` sequencing.
 	vim bool
+
+	// page is the 1-indexed PDF page cursor wired in T082. Non-PDF
+	// kinds ignore the field; PDF renderers read it via [render.RenderContext].
+	// Defaults to 1 so the first paint shows page 1 even when the
+	// user hasn't pressed `]` / `[` yet.
+	page int
 }
 
 // NewModel constructs the viewer's Bubble Tea model. The first frame
@@ -134,6 +140,7 @@ func NewModel(opts ModelOptions) Model {
 		LineNumbers:  opts.Config != nil && opts.Config.LineNumbers,
 		WordWrap:     opts.Config != nil && opts.Config.WordWrap,
 		Language:     lang,
+		Source:       opts.Source,
 	}
 	baseKM := opts.BaseKeyMap
 	if baseKM == nil {
@@ -154,6 +161,7 @@ func NewModel(opts ModelOptions) Model {
 		status:      render.StatusStreaming,
 		commandLine: CommandLineState{HistoryCursor: -1},
 		vim:         opts.Config != nil && opts.Config.VimMode,
+		page:        1,
 	}
 	if opts.Stream != nil && opts.Stream.First.EOF {
 		m.streaming = false

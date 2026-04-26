@@ -78,9 +78,11 @@ func TestKindText_LineNumbersDisabled(t *testing.T) {
 	}
 }
 
-func TestUnsupportedKind_StubFrame(t *testing.T) {
-	// PDF/Image/Code/Markdown stubs all produce a "pending USx" notice
-	// in Phase 2 — they're filled in by their respective story phases.
+func TestPDFAndImage_NilSourceShowsPlaceholder(t *testing.T) {
+	// Phase 6 (US4) replaced the "pending US4" stubs with real
+	// renderers. Without a Source attached they fall back to a
+	// "no source attached" placeholder so the foundational test
+	// matrix doesn't crash on the bare-deps construction path.
 	deps := Dependencies{Theme: ThemeDark(), LineNumbers: true}
 	for _, k := range []source.Kind{source.KindPDF, source.KindImage} {
 		r := ForKind(k, deps)
@@ -88,8 +90,8 @@ func TestUnsupportedKind_StubFrame(t *testing.T) {
 			Theme:        deps.Theme,
 			Capabilities: term.Capabilities{Cols: 80, Rows: 24},
 		})
-		if !strings.Contains(strings.ToLower(out), "pending") {
-			t.Errorf("Kind=%v stub should mention 'pending' in foundational, got %q", k, out)
+		if !strings.Contains(strings.ToLower(out), "no source") {
+			t.Errorf("Kind=%v: nil-source placeholder missing, got %q", k, out)
 		}
 	}
 }

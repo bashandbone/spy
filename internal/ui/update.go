@@ -106,8 +106,10 @@ func (m Model) onOpenResult(msg openResultMsg) (tea.Model, tea.Cmd) {
 		LineNumbers:  m.cfg != nil && m.cfg.LineNumbers,
 		WordWrap:     m.cfg != nil && m.cfg.WordWrap,
 		Language:     lang,
+		Source:       m.source,
 	}
 	m.renderer = render.ForKind(kind, deps)
+	m.page = 1 // reset PDF page cursor on source swap
 	m.streaming = true
 	m.status = render.StatusStreaming
 	if m.stream != nil && m.stream.First.EOF {
@@ -246,6 +248,12 @@ func (m Model) onKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if matchAction(m.keyMap, keys.ActionGoToBottom, msg) {
 		m.viewport.GotoBottom()
 		return m, nil
+	}
+	if matchAction(m.keyMap, keys.ActionNextPage, msg) {
+		return m.onNextPage()
+	}
+	if matchAction(m.keyMap, keys.ActionPrevPage, msg) {
+		return m.onPrevPage()
 	}
 	if matchAction(m.keyMap, keys.ActionBeginningOfLine, msg) {
 		m.viewport.SetXOffset(0)
@@ -584,6 +592,12 @@ func (m Model) runCommand(cmd string) (tea.Model, tea.Cmd) {
 	}
 	// Numeric jump.
 	if n, err := strconv.ParseInt(cmd, 10, 64); err == nil {
+		// PDF sources interpret `:N` as a page jump rather than a line
+		// jump (T082): the rendered "lines" are page text and the user
+		// expects `:42` to take them to page 42 of the PDF.
+		if m.source != nil && m.source.Kind() == source.KindPDF {
+			return m.jumpToPage(int(n))
+		}
 		total := int64(0)
 		if m.stream != nil && m.stream.Buffer != nil {
 			total = m.stream.Buffer.Total()
@@ -644,6 +658,7 @@ func (m Model) runSetCommand(rest string) (tea.Model, tea.Cmd) {
 			LineNumbers:  m.cfg != nil && m.cfg.LineNumbers,
 			WordWrap:     m.cfg != nil && m.cfg.WordWrap,
 			Language:     lang,
+			Source:       m.source,
 		}
 		m.renderer = render.ForKind(kind, deps)
 		m.statusAdvisory = fmt.Sprintf("theme: %s", newTheme.Name)
@@ -811,8 +826,71 @@ func (m *Model) maybeAdvisoryFromHighlighter() {
 	}
 }
 
+// onNextPage advances the PDF page cursor by one. Non-PDF sources are
+// a no-op so the keymap binding doesn't accidentally scroll a code
+// buffer when the user remaps `]` / `[`. The handler clamps to the
+// total page count when the loader has surfaced one.
+func (m Model) onNextPage() (tea.Model, tea.Cmd) {
+	if m.source == nil || m.source.Kind() != source.KindPDF {
+		return m, nil
+	}
+	m.page++
+	if total := m.source.Metadata().PageCount; total > 0 && m.page > total {
+		m.page = total
+		m.statusAdvisory = "already on last page"
+	}
+	if m.renderer != nil {
+		m.viewport.SetContent(m.renderer.Render(m.renderContext()))
+	}
+	return m, nil
+}
+
+// onPrevPage decrements the PDF page cursor, clamping at 1.
+func (m Model) onPrevPage() (tea.Model, tea.Cmd) {
+	if m.source == nil || m.source.Kind() != source.KindPDF {
+		return m, nil
+	}
+	if m.page <= 1 {
+		m.page = 1
+		m.statusAdvisory = "already on first page"
+		return m, nil
+	}
+	m.page--
+	if m.renderer != nil {
+		m.viewport.SetContent(m.renderer.Render(m.renderContext()))
+	}
+	return m, nil
+}
+
+// jumpToPage handles a `:N` command when the source is a PDF. The
+// normal `:N` line jump in [runCommand] still applies for text-shaped
+// sources; this branch only fires when the active source is KindPDF
+// so we don't surprise a user who typed `:42` in a code buffer.
+func (m Model) jumpToPage(n int) (tea.Model, tea.Cmd) {
+	if n < 1 {
+		n = 1
+	}
+	total := 0
+	if m.source != nil {
+		total = m.source.Metadata().PageCount
+	}
+	if total > 0 && n > total {
+		m.statusAdvisory = fmt.Sprintf("page %d > total %d", n, total)
+		n = total
+	}
+	m.page = n
+	if m.renderer != nil {
+		m.viewport.SetContent(m.renderer.Render(m.renderContext()))
+	}
+	return m, nil
+}
+
 // renderContext bundles the per-frame state the renderer needs.
 func (m Model) renderContext() render.RenderContext {
+	page := m.page
+	if page <= 0 {
+		page = 1
+	}
 	ctx := render.RenderContext{
 		Theme:        m.theme,
 		Capabilities: m.caps,
@@ -820,6 +898,7 @@ func (m Model) renderContext() render.RenderContext {
 		Status:       m.status,
 		LastError:    m.lastError,
 		Search:       m.search,
+		Page:         page,
 	}
 	if m.stream != nil {
 		ctx.Buffer = m.stream.Buffer
