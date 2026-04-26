@@ -577,9 +577,14 @@ func (m Model) onSearchResult(msg searchResultMsg) (tea.Model, tea.Cmd) {
 	// Cancelled: the goroutine exited via ctx — partial matches are
 	// not authoritative and the next-in-flight scan will produce the
 	// canonical result. Clear Pending defensively in case this was
-	// the only outstanding scan.
+	// the only outstanding scan, and drop the cancel handle since
+	// the goroutine has already exited (its context.WithCancel is
+	// done, so the func is a no-op anyway, but holding a handle to
+	// a finished context muddies the "is a scan in flight?" check
+	// for any future teardown path) (PR#22 review round-2).
 	if msg.cancelled {
 		m.search.Pending = false
+		m.searchCancel = nil
 		return m, nil
 	}
 	// Defensive: if the live state's identity drifted from this
@@ -1072,10 +1077,12 @@ func (m Model) onReload() (tea.Model, tea.Cmd) {
 	// state explicitly so the UI doesn't display stale highlights or
 	// a stuck "scan in flight" indicator after the buffer swap (PR#22
 	// Copilot review — without this, Pending stays true indefinitely
-	// when reload races with a Pending search).
+	// when reload races with a Pending search). CurrentMatch=-1 (the
+	// "no match selected" sentinel that runSearch uses while Pending);
+	// 0 would mean "first match selected" but Matches is nil here.
 	m.search.Pending = false
 	m.search.Matches = nil
-	m.search.CurrentMatch = 0
+	m.search.CurrentMatch = -1
 	src := m.source
 	cfg := m.cfg
 	return m, func() tea.Msg {

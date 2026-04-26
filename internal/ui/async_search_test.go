@@ -223,6 +223,13 @@ func TestH5_CancelledResultClearsPendingButDropsMatches(t *testing.T) {
 	if len(post.search.Matches) != 0 {
 		t.Errorf("cancelled result must NOT apply partial matches; got %d", len(post.search.Matches))
 	}
+	// The cancelled goroutine has already exited; holding a handle to
+	// its done context muddies "is a scan in flight?" for teardown
+	// paths. searchCancel must be nil after the cancelled msg lands
+	// (PR#22 review round-2).
+	if post.searchCancel != nil {
+		t.Errorf("cancelled result must drop searchCancel handle; got non-nil")
+	}
 }
 
 // TestH5_RapidTypingNoGoroutineLeak exercises the rapid-typing path
@@ -497,7 +504,7 @@ func TestH5_ReloadClearsInFlightSearchState(t *testing.T) {
 		t.Errorf("reload must clear search.Matches (offsets no longer map to the new buffer); got len=%d",
 			len(post.search.Matches))
 	}
-	if post.search.CurrentMatch != 0 {
-		t.Errorf("reload must reset search.CurrentMatch to 0; got %d", post.search.CurrentMatch)
+	if post.search.CurrentMatch != -1 {
+		t.Errorf("reload must reset search.CurrentMatch to -1 (no-selection sentinel); got %d", post.search.CurrentMatch)
 	}
 }
