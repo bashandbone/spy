@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/charmbracelet/bubbles/viewport"
+	"github.com/charmbracelet/lipgloss"
 
 	"github.com/knitli/spy/internal/source"
 )
@@ -190,6 +191,15 @@ func TestStatusBar_WideRenderNeverExceedsWidth(t *testing.T) {
 			advisory:    "",
 			width:       80, // smallest wide-mode width
 		},
+		{
+			// Wide-character regression: a CJK-heavy filename plus a
+			// long emoji-laden advisory must still fit. lipgloss.Width
+			// counts CJK as 2 cols and emoji as 2; rune count is wrong.
+			name:        "wide chars: CJK basename + emoji advisory",
+			displayName: "メインプログラム-超長いファイル名.go",
+			advisory:    "🔥 highlighting disabled 🔥",
+			width:       80,
+		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -239,11 +249,13 @@ func TestStatusBar_MonoSuppressesANSI(t *testing.T) {
 	}
 }
 
-// widthOf returns the rune count of the rendered status bar line, with
-// ANSI escapes stripped so coloured renders fit-check correctly. Reuses
-// stripANSI from code_test.go and runeCount from code.go.
+// widthOf returns the rendered terminal-column width of the status
+// bar line. Uses [lipgloss.Width] so wide characters (CJK, emoji) and
+// combining marks are counted correctly, matching the production
+// width budget enforced by [renderFull] / [padToWidth] (Copilot
+// review PR#13 round-3 #6 — rune count was wrong for non-ASCII
+// content). lipgloss.Width also strips ANSI escapes, so the helper
+// works on both styled and mono renders.
 func widthOf(s string) int {
-	line := strings.TrimRight(s, "\n")
-	stripped := stripANSI(line)
-	return runeCount(stripped)
+	return lipgloss.Width(strings.TrimRight(s, "\n"))
 }
