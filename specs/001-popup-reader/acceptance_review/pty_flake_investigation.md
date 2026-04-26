@@ -10,10 +10,10 @@ workaround retained; follow-up issue filed.
 
 **Cross-references**:
 
-- `tests/integration/pty_sanity_test.go:51-57` (retry loop in
+- `tests/integration/pty_sanity_test.go:58-69` (ctrl-c fallback in
   `TestPTYSanity_QuitOnQBigFile`)
-- `tests/integration/pty_sanity_test.go:83-85` (retry loop in
-  `TestPTYSanity_QuitOnQ`)
+- `tests/integration/pty_sanity_test.go:92-94` (5-iteration retry
+  loop in `TestPTYSanity_QuitOnQ`)
 - `tests/perf/dismiss_bench_test.go:99-129` (10 ms timeout +
   retransmit in `measureDismiss`)
 - `tests/integration/pty.go` (PTY harness)

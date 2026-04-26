@@ -51,7 +51,8 @@ var ErrUnsupportedDecoder = errors.New("render: image / PDF decoder rejected the
 // pdfRenderer instances are constructed on the event-loop goroutine
 // via [render.ForKind] (called from `rebuildRenderer` /
 // model construction in internal/ui) and consumed on the same
-// goroutine via [pdfRenderer.Render] from internal/ui/view.go. No
+// goroutine via [pdfRenderer.Render] from internal/ui/update.go
+// (every call site of `m.renderer.Render(...)`). No
 // synchronization is needed today; if a future refactor moves
 // renderer construction or invocation onto another goroutine, this
 // invariant must be re-evaluated and a mutex (or per-renderer
