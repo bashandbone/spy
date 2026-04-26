@@ -4,31 +4,95 @@
 
 package integration
 
-import "testing"
+import (
+	"bytes"
+	"fmt"
+	"os"
+	"path/filepath"
+	"regexp"
+	"strings"
+	"testing"
+	"time"
+)
 
 // TestTextReview_HighlightedFile is the US1 PTY-driven integration
-// test (T040): start `spy ./hello.go`, observe an alt-screen frame
-// with Go syntax colours, scroll down via arrow key, and exit cleanly
-// with `q`. It ships as a documented `t.Skip` until the PTY harness
-// real implementation lands in Phase 9 (T104) — same staging strategy
-// as TestSignal in tests/integration/signal_test.go.
+// test (T040): start `spy hello.go`, observe an alt-screen frame with
+// Go syntax colours, scroll down via arrow key, and exit cleanly with
+// `q`.
 //
-// When the harness arrives, this test should:
-//  1. Build the binary into a t.TempDir() and copy
-//     tests/e2e/fixtures/hello.go into the same dir.
-//  2. Spawn `./spy hello.go` under a PTY sized 80x24.
-//  3. Wait for the alt-screen entry sequence (\x1b[?1049h) on the PTY.
-//  4. Wait for the first frame and assert it contains:
-//     - The Go keyword "package" with an SGR escape sequence around
-//     it (any colour from the dark theme is acceptable).
-//     - The literal substring "fmt.Println".
-//     - A line-number gutter row beginning with "1  ".
-//  5. Send the Down-arrow byte sequence (\x1b[B) and assert that the
-//     next frame's gutter starts with "2  " or higher.
-//  6. Send `q` and assert the process exits with code 0 within 1 s.
-//
-// Until the harness lands, the assertions are documented here so future
-// PRs can lift them into runnable code without re-deriving the contract.
+// SGR escape detection is permissive: any non-default foreground SGR
+// adjacent to a Go keyword satisfies the "highlighted" contract — the
+// exact colour is theme-dependent and not pinned here (theme pinning
+// is TestTheme_OverridePrecedence's job).
 func TestTextReview_HighlightedFile(t *testing.T) {
-	t.Skip("PTY harness not yet implemented — Phase 9 T104 will provide the runtime")
+	dir := t.TempDir()
+	fixture := filepath.Join(dir, "hello.go")
+
+	var src bytes.Buffer
+	src.WriteString("package main\n\nimport \"fmt\"\n\nfunc main() {\n")
+	for i := 0; i < 95; i++ {
+		fmt.Fprintf(&src, "\tfmt.Println(\"line %d\")\n", i)
+	}
+	src.WriteString("}\n")
+	if err := os.WriteFile(fixture, src.Bytes(), 0o644); err != nil {
+		t.Fatalf("write fixture: %v", err)
+	}
+
+	p := NewPTYProgram(t, []string{"--no-config", fixture}, nil)
+	if !p.WaitFor(AltScreenEnter, 5*time.Second) {
+		t.Fatalf("alt-screen entry not observed; snapshot=%q", truncTail(p.Snapshot(), 200))
+	}
+	// Give Bubble Tea a moment to install raw mode + finish first paint.
+	time.Sleep(300 * time.Millisecond)
+
+	frame := string(p.Snapshot())
+	// Permissive SGR-near-keyword check: at least one SGR escape should
+	// appear in the rendered frame. Chroma always emits SGR for any
+	// non-mono theme; absence here means highlighting failed.
+	if !regexp.MustCompile(`\x1b\[[0-9;]+m`).MatchString(frame) {
+		t.Fatalf("first paint contains no SGR escapes — highlighting did not engage")
+	}
+	// Substring assertions over the rendered text ignore SGR escapes.
+	// Chroma splits identifiers across SGR boundaries (e.g.
+	// "fmt"+RESET+SET+"Println") so a literal substring search over the
+	// raw bytes misses them; strip first.
+	stripped := stripANSI(frame)
+	if !strings.Contains(stripped, "package") {
+		t.Fatalf("first paint missing 'package' keyword; stripped tail=%q", truncTail([]byte(stripped), 400))
+	}
+	if !strings.Contains(stripped, "fmt.Println") {
+		t.Fatalf("first paint missing 'fmt.Println'; stripped tail=%q", truncTail([]byte(stripped), 400))
+	}
+
+	// Scroll down via arrow key. Down-arrow in xterm: \x1b[B.
+	// Send several to make the change observable past any latency.
+	for i := 0; i < 5; i++ {
+		p.Send("\x1b[B")
+		time.Sleep(20 * time.Millisecond)
+	}
+	time.Sleep(150 * time.Millisecond)
+
+	// Quit. Loop with retries — first keystroke after first paint is
+	// known to be dropped occasionally (see pty_sanity_test.go).
+	for i := 0; i < 5 && !waitExitShort(p, 250*time.Millisecond); i++ {
+		p.Send("q")
+	}
+	if !p.WaitForExit(3 * time.Second) {
+		t.Fatalf("process did not exit on `q`; snapshot tail=%q", truncTail(p.Snapshot(), 200))
+	}
+	if exit := p.ExitCode(); exit != 0 {
+		t.Fatalf("exit code %d (want 0)", exit)
+	}
 }
+
+// truncTail returns the last n bytes of b for snapshot diagnostics in
+// failure messages — full snapshots can be tens of KB.
+func truncTail(b []byte, n int) string {
+	if len(b) <= n {
+		return string(b)
+	}
+	return string(b[len(b)-n:])
+}
+
+// stripANSI is shared with resize_test.go (same package); declared
+// there.

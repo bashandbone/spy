@@ -24,6 +24,14 @@ import (
 // renderer returns the page-text fallback in that case.
 var ErrPDFGraphicsUnavailable = errors.New("pdf: rasterization disabled in this build")
 
+// ErrUnsupportedDecoder signals that a graphics / PDF decoder either
+// failed at the cgo / panic boundary or refused to decode an
+// attacker-controlled blob. Callers fall back to the metadata block
+// (image) or text extraction (PDF) instead of tearing down the
+// alt-screen. Wrapped via fmt.Errorf with %w; tests rely on
+// errors.Is(err, ErrUnsupportedDecoder) to detect the recovery path.
+var ErrUnsupportedDecoder = errors.New("render: image / PDF decoder rejected the input")
+
 // pdfRenderer draws PDF sources. By default — and on every build that
 // excludes the `fitz` tag — the renderer falls back to text extraction
 // via `ledongthuc/pdf`, displaying the active page's plain text. With

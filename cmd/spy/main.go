@@ -10,7 +10,9 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/signal"
 	"strings"
+	"syscall"
 
 	tea "github.com/charmbracelet/bubbletea"
 
@@ -201,18 +203,90 @@ func run(args []string, stdin *os.File) int {
 		Cancel:       cancel,
 	})
 
+	// Install our own SIGINT/SIGTERM handler BEFORE tea.NewProgram so
+	// we can return the documented exit codes (130 for SIGINT, 143
+	// for SIGTERM per contracts/cli.md). Without
+	// tea.WithoutSignalHandler, Bubble Tea's internal handler catches
+	// SIGINT and converts to tea.Quit — prog.Run then returns nil
+	// (or a generic error) and we'd exit 0/1 instead of 130. SIGTERM
+	// receives no special handling from Bubble Tea v1, but the
+	// process would still exit 0 because tea.Quit short-circuits
+	// before the signal can terminate the process.
+	//
+	// signal.Notify also suppresses Go's default signal behavior, so
+	// the program won't be torn down before our deferred
+	// term.Restore + graphics.CleanupFunc chain fires.
+	sigCh := make(chan os.Signal, 1)
+	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
+	defer signal.Stop(sigCh)
+
 	// US1 enables MouseCellMotion so future search-prompt UI can react to
 	// click-to-scroll. Bubble Tea handles SIGWINCH internally via its
 	// terminal-renderer goroutine, so no extra option is required.
-	prog := tea.NewProgram(model, tea.WithAltScreen(), tea.WithMouseCellMotion())
+	prog := tea.NewProgram(model,
+		tea.WithAltScreen(),
+		tea.WithMouseCellMotion(),
+		tea.WithoutSignalHandler(),
+	)
+
+	// Goroutine: when a signal arrives, translate it to tea.Quit so
+	// the alt-screen exit and graphics cleanup escapes still fire via
+	// Bubble Tea's normal teardown. The signal value is stashed in
+	// `caught` so the post-Run path can decide between exit-on-signal
+	// (128+signum) and exit-on-clean-quit (exitOK).
+	//
+	// `caught` is buffered (cap 1) so the send never blocks; the
+	// goroutine exits as soon as either a signal arrives or the
+	// notification is stopped (sigCh delivers no further values after
+	// the deferred signal.Stop above, but the goroutine remains
+	// blocked on <-sigCh until process exit — acceptable since run()
+	// itself is about to return).
+	caught := make(chan os.Signal, 1)
+	go func() {
+		sig, ok := <-sigCh
+		if !ok {
+			return
+		}
+		caught <- sig
+		prog.Send(tea.Quit())
+	}()
+
 	if _, err := prog.Run(); err != nil {
 		// Cancel the loader so its background goroutine doesn't leak
 		// past the program's error path (Copilot review PR#7 #2).
 		cancel()
+		// A signal that fired DURING Run still wins — return
+		// 128+signum so the caller sees the documented exit code
+		// even if Bubble Tea's teardown surfaced an error.
+		if sig := drainCaughtSignal(caught); sig != 0 {
+			return 128 + int(sig)
+		}
 		fmt.Fprintf(os.Stderr, "spy: tea program: %v\n", err)
 		return exitGenericError
 	}
+
+	// Clean tea.Run exit. If a signal triggered it, return the
+	// matching exit code; otherwise the user pressed q/esc and we
+	// return exitOK.
+	if sig := drainCaughtSignal(caught); sig != 0 {
+		return 128 + int(sig)
+	}
 	return exitOK
+}
+
+// drainCaughtSignal returns the signal number received on `caught`
+// without blocking, or 0 if the channel is empty. Exit codes per
+// `contracts/cli.md`: SIGINT (signal 2) → 130; SIGTERM (signal 15)
+// → 143.
+func drainCaughtSignal(caught <-chan os.Signal) syscall.Signal {
+	select {
+	case sig := <-caught:
+		if s, ok := sig.(syscall.Signal); ok {
+			return s
+		}
+	default:
+	}
+	return 0
 }
 
 // runDegenerate is the contracts/cli.md "stdout (non-TTY)" path:

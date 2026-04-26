@@ -86,3 +86,60 @@ func DiffFrames(got, want []byte) string {
 	}
 	return fmt.Sprintf("frames differ (lengths got=%d want=%d)", len(got), len(want))
 }
+
+// stripANSI removes CSI / OSC / SGR escape sequences from `s` so
+// substring assertions over rendered frames can match content that
+// Chroma's tokeniser splits across SGR boundaries (e.g.
+// "fmt"+RESET+SET+"Println").
+//
+// Lives in helpers.go (non-test, no build tag) because resize_test.go
+// — the original home — is gated by `//go:build !race` and the
+// function would otherwise disappear under `-race`.
+func stripANSI(s string) string {
+	var b bytes.Buffer
+	b.Grow(len(s))
+	for i := 0; i < len(s); {
+		if s[i] != 0x1b {
+			b.WriteByte(s[i])
+			i++
+			continue
+		}
+		if i+1 >= len(s) {
+			i++
+			continue
+		}
+		switch s[i+1] {
+		case '[':
+			// CSI: ESC [ params... <final byte 0x40-0x7e>
+			j := i + 2
+			for j < len(s) {
+				c := s[j]
+				if c >= 0x40 && c <= 0x7e {
+					j++
+					break
+				}
+				j++
+			}
+			i = j
+		case ']':
+			// OSC: ESC ] params... ST (BEL or ESC \\)
+			j := i + 2
+			for j < len(s) {
+				if s[j] == 0x07 {
+					j++
+					break
+				}
+				if s[j] == 0x1b && j+1 < len(s) && s[j+1] == '\\' {
+					j += 2
+					break
+				}
+				j++
+			}
+			i = j
+		default:
+			// Two-byte sequence; consume both.
+			i += 2
+		}
+	}
+	return b.String()
+}

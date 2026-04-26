@@ -106,20 +106,34 @@ SGR-but-not-OSC discriminator can opt back in.
 
 ## (e) Graphics decoder safety
 
-> Source: [internal/graphics/graphics.go](../../../internal/graphics/graphics.go),
-> [internal/graphics/graphics_test.go](../../../internal/graphics/graphics_test.go)
+> Source: [internal/render/image.go](../../../internal/render/image.go),
+> [internal/render/pdf_fitz.go](../../../internal/render/pdf_fitz.go),
+> [internal/render/decoder_panic_test.go](../../../internal/render/decoder_panic_test.go)
 
 - Image decoding flows through `image.Decode` (stdlib) and
   `golang.org/x/image` decoders.
 - PDF rasterization (only with `-tags fitz`) flows through
-  `gen2brain/go-fitz`, which wraps `mupdf`. `mupdf` panics on certain
-  malformed inputs; the renderer's deferred recovery in
-  `internal/graphics/graphics.go:60` catches them and surfaces the
-  failure as `ErrUnsupported`.
-- `graphics_test.go::TestGraphics_RecoversFromDecoderPanic` asserts
-  the recovery path keeps the program alive.
+  `gen2brain/go-fitz`, which wraps `mupdf`. `mupdf` invokes
+  `longjmp` on certain malformed inputs which Go's runtime
+  surfaces as a panic.
+- Both decoder paths are guarded by `defer recover()`:
+  - `imageRenderer.decode` (`internal/render/image.go:111`) wraps
+    `image.Decode`; surfaces as `ErrUnsupportedDecoder`.
+  - `imageRenderer.dimensions` (`internal/render/image.go:166`)
+    wraps `image.DecodeConfig`; falls back to "" dimensions in the
+    metadata block.
+  - `rasterizePDFPage` (`internal/render/pdf_fitz.go:26`) wraps
+    `fitz.NewFromMemory` + `doc.Image`; surfaces as
+    `ErrUnsupportedDecoder`.
+- `internal/render/decoder_panic_test.go` exercises the recover
+  path with a synthetic `panicSource` whose Read panics; both the
+  decode-only and full-Render call sites stay alive and surface
+  the documented error.
 
-**Status**: PASS.
+**Status**: PASS. *Updated 2026-04-26 to reflect the actual recover
+locations — earlier draft cited a `defer recover` in
+`internal/graphics/graphics.go` that did not exist (acceptance
+review C5).*
 
 ## (f) No accidental network calls
 
