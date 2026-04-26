@@ -276,8 +276,12 @@ func TestH5_RapidTypingNoGoroutineLeak(t *testing.T) {
 	}
 	wg.Wait()
 
-	// Apply all results in arrival order — most are stale; only the
-	// last one's gen will match m.searchGen and actually mutate state.
+	// Apply all results in dispatch order (the slice is indexed by
+	// dispatch index, not completion time — completion order is
+	// non-deterministic and irrelevant here because the gen guard
+	// alone decides which result mutates state). Only the last
+	// query's gen matches m.searchGen; every earlier result is
+	// dropped on arrival.
 	for _, r := range results {
 		if r.gen == 0 {
 			continue
@@ -473,6 +477,66 @@ func TestH5_CompileErrorCancelsPriorInFlightSearch(t *testing.T) {
 	}
 	if final.search.Pending {
 		t.Errorf("Pending must stay false after compile-error + stale result")
+	}
+}
+
+// TestH5_EmptyQueryCancelsPriorInFlightSearch regression-guards the
+// fix from PR#22 round-3 review: hitting Enter on an empty `/` prompt
+// while a prior async search is Pending MUST cancel that prior scan
+// and clear Pending. Pre-fix runSearch's empty-query guard returned
+// before the cancel block, so the prior scan kept running and Pending
+// stayed stuck true indefinitely (the prior result, when it landed,
+// would un-stick Pending — but the user had no way to know that, and
+// during the in-flight window the UI lied about scan state).
+func TestH5_EmptyQueryCancelsPriorInFlightSearch(t *testing.T) {
+	t.Parallel()
+	m := newTestModel(t, "alpha\nfoo\nbar\nfoo\n")
+	m, _ = applyResize(m, 80, 24)
+	m = drainStream(t, m)
+
+	// First search: dispatch and capture the cmd without applying.
+	mm, cmd1 := m.runSearch("foo", search.DirForward)
+	m = mm.(Model)
+	priorGen := m.searchGen
+	realPriorCancel := m.searchCancel
+	if realPriorCancel == nil {
+		t.Fatalf("first runSearch should install searchCancel")
+	}
+	priorCancelCalled := false
+	m.searchCancel = func() {
+		priorCancelCalled = true
+		realPriorCancel()
+	}
+	if !m.search.Pending {
+		t.Fatalf("precondition: Pending should be true after first dispatch")
+	}
+
+	// Empty submission must cancel the prior scan AND clear Pending,
+	// even though it returns no cmd and produces no advisory.
+	mm2, cmd2 := m.runSearch("", search.DirForward)
+	post := mm2.(Model)
+	if cmd2 != nil {
+		t.Errorf("empty query should not dispatch a cmd; got non-nil")
+	}
+	if !priorCancelCalled {
+		t.Errorf("empty-query path MUST cancel a prior in-flight search — " +
+			"without this, Pending would stay stuck true indefinitely")
+	}
+	if post.search.Pending {
+		t.Errorf("empty-query path must clear Pending; got true")
+	}
+	if post.searchGen <= priorGen {
+		t.Errorf("empty-query path must bump searchGen (was %d, now %d) so the prior result is stale",
+			priorGen, post.searchGen)
+	}
+
+	// Drain cmd1 and apply — its gen is now stale, must be a no-op.
+	if msg := cmd1(); msg != nil {
+		updated, _ := post.Update(msg)
+		final := updated.(Model)
+		if final.search.Pending {
+			t.Errorf("stale prior result should not re-set Pending")
+		}
 	}
 }
 

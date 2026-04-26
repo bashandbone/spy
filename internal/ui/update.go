@@ -452,6 +452,24 @@ func (m Model) submitPrompt() (tea.Model, tea.Cmd) {
 // the renderer's highlight overlay matches what the user actually
 // searched for.
 func (m Model) runSearch(query string, dir search.Direction) (tea.Model, tea.Cmd) {
+	// Cancel any in-flight scan and invalidate its result BEFORE any
+	// of the early-return guards. Every submission path — empty query,
+	// missing buffer, all-prefix-only after stripping, compile error,
+	// or the success path — must honor the "submit cancels prior"
+	// contract. Without this top placement, hitting Enter on an empty
+	// `/` prompt while a prior scan is Pending leaves the prior scan
+	// running and Pending stuck true (PR#22 round-3 review — the
+	// initial fix moved cancel above compile but missed the empty-query
+	// guard above it).
+	if m.searchCancel != nil {
+		m.searchCancel()
+		m.searchCancel = nil
+	}
+	m.searchGen++
+	// Clear Pending now; the success path below re-installs Pending=true
+	// with the new query, while early returns leave it false so the
+	// renderer / footer don't lie about a scan in flight.
+	m.search.Pending = false
 	if query == "" || m.stream == nil || m.stream.Buffer == nil {
 		return m, nil
 	}
@@ -462,22 +480,6 @@ func (m Model) runSearch(query string, dir search.Direction) (tea.Model, tea.Cmd
 		caseMode = caseModeFromConfig(m.cfg.CaseMode, caseMode)
 	}
 	cleaned, regex, caseMode := stripSearchPrefixes(query, regex, caseMode)
-	// Cancel any in-flight scan and invalidate its result BEFORE
-	// validating the new query. If compile fails or the cleaned query
-	// is empty we still need to drop the prior search's pending state
-	// so its result can't clobber the error advisory we set below
-	// (PR#22 Copilot review — failed compile while a search is Pending
-	// would otherwise leave the prior gen unchanged and let the slow
-	// scan apply over the "invalid pattern" advisory).
-	if m.searchCancel != nil {
-		m.searchCancel()
-		m.searchCancel = nil
-	}
-	m.searchGen++
-	// Clear Pending now; the success path below re-installs Pending=true
-	// with the new query, while early returns leave it false so the
-	// renderer / footer don't lie about a scan in flight.
-	m.search.Pending = false
 	if cleaned == "" {
 		// All-prefix queries (e.g. typed `\c` then immediately Enter)
 		// don't have anything to match — surface a soft advisory rather
