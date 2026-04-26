@@ -32,6 +32,13 @@ func TestPTYSanity_HelpFlag(t *testing.T) {
 // TestPTYSanity_QuitOnQBigFile reproduces the scenario the dismiss
 // benchmark uses: spawn against a 1000-line file (so streaming has
 // runway), wait for first paint, sleep, send `q` once, expect exit.
+//
+// The first-`q` retransmit fallback is a known-flake workaround
+// (acceptance review M7). See specs/001-popup-reader/acceptance_review/
+// pty_flake_investigation.md for the full diagnosis: most likely
+// root cause is a missing input-ready barrier in Bubble Tea v1's
+// renderer/input-reader bootstrap. The retry is conservative and
+// doesn't mask regressions.
 func TestPTYSanity_QuitOnQBigFile(t *testing.T) {
 	dir := t.TempDir()
 	fixture := filepath.Join(dir, "big.txt")
@@ -66,7 +73,9 @@ func TestPTYSanity_QuitOnQBigFile(t *testing.T) {
 }
 
 // TestPTYSanity_QuitOnQ verifies that pressing `q` inside an
-// alt-screen session terminates the binary cleanly.
+// alt-screen session terminates the binary cleanly. The 5-iteration
+// resend loop is the M7 workaround for the first-`q` flake — see
+// specs/001-popup-reader/acceptance_review/pty_flake_investigation.md.
 func TestPTYSanity_QuitOnQ(t *testing.T) {
 	dir := t.TempDir()
 	fixture := filepath.Join(dir, "tiny.txt")

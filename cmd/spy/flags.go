@@ -36,6 +36,26 @@ type ParsedFlags struct {
 	DebugPath     string
 
 	Args []string
+
+	// SetFlags records the names of every flag the user explicitly
+	// passed on the command line. Populated by ParseFlags via
+	// flag.FlagSet.Visit. Used by main to differentiate "user passed
+	// --vim=false" from "user did not pass --vim" (default false) —
+	// boolPtr-on-value alone conflates the two (acceptance review
+	// LOW-3). Read-only; tests may inspect.
+	SetFlags map[string]struct{}
+}
+
+// FlagWasSet reports whether the user explicitly passed `name` on the
+// command line. Returns false if SetFlags is nil (which happens for
+// hand-constructed ParsedFlags in tests that don't go through
+// ParseFlags).
+func (pf *ParsedFlags) FlagWasSet(name string) bool {
+	if pf == nil || pf.SetFlags == nil {
+		return false
+	}
+	_, ok := pf.SetFlags[name]
+	return ok
 }
 
 // ParseFlags parses the contracts/cli.md flag surface into a
@@ -52,6 +72,17 @@ func ParseFlags(args []string) (*ParsedFlags, error) {
 		return nil, errors.New("--config and --no-config are mutually exclusive")
 	}
 	pf.Args = fs.Args()
+	// Track which flags the user explicitly set. fs.Visit only iterates
+	// flags that were actually passed on the command line, which lets
+	// us distinguish "user passed --vim=false" (Set) from "user did not
+	// pass --vim" (default false). Without this, downstream config
+	// merging cannot tell the two apart and a user who explicitly
+	// disables vim mode via flag has their override silently dropped
+	// (acceptance review LOW-3).
+	pf.SetFlags = make(map[string]struct{})
+	fs.Visit(func(f *flag.Flag) {
+		pf.SetFlags[f.Name] = struct{}{}
+	})
 	return pf, nil
 }
 

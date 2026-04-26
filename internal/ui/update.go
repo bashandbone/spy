@@ -103,7 +103,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 // On failure the prior session is retained and the error surfaces via
 // statusAdvisory. On success the new stream becomes the active one and
 // the renderer is rebuilt with the new source's kind / language.
+//
+// Clears m.openCancel regardless of outcome — on success ownership
+// moves to m.cancel (set below from msg.cancel); on error the
+// closure already invoked cancel before sending the message
+// (acceptance review M6).
 func (m Model) onOpenResult(msg openResultMsg) (tea.Model, tea.Cmd) {
+	m.openCancel = nil
 	if msg.err != nil {
 		m.statusAdvisory = fmt.Sprintf("open: %v", msg.err)
 		return m, nil
@@ -230,6 +236,14 @@ func (m Model) onKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		// fall-through: the second key is dispatched normally below.
 	}
 	if matchAction(m.keyMap, keys.ActionQuit, msg) {
+		// Cancel any in-flight `:open <path>` BEFORE the main
+		// loader cancel — otherwise a quit between the runOpenCommand
+		// dispatch and openResultMsg arrival leaks the new stream's
+		// reader goroutine and CancelFunc (acceptance review M6).
+		if m.openCancel != nil {
+			m.openCancel()
+			m.openCancel = nil
+		}
 		if m.cancel != nil {
 			m.cancel()
 		}
@@ -746,6 +760,13 @@ func (m Model) runCommand(cmd string) (tea.Model, tea.Cmd) {
 	}
 	// Quit aliases.
 	if cmd == "q" || cmd == "quit" {
+		// Cancel any in-flight `:open <path>` BEFORE the main
+		// loader cancel — see ActionQuit in onKey for rationale
+		// (acceptance review M6).
+		if m.openCancel != nil {
+			m.openCancel()
+			m.openCancel = nil
+		}
 		if m.cancel != nil {
 			m.cancel()
 		}
@@ -854,6 +875,19 @@ func (m Model) runSetCommand(rest string) (tea.Model, tea.Cmd) {
 // runOpenCommand replaces the current source with the file at `path`.
 // Reuses the loader/source paths so the new file goes through the same
 // detection / streaming pipeline as the original CLI argument.
+//
+// The `ctx, cancel` pair is created BEFORE the tea.Cmd so the
+// CancelFunc can be stashed on m.openCancel — without that, a quit
+// between the dispatch and openResultMsg arrival leaks both the
+// loader's reader goroutine and the cancel function (acceptance
+// review M6). The quit paths (ActionQuit, `:q`/`:quit`) call
+// m.openCancel() to tear down the in-flight loader; on
+// openResultMsg arrival the field is cleared (ownership moves to
+// m.cancel on success; cancel was already invoked on error).
+//
+// If a previous `:open` is still in flight, its cancel is invoked
+// FIRST so the prior loader goroutine exits before we start a new
+// one (same defense-in-depth as m.cancel handling above).
 func (m Model) runOpenCommand(path string) (tea.Model, tea.Cmd) {
 	if path == "" {
 		m.statusAdvisory = "open: missing path"
@@ -868,9 +902,14 @@ func (m Model) runOpenCommand(path string) (tea.Model, tea.Cmd) {
 		m.cancel()
 		m.cancel = nil
 	}
+	if m.openCancel != nil {
+		m.openCancel()
+		m.openCancel = nil
+	}
 	cfg := m.cfg
+	ctx, cancel := context.WithCancel(context.Background())
+	m.openCancel = cancel
 	return m, func() tea.Msg {
-		ctx, cancel := context.WithCancel(context.Background())
 		stream, err := loader.Open(ctx, src, loaderConfigFromConfig(cfg))
 		if err != nil {
 			cancel()

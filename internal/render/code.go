@@ -178,10 +178,12 @@ func (r *codeRenderer) styleLine(l source.Line) string {
 // that [neutralizeEscapes] would substitute. Used as a fast pre-scan
 // so the per-token copy in [neutralizeTokens] only runs on lines that
 // actually carry an OSC / DCS / CSI byte. Per-line inputs are typically
-// hundreds of bytes; the IndexAny scan is one cache-line read in the
-// common case.
+// hundreds of bytes; the byte scan is one cache-line read in the
+// common case. Uses containsRawEscByte (not strings.ContainsAny) to
+// avoid the U+FFFD-vs-0x9b false positive that would force a
+// pointless full re-scan after Neutralize has already run upstream.
 func needsTokenNeutralisation(raw string) bool {
-	return strings.ContainsAny(raw, "\x1b\x9b")
+	return containsRawEscByte(raw)
 }
 
 // neutralizeTokens returns a copy of `tokens` with every ESC / CSI byte

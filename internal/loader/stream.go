@@ -123,6 +123,12 @@ func Open(ctx context.Context, src source.Source, cfg Config) (*Stream, error) {
 		case errs <- fmt.Errorf("loader.Open: %w", readErr):
 		default:
 		}
+		// Mark the warning sink closed BEFORE closing the underlying
+		// channel so any in-flight Slice() that's about to send a
+		// windowed-mode warning observes the flag and skips the send
+		// (LOW-4). The flag is set under b.mu, the same mutex that
+		// guards sendWarning's call site.
+		buf.CloseWarningSink()
 		close(updates)
 		close(errs)
 		return stream, nil
@@ -131,6 +137,7 @@ func Open(ctx context.Context, src source.Source, cfg Config) (*Stream, error) {
 	if hitEOF {
 		_ = rc.Close()
 		buf.MarkComplete(int64(len(first.Lines)))
+		buf.CloseWarningSink()
 		close(updates)
 		close(errs)
 		return stream, nil
@@ -138,10 +145,26 @@ func Open(ctx context.Context, src source.Source, cfg Config) (*Stream, error) {
 
 	// Continue streaming asynchronously. Producer blocks on bounded
 	// `updates`; ctx cancellation interrupts both the scan and the send.
+	//
+	// Defer order is load-bearing: defers run LIFO, so the source
+	// order below produces the runtime sequence:
+	//   1. buf.CloseWarningSink()  — flips the buffer's flag so
+	//                                concurrent Slice() calls observe
+	//                                "sink closed" and skip the send
+	//                                path (LOW-4)
+	//   2. close(errs)             — signals errs consumers
+	//   3. close(updates)          — signals updates consumers
+	//   4. rc.Close()              — releases the source FD
+	//
+	// CloseWarningSink MUST run BEFORE close(errs) so the flag is
+	// visible to any racing Slice() call by the time close happens —
+	// otherwise the recover() in sendWarning is the only thing
+	// preventing a send-on-closed panic.
 	go func() {
 		defer rc.Close()
 		defer close(updates)
 		defer close(errs)
+		defer buf.CloseWarningSink()
 		next := first.StartLine + int64(len(first.Lines))
 		for {
 			if ctx.Err() != nil {

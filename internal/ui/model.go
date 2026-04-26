@@ -147,6 +147,21 @@ type Model struct {
 	// started a new search would silently overwrite the new
 	// session's results.
 	searchGen uint64
+
+	// openCancel is the in-flight cancel for an active `:open <path>`
+	// command. Per the acceptance review (M6), runOpenCommand
+	// previously ran loader.Open in a tea.Cmd-spawned goroutine and
+	// only handed its CancelFunc to the model via openResultMsg. If
+	// the user quit between the command dispatch and the message
+	// arrival, Bubble Tea drops the pending message — leaking the
+	// new stream's reader goroutine and its CancelFunc. By stashing
+	// the cancel on the model BEFORE returning the tea.Cmd, the
+	// quit paths (ActionQuit, `:q`/`:quit`) can call openCancel()
+	// up-front and tear down the in-flight loader regardless of
+	// whether the message arrived. Cleared once openResultMsg lands
+	// (success: ownership moves to m.cancel; error: the closure
+	// already invoked cancel before the message was sent).
+	openCancel context.CancelFunc
 }
 
 // NewModel constructs the viewer's Bubble Tea model. The first frame

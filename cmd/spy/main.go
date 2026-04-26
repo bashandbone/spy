@@ -82,8 +82,15 @@ func run(args []string, stdin *os.File) int {
 	defer restore()
 
 	// 2. Load layered config.
-	flagVim := boolPtr(pf.Vim)
-	flagRegex := boolPtr(pf.Regex)
+	//
+	// For --vim and --regex we differentiate "flag actually passed"
+	// from "left at default" via ParsedFlags.FlagWasSet — a user
+	// passing --vim=false to override their TOML must propagate
+	// &false (not nil). nil means "not set" in the config layer
+	// and falls back to TOML / built-in default (acceptance review
+	// LOW-3).
+	flagVim := flagBoolPtr(pf, "vim", pf.Vim)
+	flagRegex := flagBoolPtr(pf, "regex", pf.Regex)
 	var flagWordWrap, flagLineNums *bool
 	if pf.NoWrap {
 		f := false
@@ -429,9 +436,19 @@ func exitForSourceError(err error, args []string) int {
 	return exitGenericError
 }
 
-func boolPtr(b bool) *bool {
-	if !b {
+// flagBoolPtr returns a pointer to `val` when the user explicitly
+// passed `name` on the command line, otherwise nil. The downstream
+// config layer treats nil as "not set" so it falls back to the
+// TOML value or the built-in default; a non-nil pointer (even
+// `&false`) wins over both.
+//
+// Replaces the historical boolPtr(false) → nil shortcut, which
+// conflated "user passed --vim=false" with "user didn't pass --vim"
+// and silently dropped explicit-disable overrides (acceptance
+// review LOW-3).
+func flagBoolPtr(pf *ParsedFlags, name string, val bool) *bool {
+	if !pf.FlagWasSet(name) {
 		return nil
 	}
-	return &b
+	return &val
 }
