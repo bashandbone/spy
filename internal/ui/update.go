@@ -1053,6 +1053,12 @@ func metaUpdatedCmd(s *loader.Stream) tea.Cmd {
 // reopens the source, and swaps the buffer atomically on success. On
 // failure the prior buffer is retained and the error surfaces in the
 // status bar via m.lastError + m.status = StatusError.
+//
+// Reload also clears the source's cached detection so a file that's
+// changed kind on disk (text → PDF, swapped via tooling, etc.) is
+// re-classified against the current bytes — without this the new
+// content would render through the stale lexer/Kind picked up at the
+// initial Open (Copilot review acceptance M2).
 func (m Model) onReload() (tea.Model, tea.Cmd) {
 	if m.source == nil {
 		return m, nil
@@ -1086,6 +1092,9 @@ func (m Model) onReload() (tea.Model, tea.Cmd) {
 	m.search.Matches = nil
 	m.search.CurrentMatch = -1
 	src := m.source
+	if rd, ok := src.(interface{ Redetect() }); ok {
+		rd.Redetect()
+	}
 	cfg := m.cfg
 	return m, func() tea.Msg {
 		ctx, cancel := context.WithCancel(context.Background())

@@ -23,10 +23,17 @@ import (
 // renderer access is bursty (one frame at a time), so contention is
 // negligible compared to scan throughput.
 type LineBuffer struct {
-	mu               sync.Mutex
-	lines            []source.Line // index 0 == first resident line
-	startLine        int64         // 1-based line number of lines[0]
-	totalLines       int64         // last seen total; -1 while streaming
+	mu         sync.Mutex
+	lines      []source.Line // index 0 == first resident line
+	startLine  int64         // 1-based line number of lines[0]
+	totalLines int64         // last seen total; -1 while streaming
+	// streamStarted flips true on the first [LineBuffer.Append] or
+	// [LineBuffer.MarkComplete] call. While false [LineBuffer.Total]
+	// returns -1 (the "unknown / streaming hasn't begun" sentinel) so
+	// callers can distinguish "loader hasn't fed me anything yet" from
+	// "loader confirmed zero lines" — important for search and the
+	// status-bar footer (Copilot review acceptance M5).
+	streamStarted    bool
 	residentBytes    int64
 	maxResidentBytes int64
 	windowSize       int
@@ -80,9 +87,16 @@ func newLineBuffer(maxResidentBytes int64, windowSize int, maxLineBytes int64, s
 // Append records new lines emitted by the streamer. When the buffer
 // exceeds `maxResidentBytes`, it flips into windowed mode and trims
 // older lines to keep memory under the cap.
+//
+// The first Append (or [MarkComplete]) flips `streamStarted` so
+// [Total] stops returning the -1 "unknown" sentinel — even an empty
+// `in` slice counts as "the loader is producing", because EOF is
+// reported via MarkComplete and the consumer needs Total() to switch
+// to "0 confirmed" rather than "-1 still unknown".
 func (b *LineBuffer) Append(in []source.Line) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
+	b.streamStarted = true
 	for _, l := range in {
 		b.lines = append(b.lines, l)
 		b.residentBytes += int64(len(l.Raw))
@@ -153,21 +167,37 @@ func (b *LineBuffer) SetTokens(lines []source.Line) {
 
 // MarkComplete tells the buffer streaming has finished and pins the
 // final total. Renderers typically poll Total() after EOF.
+//
+// MarkComplete also flips `streamStarted` so a zero-line source still
+// transitions [Total] from -1 (unknown) to 0 (confirmed empty) — a
+// genuinely empty file must not look like "loader hasn't run yet".
 func (b *LineBuffer) MarkComplete(total int64) {
 	b.mu.Lock()
+	b.streamStarted = true
 	b.totalLines = total
 	b.mu.Unlock()
 }
 
-// Total returns the line count of the full source if known (after
-// [LineBuffer.MarkComplete] has been called) or, while streaming is
-// still in progress, the number of lines seen so far. Callers that
-// specifically need an "unknown total" sentinel should compare against
-// the [source.Metadata.LineCount] field, which is `-1` until the
-// loader's EOF chunk lands.
+// Total returns the line count of the full source. Three values are
+// possible:
+//
+//   - `-1` while streaming hasn't started yet (no [Append], no
+//     [MarkComplete]). Callers MUST treat this as "unknown total" — in
+//     particular, a search scan that sees -1 should wait for the
+//     streamer rather than declaring "no lines, nothing to scan"
+//     (Copilot review acceptance M5).
+//   - the running line count once at least one [Append] has landed
+//     and before [MarkComplete].
+//   - the pinned final total after [MarkComplete].
+//
+// A source that was confirmed-empty (loader read EOF on the first
+// chunk) returns 0, distinguishable from -1.
 func (b *LineBuffer) Total() int64 {
 	b.mu.Lock()
 	defer b.mu.Unlock()
+	if !b.streamStarted {
+		return -1
+	}
 	if b.totalLines > 0 {
 		return b.totalLines
 	}
