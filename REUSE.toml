@@ -33,6 +33,16 @@ precedence = "aggregate"
 SPDX-FileCopyrightText = "2026 Adam Poulemanos"
 SPDX-License-Identifier = "MIT OR Apache-2.0"
 
+# VHS-generated demo GIF committed for README embedding.
+# Binary file with no native comment syntax — tracked here.
+[[annotations]]
+path = [
+  "demo.gif",
+]
+precedence = "aggregate"
+SPDX-FileCopyrightText = "2026 Adam Poulemanos"
+SPDX-License-Identifier = "MIT OR Apache-2.0"
+
 # Graphics encoder golden testdata + the deterministic input PNG.
 # Binary fixtures with no native comment syntax — tracked here.
 [[annotations]]
