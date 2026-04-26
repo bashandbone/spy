@@ -200,3 +200,146 @@ func TestParseFlags_HelpExits(t *testing.T) {
 		t.Errorf("--help should set Help")
 	}
 }
+
+// TestFlagWasSet_TracksExplicitFlags pins LOW-3: ParsedFlags.SetFlags
+// records every flag the user explicitly passed, regardless of whether
+// the flag's value matches its default. This is what lets main
+// distinguish "user passed --vim=false" from "user did not pass --vim".
+func TestFlagWasSet_TracksExplicitFlags(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name string
+		args []string
+		want map[string]bool // expected FlagWasSet for each name
+	}{
+		{
+			name: "no flags",
+			args: nil,
+			want: map[string]bool{"vim": false, "regex": false},
+		},
+		{
+			name: "vim true",
+			args: []string{"--vim"},
+			want: map[string]bool{"vim": true, "regex": false},
+		},
+		{
+			name: "vim explicit false",
+			args: []string{"--vim=false"},
+			want: map[string]bool{"vim": true, "regex": false},
+		},
+		{
+			name: "regex explicit true",
+			args: []string{"--regex=true"},
+			want: map[string]bool{"vim": false, "regex": true},
+		},
+		{
+			name: "both explicit",
+			args: []string{"--vim=false", "--regex=true"},
+			want: map[string]bool{"vim": true, "regex": true},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			pf, err := ParseFlags(tc.args)
+			if err != nil {
+				t.Fatalf("ParseFlags(%v): %v", tc.args, err)
+			}
+			for name, want := range tc.want {
+				if got := pf.FlagWasSet(name); got != want {
+					t.Errorf("FlagWasSet(%q) = %v, want %v (args=%v)", name, got, want, tc.args)
+				}
+			}
+		})
+	}
+}
+
+// TestFlagBoolPtr_DistinguishesUnsetFromExplicitFalse pins LOW-3:
+// flagBoolPtr returns nil when the flag was not passed (so config
+// layer falls back to TOML/default), but a non-nil &false when the
+// user explicitly passed --vim=false (so the override actually wins).
+func TestFlagBoolPtr_DistinguishesUnsetFromExplicitFalse(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name      string
+		args      []string
+		flag      string
+		wantNil   bool
+		wantValue bool
+	}{
+		{
+			name:    "vim unset → nil",
+			args:    nil,
+			flag:    "vim",
+			wantNil: true,
+		},
+		{
+			name:      "vim=true → &true",
+			args:      []string{"--vim"},
+			flag:      "vim",
+			wantNil:   false,
+			wantValue: true,
+		},
+		{
+			name:      "vim=false → &false (NOT nil)",
+			args:      []string{"--vim=false"},
+			flag:      "vim",
+			wantNil:   false,
+			wantValue: false,
+		},
+		{
+			name:      "regex=false → &false (NOT nil)",
+			args:      []string{"--regex=false"},
+			flag:      "regex",
+			wantNil:   false,
+			wantValue: false,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			pf, err := ParseFlags(tc.args)
+			if err != nil {
+				t.Fatalf("ParseFlags(%v): %v", tc.args, err)
+			}
+			var val bool
+			switch tc.flag {
+			case "vim":
+				val = pf.Vim
+			case "regex":
+				val = pf.Regex
+			default:
+				t.Fatalf("unknown flag %q in test case", tc.flag)
+			}
+			ptr := flagBoolPtr(pf, tc.flag, val)
+			if tc.wantNil {
+				if ptr != nil {
+					t.Errorf("flagBoolPtr(%s) = &%v, want nil", tc.flag, *ptr)
+				}
+				return
+			}
+			if ptr == nil {
+				t.Fatalf("flagBoolPtr(%s) = nil, want &%v", tc.flag, tc.wantValue)
+			}
+			if *ptr != tc.wantValue {
+				t.Errorf("flagBoolPtr(%s) = &%v, want &%v", tc.flag, *ptr, tc.wantValue)
+			}
+		})
+	}
+}
+
+// TestFlagWasSet_HandlesNilParsedFlags guards FlagWasSet against the
+// hand-constructed-ParsedFlags-in-tests case (SetFlags map nil).
+func TestFlagWasSet_HandlesNilParsedFlags(t *testing.T) {
+	t.Parallel()
+	var pf *ParsedFlags
+	if pf.FlagWasSet("vim") {
+		t.Error("FlagWasSet on nil *ParsedFlags should return false")
+	}
+	pf2 := &ParsedFlags{}
+	if pf2.FlagWasSet("vim") {
+		t.Error("FlagWasSet on ParsedFlags with nil SetFlags should return false")
+	}
+}
