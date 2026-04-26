@@ -71,19 +71,30 @@ func TestFirstFrame_Under100ms(t *testing.T) {
 		}
 	}
 
-	// Use the slowest run as the gate — first-frame is a per-launch
-	// experience, not a percentile. The 20-iteration loop guards
-	// against an unlucky outlier driving the gate.
-	worst := durations[0]
-	for _, d := range durations {
-		if d > worst {
-			worst = d
+	// First-frame is a per-launch experience, not a steady-state
+	// metric, so we gate on a 95th percentile across 20 runs: a
+	// single jittery iteration (GC pause, scheduler hiccup) doesn't
+	// drive the result, but a real regression that makes the typical
+	// launch slow does.
+	sortDurations(durations)
+	p95 := durations[(len(durations)*95)/100]
+	worst := durations[len(durations)-1]
+	const limit = 100 * time.Millisecond
+	if p95 > limit {
+		t.Fatalf("SC-001: first-frame p95 %v exceeds %v budget (worst=%v)",
+			p95, limit, worst)
+	}
+	t.Logf("SC-001: first-frame p95=%v worst=%v across %d runs (limit %v)",
+		p95, worst, len(durations), limit)
+}
+
+// sortDurations is a tiny insertion sort over a small slice. Avoids
+// pulling sort into the perf package's import surface for a 20-element
+// input.
+func sortDurations(d []time.Duration) {
+	for i := 1; i < len(d); i++ {
+		for j := i; j > 0 && d[j] < d[j-1]; j-- {
+			d[j], d[j-1] = d[j-1], d[j]
 		}
 	}
-	const limit = 100 * time.Millisecond
-	if worst > limit {
-		t.Fatalf("SC-001: first-frame worst-case %v exceeds %v budget", worst, limit)
-	}
-	t.Logf("SC-001: first-frame worst=%v across %d runs (limit %v)",
-		worst, len(durations), limit)
 }

@@ -90,17 +90,17 @@ func writeSyntheticFile(t *testing.T, targetBytes, lineBytes int) string {
 	return path
 }
 
-// residentBytes returns the current process's heap-allocated bytes
-// (HeapAlloc). It's a lower bound on RSS; works on every platform Go
-// supports without resorting to /proc/self/status. For SC-005 we care
-// about the trend (we shouldn't blow up by 200 MiB+ over the ambient),
-// not the precise OS-reported figure.
+// residentBytes returns runtime.MemStats.HeapInuse — the bytes in
+// heap spans that the runtime has obtained from the OS and hasn't
+// released yet. It's a closer-to-RSS approximation than HeapAlloc
+// (which only counts objects with live references) and works on every
+// platform Go supports without resorting to /proc/self/status. For
+// SC-005 we care about the trend (we shouldn't blow up by 200 MiB+
+// over the ambient), not the precise OS-reported figure.
 func residentBytes(t *testing.T) int64 {
 	t.Helper()
 	runtime.GC()
 	var ms runtime.MemStats
 	runtime.ReadMemStats(&ms)
-	// Use HeapInuse as a closer-to-RSS approximation than HeapAlloc;
-	// it includes spans returned to the OS but not yet released.
 	return int64(ms.HeapInuse)
 }

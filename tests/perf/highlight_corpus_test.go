@@ -22,11 +22,13 @@ import (
 // emit ≤ 1 % of bytes as `chroma.Error` tokens. Pass threshold: ≥ 47/50
 // files (94 %).
 //
-// The fixtures live under tests/fixtures/highlight-corpus/. Each file
-// is named <lang>.<ext> where the extension drives Chroma's
-// extension-based lexer selection. Adding a fixture with a fresh
-// extension is enough to extend the corpus; the test discovers files
-// by scanning the directory.
+// The fixtures live under tests/fixtures/_highlight-corpus/ — the
+// `_` prefix tells Go to skip the directory when scanning for build
+// inputs (otherwise the C/C++/asm sample files would be picked up as
+// cgo source). Each file is named <lang>.<ext> where the extension
+// drives Chroma's extension-based lexer selection. Adding a fixture
+// with a fresh extension is enough to extend the corpus; the test
+// discovers files by scanning the directory.
 //
 // When the corpus has fewer than 50 fixtures (the minimum the spec
 // asks for) the test reports the gap as a soft skip — adding more
@@ -127,7 +129,7 @@ func TestHighlightCorpus_LinguistTop50(t *testing.T) {
 		t.Logf("WARNING: corpus has %d fixtures, spec target is %d — see T106a", len(results), totalRequired)
 	}
 	if len(results) == 0 {
-		t.Fatal("highlight corpus is empty; no fixtures under tests/fixtures/highlight-corpus/")
+		t.Fatal("highlight corpus is empty; no fixtures under tests/fixtures/_highlight-corpus/")
 	}
 
 	// Hard gate: pass-rate. We scale the threshold to whatever's

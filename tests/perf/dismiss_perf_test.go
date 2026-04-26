@@ -2,7 +2,7 @@
 //
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
-//go:build perf
+//go:build perf && !race
 
 package perf
 

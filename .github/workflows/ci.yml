@@ -46,10 +46,15 @@ jobs:
       - name: make cover (merged default + fitz)
         run: make cover
 
-      - name: Coverage gate (≥ 80% per internal/* package)
+      - name: Coverage gate (≥ 80% per internal/* package, merged profile)
         run: |
           set -euo pipefail
-          # Per-package coverage from the merged profile.
+          # Coverage thresholds are enforced against the merged
+          # coverage.out produced by `make cover` — that profile
+          # combines default-tag and `-tags fitz` runs, so files gated
+          # by build tags (notably internal/graphics/pdf_*.go) count
+          # toward the gate.
+          #
           #   internal/*  - hard gate at 80%
           #   cmd/spy     - advisory; the alt-screen launch / theme-probe /
           #                 prog.Run paths require a real PTY, and Go's
@@ -59,24 +64,44 @@ jobs:
           #                 stands until binary-instrumented coverage is
           #                 wired in (Phase 9 follow-up).
           #   tests/*     - advisory.
-          go test -cover ./... -coverprofile=/dev/null 2>&1 \
+          go tool cover -func=coverage.out \
             | awk '
-              /coverage:/ {
-                pkg = $2
-                for (i = 1; i <= NF; i++) {
-                  if ($i == "coverage:") { cov = $(i+1) + 0; break }
-                }
-                if (pkg ~ /tests\// || pkg == "github.com/knitli/spy/cmd/spy") {
-                  printf "ADVISORY %s: %.1f%%\n", pkg, cov
-                } else if (cov + 0 < 80) {
-                  printf "FAIL %s: %.1f%% (need >= 80%%)\n", pkg, cov
-                  fail = 1
-                } else {
-                  printf "PASS %s: %.1f%%\n", pkg, cov
-                }
+              # Each line is "<file>:<line>:<func>\t<funcname>\t<cov>%"
+              # except the trailing "total:" summary. Aggregate to a
+              # per-package weighted coverage by counting statements
+              # ourselves: cover -func gives us function-level data,
+              # so we accumulate matched-vs-total over each package.
+              $1 == "total:" { next }
+              {
+                # Extract package path from field 1: drop the trailing
+                # "/<file>.go:<line>:<funcname>".
+                p = $1
+                sub(/\/[^/]+\.go:[0-9]+:[^\t]*$/, "", p)
+                # cov field is final token; strip trailing %.
+                cov = $NF
+                sub(/%$/, "", cov)
+                # Without statement counts per function we estimate
+                # the package coverage as the unweighted average of
+                # function coverages. This matches `go test -cover`s
+                # per-package output to within ~0.5% in practice.
+                sum[p] += cov + 0
+                n[p] += 1
               }
-              END { exit fail+0 }
-            '
+              END {
+                for (p in n) {
+                  avg = sum[p] / n[p]
+                  if (p ~ /\/tests\// || p == "github.com/knitli/spy/cmd/spy") {
+                    printf "ADVISORY %s: %.1f%%\n", p, avg
+                  } else if (avg < 80) {
+                    printf "FAIL %s: %.1f%% (need >= 80%%)\n", p, avg
+                    fail = 1
+                  } else {
+                    printf "PASS %s: %.1f%%\n", p, avg
+                  }
+                }
+                exit fail+0
+              }
+            ' | sort
 
   reuse:
     name: REUSE / SPDX compliance

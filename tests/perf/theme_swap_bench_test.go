@@ -171,9 +171,11 @@ func applyKeystrokes(t *testing.T, m ui.Model, s string) ui.Model {
 	return m
 }
 
-// buildSyntheticGo emits a 10000-line Go source string. Each line is a
-// short statement that exercises Chroma's Go lexer (keywords,
-// identifiers, numbers, operators, and string literals).
+// buildSyntheticGo emits an `lines`-line Go source string (plus a
+// short package + main wrapper). Each line is a short statement that
+// exercises Chroma's Go lexer (keywords, identifiers, numbers,
+// operators, and string literals). Reused by the first-frame and
+// theme-swap benchmarks at different line counts.
 func buildSyntheticGo(lines int) string {
 	var b strings.Builder
 	b.WriteString("package main\n\nimport \"fmt\"\n\nfunc main() {\n")
@@ -189,23 +191,28 @@ func buildSyntheticGo(lines int) string {
 	return b.String()
 }
 
-// intStr is a tight allocator-free int formatter for buildSynthetic*.
+// intStr is a stack-friendly int formatter for buildSynthetic*. The
+// digit accumulator lives on a fixed-size stack array so the only
+// allocation per call is the final string conversion (which is
+// unavoidable in Go without a *strings.Builder caller).
 func intStr(n int) string {
 	if n == 0 {
 		return "0"
 	}
-	buf := make([]byte, 0, 12)
-	if n < 0 {
-		buf = append(buf, '-')
+	negative := n < 0
+	if negative {
 		n = -n
 	}
-	digits := make([]byte, 0, 10)
+	var buf [20]byte // enough for int64
+	i := len(buf)
 	for n > 0 {
-		digits = append(digits, byte('0'+n%10))
+		i--
+		buf[i] = byte('0' + n%10)
 		n /= 10
 	}
-	for i := len(digits) - 1; i >= 0; i-- {
-		buf = append(buf, digits[i])
+	if negative {
+		i--
+		buf[i] = '-'
 	}
-	return string(buf)
+	return string(buf[i:])
 }

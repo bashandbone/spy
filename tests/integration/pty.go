@@ -187,7 +187,11 @@ func (p *PTYProgram) Resize(cols, rows uint16) {
 	}
 }
 
-// Signal forwards a Unix signal to the spawned process group.
+// Signal forwards a Unix signal to the spawned process (NOT the
+// process group). Children spawned by the binary itself are not
+// signalled; if a future test needs group-wide signalling, the spawn
+// path should call Setpgid via SysProcAttr and this method can route
+// through syscall.Kill on the negative pgid.
 func (p *PTYProgram) Signal(sig os.Signal) {
 	p.t.Helper()
 	if p.cmd.Process == nil {
