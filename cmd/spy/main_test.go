@@ -5,6 +5,7 @@
 package main
 
 import (
+	"io"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -330,11 +331,14 @@ func TestRun_StdinTTYWithoutFileExitsUsage(t *testing.T) {
 	os.Stderr = w
 	t.Cleanup(func() { os.Stderr = origStderr })
 
+	// Drain to EOF in the goroutine. A single Read returns after the
+	// first chunk arrives (the error line) — under -race scheduling
+	// that's before WriteHelp's larger payload reaches the pipe — so
+	// io.ReadAll is required to capture the full usage block.
 	done := make(chan []byte, 1)
 	go func() {
-		buf := make([]byte, 4096)
-		n, _ := r.Read(buf)
-		done <- buf[:n]
+		b, _ := io.ReadAll(r)
+		done <- b
 	}()
 
 	got := run([]string{"--no-config"}, nil)
