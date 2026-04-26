@@ -32,6 +32,13 @@ const (
 	KindBinary
 )
 
+// detectionPeekBytes is the up-front read window every detection
+// path uses to classify a Source: 8 KiB chosen to capture shebangs,
+// magic bytes, and Chroma's `Analyse` window in a single read.
+// Shared by [detectKind] (file path) and [StdinSource.detectOnce]
+// (stream path) so both stay in sync without a duplicate literal.
+const detectionPeekBytes = 8192
+
 // Sentinel errors. Callers identify error categories via [errors.Is].
 // All package-internal errors wrap these so tests like
 // `errors.Is(err, ErrNotFound)` resolve regardless of the call site.

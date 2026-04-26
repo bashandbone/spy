@@ -288,8 +288,12 @@ func exitForSourceError(err error, args []string) int {
 	case errors.Is(err, source.ErrNoInput):
 		// US5 turned StdinSource on: ErrNoInput now reflects the
 		// real "no FILE and stdin is a TTY (or absent)" condition.
-		// Exit 2 matches contracts/cli.md.
-		fmt.Fprintf(os.Stderr, "spy: no input: missing FILE; pipe content via stdin or pass a path\n")
+		// contracts/cli.md row "absent no yes yes" expects exit 2
+		// with usage printed (Copilot review PR#12 round-3 #8) — the
+		// short error line precedes the full --help output so the
+		// user sees both the cause and the available flags.
+		fmt.Fprintf(os.Stderr, "spy: no input: missing FILE; pipe content via stdin or pass a path\n\n")
+		WriteHelp(os.Stderr)
 		return exitUsageError
 	case errors.Is(err, source.ErrAmbiguousArgs):
 		// `-` alongside FILE, or multiple FILEs — the contract row

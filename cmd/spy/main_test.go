@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 
 	"github.com/knitli/spy/internal/render"
@@ -318,8 +319,35 @@ func TestRun_StdinPipeDegenerateCats(t *testing.T) {
 func TestRun_StdinTTYWithoutFileExitsUsage(t *testing.T) {
 	// US5: nil stdin pointer mirrors the "no FILE and stdin is not
 	// available" case; run() must surface ErrNoInput → exit 2.
-	if got := run([]string{"--no-config"}, nil); got != exitUsageError {
+	// Capture stderr to assert that usage is printed alongside the
+	// error line (Copilot review PR#12 round-3 #8 — contracts/cli.md
+	// row "absent no yes yes" requires "exit 2 (usage printed)").
+	origStderr := os.Stderr
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("pipe: %v", err)
+	}
+	os.Stderr = w
+	t.Cleanup(func() { os.Stderr = origStderr })
+
+	done := make(chan []byte, 1)
+	go func() {
+		buf := make([]byte, 4096)
+		n, _ := r.Read(buf)
+		done <- buf[:n]
+	}()
+
+	got := run([]string{"--no-config"}, nil)
+	w.Close()
+	stderr := string(<-done)
+	if got != exitUsageError {
 		t.Errorf("nil stdin + no FILE: got exit %d want %d", got, exitUsageError)
+	}
+	if !strings.Contains(stderr, "spy: no input") {
+		t.Errorf("stderr missing error line; got %q", stderr)
+	}
+	if !strings.Contains(stderr, "Usage: spy") {
+		t.Errorf("stderr missing usage block; got %q", stderr)
 	}
 }
 

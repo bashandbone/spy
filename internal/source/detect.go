@@ -33,9 +33,8 @@ func detectKind(r io.Reader, hint string) (Kind, string, error) {
 		}
 	}
 
-	// Read up to 8 KiB for content-based detection.
-	const peekN = 8192
-	buf := make([]byte, peekN)
+	// Read up to [detectionPeekBytes] for content-based detection.
+	buf := make([]byte, detectionPeekBytes)
 	n, err := io.ReadFull(r, buf)
 	if err != nil && err != io.ErrUnexpectedEOF && err != io.EOF {
 		return KindUnknown, "", err

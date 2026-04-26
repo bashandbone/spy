@@ -15,12 +15,6 @@ import (
 // R5; contracts/cli.md "Stdin behavior").
 const stdinDisplayName = "<stdin>"
 
-// stdinPeekBytes is how many bytes [StdinSource] inspects up front to
-// classify the stream. Mirrors the 8 KiB window used by [detectKind]
-// for files; the bytes are buffered and replayed via [io.MultiReader]
-// on the first [Open] so the loader sees the full stream from byte 0.
-const stdinPeekBytes = 8192
-
 // StdinSource is the [Source] implementation backed by a non-seekable
 // stream — typically `os.Stdin` when spy is part of a shell pipeline.
 // Per research R5 the stream is read at most once and held only in the
@@ -30,7 +24,7 @@ type StdinSource struct {
 	hint   string
 
 	// detect-once state. peekedHead carries the first
-	// [stdinPeekBytes] bytes of the stream; once detection has run
+	// [detectionPeekBytes] bytes of the stream; once detection has run
 	// it's prepended (via [io.MultiReader]) on the next [Open] so the
 	// loader sees the full stream from byte 0.
 	detected   bool
@@ -115,7 +109,7 @@ func (s *StdinSource) Metadata() Metadata {
 //
 // The peek path is deliberately non-blocking (Copilot review PR#12
 // #6): `io.ReadFull` would wait for the producer to write
-// [stdinPeekBytes] or close the pipe, which hangs `tail -f | spy`
+// [detectionPeekBytes] or close the pipe, which hangs `tail -f | spy`
 // and other long-lived shapes. A single [io.Reader.Read] returns
 // whatever the kernel has already buffered (typically the producer's
 // last write) — accurate detection on the partial buffer and a
@@ -149,7 +143,7 @@ func (s *StdinSource) detectOnce() error {
 			return nil
 		}
 	}
-	buf := make([]byte, stdinPeekBytes)
+	buf := make([]byte, detectionPeekBytes)
 	n, err := s.reader.Read(buf)
 	if err != nil && err != io.EOF {
 		s.detectErr = fmt.Errorf("stdin: peek: %w", err)

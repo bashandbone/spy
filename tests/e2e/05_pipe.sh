@@ -54,23 +54,25 @@ tmp_d_got="$(mktemp)"
 trap 'rm -f "${tmp_a}" "${tmp_b}" "${tmp_c}" "${tmp_d}" "${tmp_d_want}" "${tmp_d_got}"' EXIT
 
 # (a) `cat hello.go | spy -l go` — non-TTY stdin, non-TTY stdout. The
-#     pipeline degenerate-cats stdin verbatim to stdout. The byte count
-#     matches the source.
+#     pipeline degenerate-cats stdin verbatim to stdout. Compare bytes
+#     end-to-end via `cmp -s` so any in-flight transformation (newline
+#     normalisation, ANSI injection) trips the assertion (Copilot
+#     review PR#12 round-3 #9).
 cat "${hello_go}" | "${binary}" --no-config -l go > "${tmp_a}"
-src_size="$(stat -c%s "${hello_go}" 2>/dev/null || stat -f%z "${hello_go}")"
-out_size="$(stat -c%s "${tmp_a}" 2>/dev/null || stat -f%z "${tmp_a}")"
-if [[ "${src_size}" != "${out_size}" ]]; then
-    echo "(a) cat hello.go | spy -l go: byte count diverged (src=${src_size}, out=${out_size})" >&2
+if ! cmp -s "${hello_go}" "${tmp_a}"; then
+    echo "(a) cat hello.go | spy -l go: content mismatch" >&2
+    diff "${hello_go}" "${tmp_a}" >&2 || true
     exit 1
 fi
 
 # (b) `cat hello.go | spy` — same shape, no `--lang` hint. Detection
 #     should classify as Go via shebang/Chroma, and the pipeline still
-#     degenerate-cats verbatim on the non-TTY pipeline.
+#     degenerate-cats verbatim on the non-TTY pipeline (Copilot
+#     review PR#12 round-3 #10).
 cat "${hello_go}" | "${binary}" --no-config > "${tmp_b}"
-out_size="$(stat -c%s "${tmp_b}" 2>/dev/null || stat -f%z "${tmp_b}")"
-if [[ "${src_size}" != "${out_size}" ]]; then
-    echo "(b) cat hello.go | spy: byte count diverged" >&2
+if ! cmp -s "${hello_go}" "${tmp_b}"; then
+    echo "(b) cat hello.go | spy: content mismatch" >&2
+    diff "${hello_go}" "${tmp_b}" >&2 || true
     exit 1
 fi
 
@@ -100,11 +102,13 @@ if ! cmp -s "${tmp_d_want}" "${tmp_d_got}"; then
 fi
 
 # (e) `spy -` with stdin pipe forces stdin even in this shape; non-TTY
-#     stdout still degenerate-cats. Byte count matches.
+#     stdout still degenerate-cats. Compare bytes against the fixture
+#     so the verbatim contract is actually pinned (Copilot review
+#     PR#12 round-3 #11).
 cat "${hello_go}" | "${binary}" --no-config - > "${tmp_d}"
-out_size="$(stat -c%s "${tmp_d}" 2>/dev/null || stat -f%z "${tmp_d}")"
-if [[ "${src_size}" != "${out_size}" ]]; then
-    echo "(e) cat | spy -: byte count diverged" >&2
+if ! cmp -s "${hello_go}" "${tmp_d}"; then
+    echo "(e) cat | spy -: content mismatch" >&2
+    diff "${hello_go}" "${tmp_d}" >&2 || true
     exit 1
 fi
 
