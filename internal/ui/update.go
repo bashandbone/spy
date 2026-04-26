@@ -1159,10 +1159,14 @@ func waitForChunk(s *loader.Stream) tea.Cmd {
 // theoretical nil-error case from the loader's best-effort
 // `select / default` send.
 //
-// Returns nil when the channel closes — the loader closes Errs
-// after Updates closes, so a closed Errs always means streaming has
-// fully ended; we don't need a sentinel "errs done" message because
-// streamDoneMsg already covers the streaming-finished transition.
+// Returns nil when the channel closes. A closed Errs means this
+// stream will not emit any more warnings / errors, regardless of
+// whether Updates has already closed (the loader closes them in
+// different orders depending on whether streaming finished
+// synchronously in [loader.Open] or asynchronously on the producer
+// goroutine — defers fire LIFO). We don't need a separate "errs
+// done" sentinel because streamDoneMsg remains the signal for the
+// streaming-finished transition.
 //
 // Acceptance review C7: before this command existed, the loader's
 // errs channel was buffered, written to, and never read — when the

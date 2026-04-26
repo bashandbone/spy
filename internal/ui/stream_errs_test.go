@@ -10,7 +10,6 @@ import (
 	"fmt"
 	"strings"
 	"testing"
-	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 
@@ -209,8 +208,14 @@ func TestC7_EndToEnd_TruncationFromRealLoader(t *testing.T) {
 	// MaxLineBytes cap.
 	body := strings.Repeat("x", 200*1024) + "\n"
 
+	// t.Cleanup-bound cancel guarantees the loader's streaming
+	// goroutine exits before the test returns, even if an assertion
+	// fails partway through.
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+
 	src := &fakeSource{body: body, kind: source.KindText}
-	stream, err := loader.Open(context.Background(), src, loader.Config{})
+	stream, err := loader.Open(ctx, src, loader.Config{})
 	if err != nil {
 		t.Fatalf("loader.Open: %v", err)
 	}
@@ -222,45 +227,30 @@ func TestC7_EndToEnd_TruncationFromRealLoader(t *testing.T) {
 	m.source = src
 	m.stream = stream
 
-	// Drive Init's commands and feed any streamErrMsg back into
-	// Update — same sequence Bubble Tea's runtime would execute.
+	// loader.Open consumes the 200 KiB single line during its
+	// synchronous First read, emits the truncation warning into
+	// the buffered Errs channel, then takes the EOF fast-path and
+	// closes both Updates and Errs before returning. Each cmd in
+	// Init's batch therefore reads from a populated-and-closed
+	// channel and returns promptly without blocking.
 	cmd := m.Init()
 	if cmd == nil {
 		t.Fatalf("Init returned nil — Errs subscription would never fire")
 	}
 
-	// Race the Init pipeline against a short deadline. Once we see
-	// a streamErrMsg we feed it into Update and check the
-	// advisory; once we see a chunkLoadedMsg or streamDoneMsg we
-	// move on (no warning). Either path is bounded.
-	deadline := time.Now().Add(2 * time.Second)
 	queue := []tea.Cmd{cmd}
-	for len(queue) > 0 && time.Now().Before(deadline) {
+	for len(queue) > 0 {
 		c := queue[0]
 		queue = queue[1:]
 		if c == nil {
 			continue
 		}
-		done := make(chan tea.Msg, 1)
-		go func() { done <- c() }()
-		var msg tea.Msg
-		select {
-		case msg = <-done:
-		case <-time.After(200 * time.Millisecond):
-			// Re-enqueue: a slow waitForStreamErr/waitForChunk
-			// must not be silently dropped, otherwise we'd miss
-			// the warning we're trying to assert on. The outer
-			// 2s deadline still bounds the loop.
-			queue = append(queue, c)
-			continue
-		}
+		msg := c()
 		if msg == nil {
 			continue
 		}
 		if batch, ok := msg.(tea.BatchMsg); ok {
-			for _, sub := range batch {
-				queue = append(queue, sub)
-			}
+			queue = append(queue, batch...)
 			continue
 		}
 		updated, next := m.Update(msg)
