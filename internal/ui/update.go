@@ -252,6 +252,7 @@ func (m Model) onKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.vimPendingG = false
 		if msg.String() == "g" {
 			m.viewport.GotoTop()
+			m.rerender()
 			return m, nil
 		}
 		// fall-through: the second key is dispatched normally below.
@@ -316,34 +317,42 @@ func (m Model) onKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	}
 	if matchAction(m.keyMap, keys.ActionScrollUp, msg) {
 		m.viewport.LineUp(1)
+		m.rerender()
 		return m, nil
 	}
 	if matchAction(m.keyMap, keys.ActionScrollDown, msg) {
 		m.viewport.LineDown(1)
+		m.rerender()
 		return m, nil
 	}
 	if matchAction(m.keyMap, keys.ActionPageUp, msg) {
 		m.viewport.ViewUp()
+		m.rerender()
 		return m, nil
 	}
 	if matchAction(m.keyMap, keys.ActionPageDown, msg) {
 		m.viewport.ViewDown()
+		m.rerender()
 		return m, nil
 	}
 	if matchAction(m.keyMap, keys.ActionHalfPageUp, msg) {
 		m.viewport.HalfViewUp()
+		m.rerender()
 		return m, nil
 	}
 	if matchAction(m.keyMap, keys.ActionHalfPageDown, msg) {
 		m.viewport.HalfViewDown()
+		m.rerender()
 		return m, nil
 	}
 	if matchAction(m.keyMap, keys.ActionGoToTop, msg) {
 		m.viewport.GotoTop()
+		m.rerender()
 		return m, nil
 	}
 	if matchAction(m.keyMap, keys.ActionGoToBottom, msg) {
 		m.viewport.GotoBottom()
+		m.rerender()
 		return m, nil
 	}
 	if matchAction(m.keyMap, keys.ActionNextPage, msg) {
@@ -800,6 +809,7 @@ func (m Model) runCommand(cmd string) (tea.Model, tea.Cmd) {
 	// :0 / :$ jumps.
 	if cmd == "0" {
 		m.scrollToLine(1)
+		m.rerender()
 		return m, nil
 	}
 	if cmd == "$" {
@@ -809,6 +819,7 @@ func (m Model) runCommand(cmd string) (tea.Model, tea.Cmd) {
 		}
 		if total > 0 {
 			m.scrollToLine(total)
+			m.rerender()
 		}
 		return m, nil
 	}
@@ -828,6 +839,7 @@ func (m Model) runCommand(cmd string) (tea.Model, tea.Cmd) {
 			m.statusAdvisory = fmt.Sprintf("line %d > total %d", n, total)
 		}
 		m.scrollToLine(n)
+		m.rerender()
 		return m, nil
 	}
 	// :set commands.
@@ -1013,6 +1025,47 @@ func (m *Model) rebuildRenderer() {
 		Source:       m.source,
 	}
 	m.renderer = render.ForKind(kind, deps)
+}
+
+// needsScrollRerender reports whether a scroll operation must trigger a
+// full re-render of the viewport content. The only renderer that
+// requires this is [codeRenderer] when active syntax highlighting is
+// turned on: it deliberately limits Chroma to the visible window (the
+// SC-004 optimization), so a change in YOffset leaves newly-scrolled-in
+// lines un-highlighted unless we regenerate the content string.
+//
+// All other renderers (text, markdown, image, PDF, binary) produce
+// output that is independent of the scroll position and therefore don't
+// need their full frame regenerated on every keypress.
+func (m *Model) needsScrollRerender() bool {
+	if m.renderer == nil || m.viewport.Height == 0 {
+		return false
+	}
+	if m.source == nil || m.source.Kind() != source.KindCode {
+		return false
+	}
+	if m.highlighter == nil || m.highlighter.Disabled() {
+		return false
+	}
+	return !m.isMono()
+}
+
+// rerender updates the viewport content to reflect the current render
+// context, including the active YOffset. Called after any scroll
+// operation that changes the viewport position so lines newly scrolled
+// into view are syntax-highlighted.
+//
+// The Chroma token cache means previously-visible lines are not
+// re-tokenised on subsequent re-renders, but Render() still iterates
+// every resident line to rebuild the full content string, so the cost
+// is proportional to the resident buffer size rather than only the
+// newly-visible lines. The [needsScrollRerender] gate keeps this call
+// path active only for code sources where window-bounded highlighting
+// is in play; all other source kinds are a no-op.
+func (m *Model) rerender() {
+	if m.needsScrollRerender() {
+		m.viewport.SetContent(m.renderer.Render(m.renderContext()))
+	}
 }
 
 // onChunk re-renders the viewport on every chunk arrival so streamed
