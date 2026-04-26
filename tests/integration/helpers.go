@@ -11,9 +11,22 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/knitli/spy/internal/loader"
 )
+
+// waitExitShort is a convenience helper: returns true if the process
+// has exited within `d`, false otherwise. Used to drive q-resend retry
+// loops in integration tests that haven't yet been updated to use a
+// content-level ready signal.
+//
+// Prefer waiting for a content marker (e.g. WaitFor("N lines", …))
+// before sending keystrokes — see TestPTYSanity_QuitOnQ for the
+// recommended pattern.
+func waitExitShort(p *PTYProgram, d time.Duration) bool {
+	return p.WaitForExit(d)
+}
 
 // DrainStreamErrs reads the loader stream's error channel to EOF and
 // fails the test (via t.Fatalf) on any error that is NOT a documented

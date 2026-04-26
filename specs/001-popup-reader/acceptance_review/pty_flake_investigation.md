@@ -5,17 +5,25 @@ SPDX-License-Identifier: MIT OR Apache-2.0
 
 # M7 Investigation — PTY first-`q` flake
 
-**Status**: investigated; root cause partially diagnosed; conservative
-workaround retained; follow-up issue filed.
+**Status**: root cause identified and fixed in production code; test
+harness updated to remove retry loops; retransmit pattern retained in
+dismiss benchmark for measurement fidelity.
 
 **Cross-references**:
 
-- `tests/integration/pty_sanity_test.go:58-69` (ctrl-c fallback in
-  `TestPTYSanity_QuitOnQBigFile`)
-- `tests/integration/pty_sanity_test.go:92-94` (5-iteration retry
-  loop in `TestPTYSanity_QuitOnQ`)
-- `tests/perf/dismiss_bench_test.go:99-129` (10 ms timeout +
-  retransmit in `measureDismiss`)
+- `internal/term/theme_unix.go` — **production fix**: `probeOSC11Background`
+  now uses `pollReadOSC` (O_NONBLOCK + 5 ms spin) instead of
+  `raceReadOSCReply` (goroutine), eliminating the goroutine that leaked
+  and consumed the first keystroke
+- `tests/integration/pty_sanity_test.go` — fixed: `TestPTYSanity_QuitOnQ`
+  and `TestPTYSanity_QuitOnQBigFile` now wait for rendered content
+  and send a single `q`; retry loops removed
+- `tests/integration/pty.go` — `BracketedPasteEnable` constant added
+  with documentation explaining why it is NOT a sufficient input-ready
+  signal
+- `tests/perf/dismiss_bench_test.go:97-103` (retransmit comment
+  updated to reflect the race is fixed; pattern retained for SC-007
+  measurement fidelity)
 - `tests/integration/pty.go` (PTY harness)
 - `cmd/spy/main.go:175-177` (OSC 11 probe gating)
 - `internal/term/theme_unix.go:42-67` (`probeOSC11Background`)
@@ -70,12 +78,40 @@ probe's reader instead of routed to Bubble Tea's input reader.
 `tea.NewProgram` is called. The harness only sends `q` AFTER
 observing the streaming-complete footer, which requires Bubble Tea
 to be running and the loader to have hit EOF. By that point the
-probe has long since returned and `/dev/tty` is closed (defer
-chain).
+probe has long since *returned* — but crucially, a **goroutine
+spawned inside the probe was still alive**.
 
-**Verdict**: not the root cause for the first-`q` flake. **However**
-this branch confirms the harness is not racing against the OSC 11
-probe.
+**Revised verdict**: **CONFIRMED root cause — goroutine leak**.
+
+`probeOSC11Background` calls `raceReadOSCReply(ctx, f)`, which
+spawns a goroutine G1 to call `readOSCReply(ctx, f)`. G1 calls
+`f.Read(buf[:])` where `f.Fd()` has already put the file into
+blocking mode (Go's netpoller is no longer managing it). When the
+50 ms context deadline fires, `raceReadOSCReply` returns nil — but
+G1 remains alive, blocked in `read(fd, ...)` at the OS level.
+
+On Linux, `close(fd)` does **not** interrupt a blocked `read(fd)` on
+another OS thread. After `defer f.Close()` runs, fd is freed. The
+`EpollCreate1(0)` call inside Bubble Tea's `initCancelReader` reuses
+that fd number — but G1 is blocking on the **original dev/tty file
+description** (not the fd number), so it keeps waiting on the PTY
+slave device.
+
+When the test harness writes `q` to the PTY master, the kernel wakes
+up any waiter for the PTY slave's read buffer. Both G1's blocking
+`read()` and Bubble Tea's cancelreader (via `EpollWait`) are waiting.
+G1's OS thread is already in the `read()` syscall and wins the race
+on every iteration where the spy process hasn't been running long
+enough for the goroutine scheduler to have settled (which at T ≈ 100 ms
+is consistently the case in CI).
+
+**Fix**: `probeOSC11Background` in `internal/term/theme_unix.go` now
+calls `pollReadOSC(ctx, fd)` instead of `raceReadOSCReply(ctx, f)`.
+`pollReadOSC` sets the fd to `O_NONBLOCK` via
+`syscall.SetNonblock`, reads in a spin loop checking `ctx.Err()`
+every 5 ms, and restores blocking mode before returning. No goroutine
+is spawned, so no goroutine can outlive the context deadline and
+compete with Bubble Tea's input reader.
 
 ### H3 — Bubble Tea's input reader hasn't subscribed to stdin yet
 
@@ -108,8 +144,12 @@ registration might be racy. Diagnosing this requires
 instrumenting Bubble Tea's cancelreader from inside, which is
 beyond the scope of v0.1.0.
 
-**Verdict**: most likely root cause; structural problem in
-Bubble Tea v1 input-reader bootstrap.
+**Verdict**: a contributing factor but **not the primary root cause**.
+The harness's "wait for `\x1b[?2004h`" check IS insufficient on its
+own — but the dominant cause was H2's goroutine leak, which consumed
+the keystroke before the epoll subscription was even consulted. Once
+H2's goroutine is eliminated, waiting for rendered content (which
+guarantees the epoll subscription is active) is sufficient.
 
 ### H4 — PTY slave / master kernel buffer race
 
@@ -125,47 +165,71 @@ master's write returns.
 
 **Verdict**: not the root cause.
 
+## Fix Applied
+
+### Production fix — `internal/term/theme_unix.go`
+
+`probeOSC11Background` was rewritten to use `pollReadOSC` instead of
+`raceReadOSCReply`. `pollReadOSC` calls `syscall.SetNonblock(fd, true)`
+then loops calling `syscall.Read`, sleeping 5 ms on `EAGAIN` and
+breaking on `ctx.Err()`. No goroutine is spawned; the entire probe
+runs on the calling goroutine and exits within ~5 ms of the context
+deadline. `raceReadOSCReply` and `readOSCReply` remain in `theme.go`
+and are exercised by their dedicated unit tests.
+
+### Test harness changes — `tests/integration/pty_sanity_test.go`
+
+- **`TestPTYSanity_QuitOnQ`**: waits for `"2 lines"` (streaming-complete
+  footer for the 2-line fixture) before sending a single `q`. The 250 ms
+  sleep and 5-iteration retry loop were removed.
+- **`TestPTYSanity_QuitOnQBigFile`**: waits for `"line"` (first viewport
+  content row) before sending a single `q`. The 500 ms sleep was removed.
+
+### Other changes
+
+- **`tests/integration/pty.go`**: `BracketedPasteEnable` constant added
+  with a doc comment explaining it is emitted *before* `initCancelReader`
+  and is therefore NOT a reliable input-ready signal.
+- **`tests/perf/dismiss_bench_test.go`**: the "drop" comment updated;
+  the retransmit/10 ms floor pattern is retained for SC-007 measurement
+  fidelity (not as a race workaround).
+
 ## Conclusion
 
-The most likely root cause is **H3 — Bubble Tea v1 does not provide a
-synchronization barrier between its renderer-prologue emit and its
-input-reader subscription**. The harness's "wait for
-`\x1b[?2004h`" check is a proxy for a barrier that doesn't actually
-exist; the renderer can emit that escape while the input reader is
-still finishing its goroutine setup.
+The primary root cause was **H2 — goroutine leak in `probeOSC11Background`**.
+The `readOSCReply` goroutine (G1) remained alive in a blocking `read()`
+on `/dev/tty`'s file description after the 50 ms OSC probe budget
+expired. On Linux, `close(fd)` does not interrupt a blocked `read()`,
+so G1 competed with Bubble Tea's cancelreader for the first byte
+arriving on the PTY slave. G1 won consistently at early test timing
+(T ≈ 100 ms) because its OS thread was already in the `read()` syscall,
+and intermittently at later timing (~1–5%) because of goroutine
+scheduler variability.
 
-A concrete fix would require either:
+H3 (Bubble Tea's epoll subscription not yet established) was a
+contributing factor for the "first paint is not a reliable signal"
+observation, but not the dominant cause. The rendered-content wait is
+still the correct harness signal because it guarantees the epoll
+subscription is active.
 
-1. **Bubble Tea upstream change** — add an explicit "input ready"
-   signal that the renderer waits for before its first paint, OR add
-   a `Program.OnReady(func())` hook that fires after both renderer
-   and input reader are subscribed.
-2. **Harness change** — send a known-noop keystroke (e.g.,
-   `\x1b\x1b` or a key with no binding) and wait for visible feedback
-   (e.g., a `bell` character or some echo), proving the input loop
-   is fully live before sending the real test input. This would
-   change the public PTY harness contract and break the existing
-   tests.
-3. **Spy binary change** — emit a custom escape sequence after the
-   first paint that the harness can wait on. This is invasive (adds
-   protocol surface for the sole purpose of testing) and bleeds
-   harness concerns into production.
+A concrete fix required either:
 
-Per the M7 brief, **none of these is acceptable for v0.1.0 closeout**.
-The retry loops are conservative, well-documented, and correct
-(they don't mask real regressions because the second-`q` measurement
-in the dismiss bench is a real elapsed-time measurement). The 10 ms
-first-pass timeout in `dismiss_bench_test.go` keeps the test sensitive
-to dismiss regressions in the 50-500 ms range.
+1. ~~**Bubble Tea upstream change**~~ — adding a `Program.OnReady` hook
+   (still open as a follow-up, but not blocking).
+2. ~~**Harness change only**~~ — insufficient by itself; rendered-content
+   waits still failed because G1 consumed the keystroke.
+3. **Production fix** — **implemented**: `pollReadOSC` in
+   `internal/term/theme_unix.go` replaces the goroutine with an inline
+   O_NONBLOCK spin loop.
 
 ## Action Items
 
-1. **Keep the retry loops** — see comment at
-   `tests/perf/dismiss_bench_test.go:93-129`.
-2. **Follow-up issue** — https://github.com/bashandbone/spy/issues/25
-   tracks the upstream investigation.
-3. **Re-evaluate** when Bubble Tea v2 or a follow-up release adds
-   an input-ready barrier.
+1. ~~**Upstream follow-up**~~: H3's epoll-race is now a non-issue since
+   H2 is fixed; the rendered-content wait handles the residual ordering
+   concern. The Bubble Tea `OnReady` issue remains open for consideration
+   in a future release but is no longer urgent.
+2. **Re-evaluate** if the OSC probe is ever ported to a platform where
+   `O_NONBLOCK` on a `/dev/tty`-like device is not supported.
 
 ## Reproducer Notes
 

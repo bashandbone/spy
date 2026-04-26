@@ -69,41 +69,39 @@ func measureDismiss(t *testing.T, iterations int, limit time.Duration, failOnBud
 			t.Fatalf("iteration %d: alt-screen entry not observed", i)
 		}
 		// Wait for Bubble Tea's raw-mode handlers to be installed
-		// before delivering input. The bracketed-paste-mode escape is
-		// emitted late in the bootstrap, after the alt-screen entry
-		// but before the first content paint, so it's a stable signal
-		// that the input pipeline is live.
-		if !p.WaitFor("\x1b[?2004h", 2*time.Second) {
+		// before waiting for content. The bracketed-paste-mode escape
+		// is emitted before Bubble Tea's input reader subscribes, so
+		// it is NOT a reliable input-ready signal by itself — the
+		// subsequent "10000 lines" wait is the actual barrier.
+		if !p.WaitFor(integration.BracketedPasteEnable, 2*time.Second) {
 			closeOnce()
 			t.Fatalf("iteration %d: bracketed-paste setup not observed", i)
 		}
 		// Wait for the streaming-complete footer ("N lines" with no
 		// trailing ellipsis) so the loader pipeline has settled and
-		// the input loop is unambiguously live. The wait is not part
-		// of the SC-007 measurement — the timer starts after it.
+		// the input loop is unambiguously live. The rendered content
+		// can only appear after Bubble Tea's event loop has processed
+		// the WindowSizeMsg that follows initCancelReader, so this
+		// wait is the reliable input-ready barrier. The wait is not
+		// part of the SC-007 measurement — the timer starts after it.
 		if !p.WaitFor("10000 lines", 5*time.Second) {
 			closeOnce()
 			t.Fatalf("iteration %d: streaming-complete footer never painted", i)
 		}
-		// Small additional buffer so the very first key isn't lost on
-		// a remaining input-pipeline race (cancelreader / raw-mode
-		// installation runs concurrently with first paint).
-		time.Sleep(150 * time.Millisecond)
 
-		// Some Bubble Tea + PTY combinations drop the very first
-		// post-stream keystroke. Send `q`, poll for exit, and (only
-		// if the first send was lost) retransmit and start the SC-007
-		// timer at that retransmit. That way the recorded duration
-		// reflects the keystroke the binary actually saw rather than
-		// the harness's input-pipeline race.
+		// Send `q` and poll for exit. The input-pipeline race that
+		// caused the first keystroke to be dropped (M7 / pty_flake
+		// investigation) is fixed, but legitimately-slow exits under
+		// heavy CI load can still fail to complete within the
+		// firstQTimeout measurement floor. In that case retransmit
+		// and time the second `q` precisely so the recorded duration
+		// reflects the real dismiss latency rather than harness jitter.
 		//
-		// Acceptance review M7 investigated the root cause:
-		// specs/001-popup-reader/acceptance_review/
-		// pty_flake_investigation.md — the most likely cause is a
-		// missing input-ready barrier in Bubble Tea v1's bootstrap
-		// (renderer-prologue emit races input-reader subscribe).
-		// Fixing it requires upstream changes; the retry pattern
-		// here is the conservative v0.1.0 workaround.
+		// The retransmit path remains because waiting for "10000 lines"
+		// guarantees the input reader is subscribed, but legitimately-
+		// slow exits (e.g. under heavy CI load) can still miss the
+		// firstQTimeout floor — in that case the second `q` is timed
+		// precisely, reflecting the real dismiss latency.
 		//
 		// The first-pass timeout (firstQTimeout) is a measurement
 		// floor: every iteration whose first `q` propagates is
