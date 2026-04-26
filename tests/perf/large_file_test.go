@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"runtime/debug"
 	"testing"
 
 	"github.com/knitli/spy/internal/loader"
@@ -35,16 +36,6 @@ import (
 // case verifies we don't blow up when the in-memory tier holds the
 // largest file the spec promises to keep resident. The nightly tier
 // covers the windowed-mode 1 GiB / 500 MiB scaling case.
-//
-// HONESTY NOTE: switching from runtime.MemStats.HeapInuse to OS-RSS
-// (per acceptance-review finding H4) revealed that the loader holds
-// ~439 MiB of RSS for a 200 MiB file on the default build — well
-// over the 250 MiB budget. The previous heap-only measurement
-// understated this. Closing the gap (loader memory profile) is
-// tracked in https://github.com/bashandbone/spy/issues/21. Until
-// then this gate is **advisory** (log-only) — same staging strategy
-// as TestThemeSwap_FullSpecCase. Setting the assertion strict would
-// turn issue #21 into a PR-blocker on every change.
 func TestLargeFile_PRGate(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping large-file PR gate in -short mode")
@@ -70,10 +61,17 @@ func TestLargeFile_PRGate(t *testing.T) {
 	integration.DrainStreamErrs(t, stream.Errs)
 
 	rssAfter, source1 := residentBytes(t)
+	// Keep stream alive so that debug.FreeOSMemory() inside residentBytes
+	// does not cause the GC to collect stream.Buffer (and all its strings)
+	// before the RSS snapshot is taken. Without this, the compiler can
+	// legally declare stream dead after DrainStreamErrs — the GC would
+	// then collect the 200 MiB buffer and the delta would be near-zero
+	// rather than reflecting the actual cost of keeping the buffer live.
+	runtime.KeepAlive(stream)
 	delta := rssAfter - rssBefore
 	const limitBytes = 250 * 1024 * 1024
 	if delta > limitBytes {
-		t.Logf("SC-005 PR-gate ADVISORY: RSS delta %.1f MiB exceeds %.0f MiB target (measured via %s → %s); see issue #21",
+		t.Errorf("SC-005 PR-gate: RSS delta %.1f MiB exceeds %.0f MiB budget (measured via %s → %s)",
 			float64(delta)/1024/1024, float64(limitBytes)/1024/1024, source0, source1)
 	} else {
 		t.Logf("SC-005 PR-gate: RSS delta %.1f MiB (limit %.0f MiB; measured via %s)",
@@ -129,11 +127,19 @@ func writeSyntheticFile(t *testing.T, targetBytes, lineBytes int) string {
 //     deltas. (PR#23 review — the prior comment claimed a Windows
 //     skip that didn't actually exist.)
 //
-// runtime.GC() is called first so any heap garbage left over from
-// test bootstrap doesn't show up in the RSS delta.
+// debug.FreeOSMemory() is called first so that: (a) any GC garbage
+// from previous operations is collected, and (b) idle heap pages that
+// the Go runtime holds but is no longer actively using are returned to
+// the OS. This measures the steady-state RSS — what the process
+// actually needs to keep the loaded buffer alive — rather than the
+// peak RSS observed during streaming (which can be ~1.5–2× higher due
+// to transient allocations in the loader pipeline that haven't been
+// scavenged yet). runtime.MemStats.HeapSys minus HeapReleased
+// approximates the same quantity; debug.FreeOSMemory() collapses the
+// difference by forcing the scavenger synchronously.
 func residentBytes(t *testing.T) (int64, string) {
 	t.Helper()
-	runtime.GC()
+	debug.FreeOSMemory() // GC + return idle pages to OS; see comment above
 	if rss, err := readRSS(); err == nil && rss > 0 {
 		return rss, "os-rss"
 	}

@@ -216,8 +216,17 @@ func Open(ctx context.Context, src source.Source, cfg Config) (*Stream, error) {
 // error encountered.
 func readChunk(r *bufio.Reader, start int64, n int, maxLineBytes int64, errs chan<- error) (Chunk, bool, error) {
 	c := Chunk{StartLine: start, Lines: make([]source.Line, 0, n)}
+	// lineBuf is reused across readLine calls within this chunk so that
+	// a single scratch allocation serves the whole chunk. string(raw)
+	// copies the bytes into an immutable string allocation, so reusing
+	// lineBuf's backing array for the next line is safe.
+	var lineBuf []byte
 	for len(c.Lines) < n {
-		raw, truncated, err := readLine(r, maxLineBytes)
+		var raw []byte
+		var truncated bool
+		var err error
+		raw, truncated, err = readLine(r, maxLineBytes, lineBuf)
+		lineBuf = raw // reuse the same backing array next iteration
 		if errors.Is(err, io.EOF) {
 			if len(raw) > 0 {
 				c.Lines = append(c.Lines, source.Line{
@@ -252,8 +261,12 @@ func readChunk(r *bufio.Reader, start int64, n int, maxLineBytes int64, errs cha
 //
 // The trailing '\n' (and any preceding '\r') is stripped from the
 // returned slice.
-func readLine(r *bufio.Reader, maxLineBytes int64) ([]byte, bool, error) {
-	var buf []byte
+//
+// buf is an optional scratch buffer whose backing array may be reused;
+// callers should pass the previous return value to amortise the
+// per-line allocation across the chunk.
+func readLine(r *bufio.Reader, maxLineBytes int64, buf []byte) ([]byte, bool, error) {
+	buf = buf[:0] // reset length, reuse backing array
 	truncated := false
 	gotAny := false
 	for {
