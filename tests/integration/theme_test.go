@@ -8,7 +8,6 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
-	"strings"
 	"testing"
 	"time"
 )
@@ -69,21 +68,20 @@ func TestTheme_OverridePrecedence(t *testing.T) {
 
 	t.Run("env_NO_COLOR_suppresses_SGR", func(t *testing.T) {
 		runThemeProbe(t, nil, map[string]string{"NO_COLOR": "1"}, func(t *testing.T, frame string) {
-			// Strip the alt-screen control sequences (Bubble Tea always
-			// emits CSI for cursor positioning regardless of colour
-			// mode); look for FOREGROUND/SGR colour escapes specifically:
-			// `\x1b[<n>m` where n is in the 30-37/90-97/38;5/38;2
-			// families.
+			// We want to detect ONLY non-default foreground SGR sets,
+			// not cursor-positioning CSI (Bubble Tea emits those
+			// regardless of colour mode) and not reset/default
+			// sequences like `\x1b[m`, `\x1b[0m`, `\x1b[39m`.
 			//
-			// A more permissive check: there should be no ESC-[ ...m
-			// SGR sequence inside the rendered content area. We
-			// approximate by checking no `\x1b[3` or `\x1b[9` (256/ANSI
-			// foreground) appears.
-			//
-			// Negative formulation: reset escapes are allowed (`\x1b[0m`,
-			// `\x1b[m`) — just not active colour sets.
-			if regexp.MustCompile(`\x1b\[(?:3[0-79]|9[0-7]|38;[25];)`).MatchString(frame) {
-				t.Errorf("NO_COLOR=1: forbidden SGR foreground escape detected; snapshot tail=%q", truncTail([]byte(frame), 400))
+			// Reuse extractSGRSet (the same regex pinned by the
+			// dark/light palette diff above) and filter out the
+			// "default foreground" escape that NO_COLOR-respecting
+			// renderers may still emit alongside the alt-screen
+			// boilerplate.
+			sgr := extractSGRSet(frame)
+			delete(sgr, "\x1b[39m") // default foreground reset
+			if len(sgr) > 0 {
+				t.Errorf("NO_COLOR=1: forbidden non-default SGR detected: %v\nsnapshot tail=%q", sgr, truncTail([]byte(frame), 400))
 			}
 		})
 	})
@@ -236,6 +234,3 @@ func sgrSetsDiffer(a, b map[string]struct{}) bool {
 	}
 	return false
 }
-
-// keep strings import live for future grep-friendly assertions.
-var _ = strings.Contains

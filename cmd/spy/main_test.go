@@ -126,17 +126,24 @@ func TestC4_StderrSanitizesHostileFilename(t *testing.T) {
 		t.Fatalf("pipe: %v", err)
 	}
 	os.Stderr = w
-	t.Cleanup(func() { os.Stderr = origStderr })
+	t.Cleanup(func() {
+		os.Stderr = origStderr
+		_ = r.Close()
+	})
 
+	// Reader goroutine drains until EOF so we capture the full
+	// stderr stream — the prior fixed 4 KiB buffer + io.ReadFull
+	// would silently truncate longer error chains and could leak
+	// the FD if the reader blocked waiting for more bytes than
+	// the writer ever produced.
 	done := make(chan []byte, 1)
 	go func() {
-		var buf [4096]byte
-		n, _ := io.ReadFull(r, buf[:])
-		done <- append([]byte(nil), buf[:n]...)
+		body, _ := io.ReadAll(r)
+		done <- body
 	}()
 
 	got := run([]string{"--no-config", hostilePath}, nil)
-	w.Close()
+	w.Close() // signal EOF to the reader so io.ReadAll returns
 
 	// Exit code: the path won't resolve so we expect either ErrNotFound
 	// (exit 3) or an unsupported-format mapping. Either is fine for
