@@ -37,9 +37,9 @@ import (
 // implicitly invalidated whenever the renderer is rebuilt (theme swap,
 // word-wrap toggle, line-number toggle, etc.).
 type codeRenderer struct {
-	deps               Dependencies
-	cache              map[int64]string // lineNum → Chroma-formatted string; populated on demand
-	lastResidentStart  int64            // last known resident start line; used to prune stale cache entries
+	deps              Dependencies
+	cache             map[int64]string // lineNum → Chroma-formatted string; populated on demand
+	lastResidentStart int64            // last known resident start line; used to prune stale cache entries
 }
 
 // Render walks the resident buffer and emits one formatted line per
