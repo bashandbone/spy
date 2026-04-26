@@ -60,8 +60,9 @@ import (
 // was updated from 100 ms to 150 ms to honestly document this bound.
 // See issue #20 for the investigation log.
 //
-// The renderer-slice variant remains a strict gate so renderer
-// regressions are caught independently of binary-startup jitter.
+// The renderer-slice variant (`TestFirstFrame_RendererSlice`) enforces
+// a separate ≤ 20 ms p95 budget so renderer regressions are caught
+// independently of binary-startup jitter.
 func TestFirstFrame_Under150ms(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping spawn-based first-frame benchmark in -short mode")
@@ -110,7 +111,8 @@ func TestFirstFrame_Under150ms(t *testing.T) {
 	}
 
 	sortDurations(durations)
-	p95 := durations[(len(durations)*95)/100]
+	p95Index := ((len(durations) - 1) * 95) / 100
+	p95 := durations[p95Index]
 	worst := durations[len(durations)-1]
 	const limit = 150 * time.Millisecond
 	if p95 > limit {
@@ -164,10 +166,16 @@ func TestFirstFrame_RendererSlice(t *testing.T) {
 	}
 
 	sortDurations(durations)
-	p95 := durations[(len(durations)*95)/100]
+	p95Index := ((len(durations) - 1) * 95) / 100
+	p95 := durations[p95Index]
 	worst := durations[len(durations)-1]
-	t.Logf("SC-001 (renderer slice): first-frame p95=%v worst=%v across %d runs",
-		p95, worst, len(durations))
+	const rendererLimit = 20 * time.Millisecond
+	if p95 > rendererLimit {
+		t.Fatalf("SC-001 (renderer slice): first-frame p95 %v exceeds %v budget (worst=%v)",
+			p95, rendererLimit, worst)
+	}
+	t.Logf("SC-001 (renderer slice): first-frame p95=%v worst=%v across %d runs (limit %v)",
+		p95, worst, len(durations), rendererLimit)
 }
 
 // sortDurations is a tiny insertion sort over a small slice. Avoids
