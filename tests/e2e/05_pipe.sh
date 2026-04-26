@@ -61,7 +61,7 @@ trap 'rm -f "${tmp_a}" "${tmp_b}" "${tmp_c}" "${tmp_d}" "${tmp_d_want}" "${tmp_d
 # (a) `cat hello.go | spy -l go` — non-TTY stdin, non-TTY stdout. The
 #     pipeline degenerate-cats stdin verbatim to stdout. Compare bytes
 #     end-to-end via `cmp -s` so any in-flight transformation (newline
-#     normalisation, ANSI injection) trips the assertion (Copilot
+#     normalization, ANSI injection) trips the assertion (Copilot
 #     review PR#12 round-3 #9).
 cat "${hello_go}" | "${binary}" --no-config -l go > "${tmp_a}"
 if ! cmp -s "${hello_go}" "${tmp_a}"; then

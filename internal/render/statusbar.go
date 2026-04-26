@@ -87,7 +87,7 @@ type StatusInput struct {
 // collapses to `<short-name> · L<current>`.
 //
 // The user-controlled string fields (DisplayName, Advisory) are
-// funnelled through [Neutralize] at the entry point so embedded
+// funneled through [Neutralize] at the entry point so embedded
 // `\x1b` / `\x9b` bytes from a hostile filename or upstream loader
 // warning cannot drive terminal protocols. Acceptance review C4.
 func StatusBarRender(in StatusInput, theme Theme) string {
@@ -235,7 +235,7 @@ func currentSegment(in StatusInput) string {
 // shortName collapses long paths to just the basename so the
 // sub-80-column bar fits. The upstream UI already runs DisplayName
 // through filepath.Base for files, but defensive trimming here lets
-// callers pass a raw path without surprising behaviour.
+// callers pass a raw path without surprising behavior.
 func shortName(name string) string {
 	if name == "" {
 		return ""

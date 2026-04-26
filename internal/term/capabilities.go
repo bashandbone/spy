@@ -14,7 +14,7 @@ import (
 	xterm "golang.org/x/term"
 )
 
-// ColorDepth is the highest-fidelity colour space the terminal accepts.
+// ColorDepth is the highest-fidelity color space the terminal accepts.
 type ColorDepth int
 
 const (
@@ -46,7 +46,7 @@ type Capabilities struct {
 	InTmux              bool
 }
 
-// Detect probes the current process's terminal. Honours SPY_GRAPHICS,
+// Detect probes the current process's terminal. Honors SPY_GRAPHICS,
 // SPY_THEME, NO_COLOR, COLORTERM. Cancellation of `ctx` causes an
 // early return with a default-shaped [Capabilities].
 //
@@ -129,7 +129,7 @@ func detectColorDepth() ColorDepth {
 	case strings.Contains(t, "color"):
 		return ColorANSI16
 	}
-	// linux console, generic xterm, etc. — assume 16-colour ANSI.
+	// linux console, generic xterm, etc. — assume 16-color ANSI.
 	return ColorANSI16
 }
 

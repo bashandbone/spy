@@ -70,7 +70,7 @@ func TestKindCode_HighlightedOutputContainsANSI(t *testing.T) {
 	}
 }
 
-func TestKindCode_LineNumbersHonoured(t *testing.T) {
+func TestKindCode_LineNumbersHonored(t *testing.T) {
 	// LineNumbers=true → gutter shows "1", "2", "3".
 	deps := newCodeDeps(t, "go", true, false)
 	r := ForKind(source.KindCode, deps)
@@ -254,7 +254,7 @@ func TestKindCode_FormatterMatchesColorDepth(t *testing.T) {
 // TestKindCode_ViewportWindowLimitsHighlighting verifies that when a
 // viewport height is supplied, only lines within the visible window
 // receive ANSI syntax highlighting while lines outside are emitted as
-// raw text. This is the SC-004 viewport-bounded behaviour.
+// raw text. This is the SC-004 viewport-bounded behavior.
 func TestKindCode_ViewportWindowLimitsHighlighting(t *testing.T) {
 	deps := newCodeDeps(t, "go", false, false)
 	r := ForKind(source.KindCode, deps)

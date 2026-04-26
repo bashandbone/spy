@@ -117,7 +117,7 @@ func TestStatusBar_SubEightyColumnCollapse(t *testing.T) {
 	if !strings.Contains(out, "L5") {
 		t.Errorf("collapsed status bar should print 'L<current>': %q", out)
 	}
-	// Width budget honoured.
+	// Width budget honored.
 	if widthOf(out) > 40 {
 		t.Errorf("collapsed status bar must fit within width=40, got %d cols", widthOf(out))
 	}

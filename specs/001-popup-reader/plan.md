@@ -11,9 +11,9 @@ SPDX-License-Identifier: MIT OR Apache-2.0
 
 ## Summary
 
-`spy` is a focused popup viewer for text, code, PDFs, and images, optimised
+`spy` is a focused popup viewer for text, code, PDFs, and images, optimized
 for review work inside multiplexed terminals (tmux and friends). The MVP
-covers six prioritised user stories: quick text review with syntax
+covers six prioritized user stories: quick text review with syntax
 highlighting (P1), code navigation/search (P1), dark/light theme adaptation
 (P1), inline PDF/image rendering on capable terminals with graceful fallback
 (P2), pipe-input support à la `bat` (P2), and footer metadata (P3).
@@ -24,7 +24,7 @@ graphics protocols (Kitty / iTerm2 / sixel), OSC-11 theme detection, smart
 search, and a layered config loader (TOML + env + flags). Errors are emitted
 to stderr without launching the viewer. Stdin and very large files share a
 single chunked-loader pipeline with optional windowing for files above
-256 MiB to honour the 500 MB working-set ceiling.
+256 MiB to honor the 500 MB working-set ceiling.
 
 Detailed unknowns and decisions live in [./research.md](./research.md);
 runtime types in [./data-model.md](./data-model.md); user-facing and
@@ -213,7 +213,7 @@ features are accommodated by splitting `internal/reader` and
 DAG of dependencies and matching the contract in
 [contracts/internal-apis.md](./contracts/internal-apis.md). All production
 code stays under `internal/` so we retain freedom to reshape package
-boundaries before any external API stabilises.
+boundaries before any external API stabilizes.
 
 ## Phase 0: Outline & Research
 

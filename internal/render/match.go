@@ -50,12 +50,12 @@ func activeMatch(state search.State) (search.Match, bool) {
 // — chooses to skip chroma styling for matched lines and hand the raw
 // line + matches here so the highlight is precise. This is the
 // documented Phase 4 limitation: matched lines lose chroma syntax
-// colour while highlighted (Copilot review of US2 `T057`).
+// color while highlighted (Copilot review of US2 `T057`).
 func applyMatchHighlights(raw string, matches []search.Match, active search.Match, hasActive bool, hitStyle, activeStyle styleRenderer) string {
 	if len(matches) == 0 {
 		return neutralizeEscapes(raw)
 	}
-	// Neutralise ESC/CSI bytes in `raw` before slicing. Substitutions
+	// Neutralize ESC/CSI bytes in `raw` before slicing. Substitutions
 	// are byte-for-byte (see neutralizeEscapes) so the precomputed
 	// match offsets stay aligned with the new (safe) bytes.
 	safe := neutralizeEscapes(raw)

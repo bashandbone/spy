@@ -568,7 +568,7 @@ func (m Model) runSearch(query string, dir search.Direction) (tea.Model, tea.Cmd
 	cmd := func() tea.Msg {
 		// Always release the context's resources when the goroutine
 		// exits, regardless of whether the channel closed naturally
-		// or m.searchCancel pre-empted us. The on-Model cancel func
+		// or m.searchCancel pre-emptied us. The on-Model cancel func
 		// is for *external* cancel-on-supersede; this defer is for
 		// context resource hygiene (`go vet` lostcancel rule).
 		defer cancel()
@@ -666,7 +666,7 @@ func (m Model) onSearchResult(msg searchResultMsg) (tea.Model, tea.Cmd) {
 
 // stripSearchPrefixes peels vim-style prefix toggles from the start of
 // `query` and returns the cleaned query alongside the resulting
-// (regex, caseMode) pair. Recognised prefixes (per contracts/keys.md):
+// (regex, caseMode) pair. Recognized prefixes (per contracts/keys.md):
 //
 //	\v   force regex
 //	\V   force literal
@@ -700,7 +700,7 @@ func stripSearchPrefixes(query string, regex bool, caseMode search.CaseMode) (st
 
 // caseModeFromConfig maps the `case_mode` string in cfg
 // ("smart"|"sensitive"|"insensitive") to the search.CaseMode enum.
-// Unrecognised / empty strings fall back to `fallback` so the caller
+// Unrecognized / empty strings fall back to `fallback` so the caller
 // supplies a sensible default (CaseSmart).
 func caseModeFromConfig(spec string, fallback search.CaseMode) search.CaseMode {
 	switch strings.ToLower(strings.TrimSpace(spec)) {
@@ -771,7 +771,7 @@ func (m *Model) scrollToLine(line int64) {
 	m.viewport.SetYOffset(int(line - 1))
 }
 
-// runCommand dispatches a `:`-prefixed command. Recognised commands
+// runCommand dispatches a `:`-prefixed command. Recognized commands
 // match contracts/keys.md; unknown commands surface a status-bar
 // warning rather than crashing the viewer.
 func (m Model) runCommand(cmd string) (tea.Model, tea.Cmd) {

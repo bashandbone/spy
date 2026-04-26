@@ -189,7 +189,7 @@ func (r *pdfRenderer) pageText(page int) (string, int, error) {
 	if c, ok := rs.(io.Closer); ok {
 		defer c.Close()
 	}
-	// `ledongthuc/pdf` requires an io.ReaderAt + size. We materialise
+	// `ledongthuc/pdf` requires an io.ReaderAt + size. We materialize
 	// the seekable reader into a bytes.Reader so we can hand it both.
 	body, err := io.ReadAll(rs)
 	if err != nil {
@@ -220,7 +220,7 @@ func (r *pdfRenderer) pageText(page int) (string, int, error) {
 // see the page indicator + total without checking the status bar.
 //
 // Both the PDF text-extraction output (`text`) and the source
-// display name are funnelled through [Neutralize] — `ledongthuc/pdf`
+// display name are funneled through [Neutralize] — `ledongthuc/pdf`
 // returns the raw PDF content stream bytes, which a hostile document
 // can use to embed OSC / DCS escapes. Acceptance review C4.
 func (r *pdfRenderer) formatTextPage(text string, page, total int) string {

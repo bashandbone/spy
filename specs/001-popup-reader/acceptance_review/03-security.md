@@ -31,8 +31,8 @@ material ways:
    FIFO blocks indefinitely. (MEDIUM)
 
 The other four checklist categories (b TOML fuzz, c escape
-neutralisation in text/code renderers, d OSC 11 regex, f no-network
-gate) substantially hold up. However, escape neutralisation has gaps
+neutralization in text/code renderers, d OSC 11 regex, f no-network
+gate) substantially hold up. However, escape neutralization has gaps
 in the **status bar** and **PDF/image renderers** that the implementer
 missed, and these are exploitable by simply naming a file with embedded
 ESC bytes (HIGH; see Finding #1 below).
@@ -42,7 +42,7 @@ ESC bytes (HIGH; see Finding #1 below).
 | 1 | HIGH | Filename-driven escape injection via status bar / PDF / image renderers |
 | 2 | HIGH | No panic recovery around go-fitz / image.Decode (claimed but absent) |
 | 3 | MEDIUM | File-mode rejection limited to directories — FIFOs/devices/sockets accepted |
-| 4 | MEDIUM | Stderr emission of attacker-controlled paths bypasses neutralisation |
+| 4 | MEDIUM | Stderr emission of attacker-controlled paths bypasses neutralization |
 | 5 | MEDIUM | TOCTOU between `EvalSymlinks` → `Stat` → `Open` (no `O_NOFOLLOW`) |
 | 6 | MEDIUM | OSC 11 read loop bounded only by 64 B and ctx — slow per-byte exhaustion possible |
 | 7 | LOW | Glamour markdown renderer never sees `neutralizeEscapes` (see Finding #7) |
@@ -102,15 +102,15 @@ The implementer's checklist enumerates the call sites for
   fences (` ``` ... ``` `) verbatim. See Finding #7.
 - `internal/render/image.go:134,142` and `internal/render/pdf.go:199,
   201,215` emit `r.src.DisplayName()` and `md.Path` via `fmt.Fprintf`
-  — no neutralisation. See Finding #1.
+  — no neutralization. See Finding #1.
 - `internal/render/statusbar.go` renders `in.DisplayName` and
   `in.Advisory` verbatim through `theme.Footer.Render` — no
-  neutralisation. The advisory carries user-controlled values like
+  neutralization. The advisory carries user-controlled values like
   `"open <path>: <err>"` and `"invalid pattern: %v"`. See Finding #1.
 - `cmd/spy/main.go:295,304,307,310,313` print attacker-controlled
-  paths to **stderr** without sanitisation. See Finding #4.
+  paths to **stderr** without sanitization. See Finding #4.
 
-The token-level neutralisation in `code.go` (`needsTokenNeutralisation`
+The token-level neutralization in `code.go` (`needsTokenNeutralization`
 + `neutralizeTokens`) is well thought out — Chroma's `Text` token can
 copy raw bytes through. But it only protects the code renderer, not
 markdown/PDF/image/statusbar/stderr.
@@ -229,10 +229,10 @@ spy /tmp/poc/x*.txt
 **every** string that originates from the source-side and reaches the
 TTY. The minimal patch:
 
-1. In `internal/source/file.go:51`, neutralise `displayName`:
+1. In `internal/source/file.go:51`, neutralize `displayName`:
    `displayName: neutralizeFilename(filepath.Base(path))`.
    Define a small `neutralizeFilename` helper in the source package
-   so render doesn't have to import sanitisation logic per emit
+   so render doesn't have to import sanitization logic per emit
    site. The basename is already the "display name", so changing
    it once is the right layering.
 2. Apply the same to `Metadata.Path` at construction time
@@ -363,7 +363,7 @@ fires *before* the alt-screen even starts. Even if the user pipes
 spy's stdout somewhere else, stderr typically goes to the parent
 terminal — so an `spy /tmp/$'evil\x1b]2;PWN\x07'` produces a window-
 title hijack at the shell prompt level. Worse: if the user
-investigates with `ls /tmp/`, modern `ls` does sanitise control
+investigates with `ls /tmp/`, modern `ls` does sanitize control
 chars by default, but `spy`'s stderr message just printed the raw
 bytes — the user's terminal might already be in a hijacked state.
 
@@ -450,7 +450,7 @@ nil and falls back to COLORFGBG (which is fine). Not really
 exploitable.
 
 **Why I flagged it MEDIUM anyway**: The Read goroutine doesn't
-honour ctx — it relies on FD-close to unblock. If a future change
+honor ctx — it relies on FD-close to unblock. If a future change
 moves the probe out of `defer f.Close()` discipline, this becomes
 a real goroutine leak.
 
@@ -555,7 +555,7 @@ original load and reload can:
 - On reload, the stream emits the binary bytes through the text
   renderer (which calls `neutralizeEscapes` — that's good).
 
-Net effect: the binary check is bypassed but the escape sanitiser
+Net effect: the binary check is bypassed but the escape sanitizer
 is **not**. Worst case: the user sees garbled non-printable
 characters in the viewer (subbed with `?`). Not exploitable for
 terminal hijack thanks to (c). Worth fixing alongside #5 by
@@ -611,7 +611,7 @@ Before tagging v0.1.0, in priority order:
    already claims exists) — even a Go-side panic guard makes the
    stated property true. Add the cited test.
 3. **Fix Finding #3** (reject non-regular files) — three lines.
-4. **Fix Finding #4** (sanitise stderr paths) — small helper +
+4. **Fix Finding #4** (sanitize stderr paths) — small helper +
    five call sites.
 5. **Update `specs/001-popup-reader/checklists/security-review.md`**
    to reflect the actual implementation. The current checklist

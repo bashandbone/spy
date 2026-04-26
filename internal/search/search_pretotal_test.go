@@ -15,7 +15,7 @@ import (
 )
 
 // pendingProvider returns -1 from Total() until [pendingProvider.Ready]
-// is called, modelling the [loader.LineBuffer] state where the user
+// is called, modeling the [loader.LineBuffer] state where the user
 // hits `/` before the streamer's first chunk has populated the buffer.
 //
 // Exists in this package (rather than the loader test package) so the
@@ -86,7 +86,7 @@ func TestScan_WaitsForTotalWhenUnknown(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Compile: %v", err)
 	}
-	// Kick off the search BEFORE marking ready, modelling "/" typed
+	// Kick off the search BEFORE marking ready, modeling "/" typed
 	// the moment after open. The scan must wait in waitForTotal
 	// rather than returning empty.
 	ctx, cancel := context.WithCancel(context.Background())

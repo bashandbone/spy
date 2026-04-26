@@ -49,7 +49,7 @@ primary workstation is Linux. macOS verification will run on the v0.1.0
 release-candidate build before tagging; the matrix below tracks the
 required surface.
 
-| Surface | Required behaviour | Status |
+| Surface | Required behavior | Status |
 |---------|---------------------|--------|
 | iTerm2 | `--graphics iterm2 image.png` emits the iTerm2 inline-image protocol; cleanup on exit. | PENDING |
 | Kitty | `--graphics kitty image.png` emits `\x1b_G…` protocol; cleanup escape (`\x1b_Ga=d,d=A;\x1b\\`) on exit. | PENDING |

@@ -223,7 +223,7 @@ func NewModel(opts ModelOptions) Model {
 		m.status = render.StatusIdle
 	}
 	// Highlight the synchronously-loaded First chunk so the first paint
-	// already shows colours rather than waiting for the next tick. The
+	// already shows colors rather than waiting for the next tick. The
 	// loader has already copied the lines into Stream.Buffer (Append
 	// does a struct-copy), so we must *also* push the resulting tokens
 	// back into the buffer via SetTokens — otherwise the renderer

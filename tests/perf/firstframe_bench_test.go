@@ -44,7 +44,7 @@ import (
 // driving the model in-process is required because the spec budget
 // reads "from invocation": excluding Go runtime startup (~50–80 ms
 // typical) would understate the user-visible first-frame latency on
-// cgo builds where initialisation costs are non-trivial. (PR#23
+// cgo builds where initialization costs are non-trivial. (PR#23
 // review — the prior comment said timing started at `cmd.Start()`,
 // but `start := time.Now()` is taken before the helper call, so the
 // timing includes PTY setup; comment now matches the implementation.)
@@ -127,7 +127,7 @@ func TestFirstFrame_Under150ms(t *testing.T) {
 // TestFirstFrame_Under150ms: the spawn-based budget catches "from
 // invocation" regressions (Go startup, link-time bloat, init() blocks);
 // this slice-only timing isolates the loader + ui.NewModel + first
-// View() pass so reviewers can localise regressions to the renderer vs
+// View() pass so reviewers can localize regressions to the renderer vs
 // the binary's startup.
 func TestFirstFrame_RendererSlice(t *testing.T) {
 	const lines = 100

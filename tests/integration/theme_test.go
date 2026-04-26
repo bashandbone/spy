@@ -70,7 +70,7 @@ func TestTheme_OverridePrecedence(t *testing.T) {
 		runThemeProbe(t, nil, map[string]string{"NO_COLOR": "1"}, func(t *testing.T, frame string) {
 			// We want to detect ONLY non-default foreground SGR sets,
 			// not cursor-positioning CSI (Bubble Tea emits those
-			// regardless of colour mode) and not reset/default
+			// regardless of color mode) and not reset/default
 			// sequences like `\x1b[m`, `\x1b[0m`, `\x1b[39m`.
 			//
 			// Reuse extractSGRSet (the same regex pinned by the
@@ -177,7 +177,7 @@ func TestTheme_AutoDetectFromOSC11(t *testing.T) {
 // COLORTERM=truecolor + COLORFGBG=15;0 — deliberately NOT TERM, to
 // avoid Bubble Tea / termenv interactive probes) so the highlighter
 // actually engages on CI runners. Caller-supplied keys override the
-// colour defaults (e.g. NO_COLOR=1 still wins).
+// color defaults (e.g. NO_COLOR=1 still wins).
 func runThemeProbe(t *testing.T, extraArgs []string, env map[string]string, check func(*testing.T, string)) {
 	t.Helper()
 	dir := t.TempDir()
@@ -211,7 +211,7 @@ func runThemeProbe(t *testing.T, extraArgs []string, env map[string]string, chec
 	}
 }
 
-// extractSGRSet returns the unique set of SGR colour escapes
+// extractSGRSet returns the unique set of SGR color escapes
 // appearing in `s`. Two themes with different palettes produce
 // disjoint sets; runtime theme swap is detectable by set inequality
 // without pinning a specific style.

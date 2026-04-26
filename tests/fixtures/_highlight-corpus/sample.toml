@@ -15,12 +15,12 @@ allowed = ["kitty", "iterm2", "sixel", "none"]
 [[lexers]]
 name = "go"
 extensions = [".go"]
-analyse_priority = 10
+analyze_priority = 10
 
 [[lexers]]
 name = "python"
 extensions = [".py", ".pyi"]
-analyse_priority = 9
+analyze_priority = 9
 
 [build.fitz]
 enabled = false

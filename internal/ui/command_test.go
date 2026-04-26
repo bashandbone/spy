@@ -823,7 +823,7 @@ func TestStripSearchPrefixes_NoPrefix(t *testing.T) {
 
 func TestStripSearchPrefixes_UnknownEscapeStops(t *testing.T) {
 	t.Parallel()
-	// `\x` is not a recognised toggle — the function leaves it intact
+	// `\x` is not a recognized toggle — the function leaves it intact
 	// so the regex engine (or literal matcher) sees the original query.
 	cleaned, _, _ := stripSearchPrefixes(`\xfoo`, false, search.CaseSmart)
 	if cleaned != `\xfoo` {
@@ -831,7 +831,7 @@ func TestStripSearchPrefixes_UnknownEscapeStops(t *testing.T) {
 	}
 }
 
-func TestCaseModeFromConfig_RecognisedValues(t *testing.T) {
+func TestCaseModeFromConfig_RecognizedValues(t *testing.T) {
 	t.Parallel()
 	cases := map[string]search.CaseMode{
 		"smart":       search.CaseSmart,

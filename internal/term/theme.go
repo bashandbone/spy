@@ -81,7 +81,7 @@ func parseOSC11Reply(reply string) float64 {
 	return 0.2126*r + 0.7152*g + 0.0722*b
 }
 
-// parseHexComponent normalises a 1–4 digit hex value (per OSC 11's
+// parseHexComponent normalizes a 1–4 digit hex value (per OSC 11's
 // `rgb:RRRR/GGGG/BBBB` shape) to a [0, 1] float. Returns NaN when the
 // input is empty, longer than four digits, or not parseable as a
 // hexadecimal integer.

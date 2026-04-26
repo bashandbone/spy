@@ -174,7 +174,7 @@ supporting SC-005 (1GB files under 500MB RAM) via the windowing mode.
    and exit non-zero — there's nothing to display.
 5. Language inference for piped content: try the shebang on the first line,
    then the optional `--lang` / `-l` flag, then content sniffing via Chroma's
-   `lexers.Analyse`. If all three fail, render as plain text.
+   `lexers.Analyze`. If all three fail, render as plain text.
 
 **Rationale**: This mirrors how `bat` handles stdin (the user's stated
 reference). Keeping stdin entirely in memory is acceptable because stdin
@@ -249,7 +249,7 @@ env vars handles the long tail. The 50ms budget keeps us within SC-001.
    Chroma lexer in **streaming** mode (`chroma.Coalesce(lexer.TokeniseStreaming(...))`),
    and emits `[]Token` per line.
 3. The render path joins tokens into ANSI-styled strings using a
-   `formatters.TTY256` or `formatters.TrueColour` formatter selected per R1.
+   `formatters.TTY256` or `formatters.TrueColor` formatter selected per R1.
 
 For files larger than `HighlightCap` (default 5MiB), highlighting is disabled
 and we render plain text — the cost-benefit of syntax-highlighting a 50MB log
@@ -413,7 +413,7 @@ auto-generated.
 
 **Rationale**: Matches the explicit Q3 answer ("arrow keys with optional vim
 mode"). Additive vim mode means power users get their bindings without
-penalising keyboard-shy users.
+penalizing keyboard-shy users.
 
 **Alternatives considered**:
 - *Mode-exclusive*: rejected — punishes users who mix idioms.

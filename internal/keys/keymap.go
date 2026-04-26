@@ -11,7 +11,7 @@ import (
 	"github.com/charmbracelet/bubbles/key"
 )
 
-// Action names a viewer behaviour. The full vocabulary is fixed at
+// Action names a viewer behavior. The full vocabulary is fixed at
 // compile time; bindings are configurable via [ApplyOverrides].
 type Action string
 

@@ -37,7 +37,7 @@ func TestNeutralize_PassthroughBenign(t *testing.T) {
 }
 
 // TestNeutralize_ReplacesEscWithQuestionMark pins the post-PR#26
-// behaviour: ESC (0x1b) and CSI (0x9b) bytes are replaced with the
+// behavior: ESC (0x1b) and CSI (0x9b) bytes are replaced with the
 // single ASCII byte `'?'`. The single-byte choice is load-bearing —
 // see TestNeutralize_PreservesByteLength for the invariant tests
 // downstream callers depend on.
@@ -100,7 +100,7 @@ func TestNeutralize_ReplacesEscWithQuestionMark(t *testing.T) {
 //
 // If you are tempted to switch the replacement to U+FFFD or any
 // other multi-byte rune, this test will fail — and so will the
-// downstream highlight rendering. Pick a different defence.
+// downstream highlight rendering. Pick a different defense.
 func TestNeutralize_PreservesByteLength(t *testing.T) {
 	t.Parallel()
 
