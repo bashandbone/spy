@@ -180,8 +180,9 @@ func (r *codeRenderer) styleLine(l source.Line) string {
 // actually carry an OSC / DCS / CSI byte. Per-line inputs are typically
 // hundreds of bytes; the byte scan is one cache-line read in the
 // common case. Uses containsRawEscByte (not strings.ContainsAny) to
-// avoid the U+FFFD-vs-0x9b false positive that would force a
-// pointless full re-scan after Neutralize has already run upstream.
+// avoid the false positive where a literal U+FFFD in source content
+// would match the rune-decoded form of standalone 0x9b (invalid
+// UTF-8) and force a pointless full re-scan.
 func needsTokenNeutralisation(raw string) bool {
 	return containsRawEscByte(raw)
 }

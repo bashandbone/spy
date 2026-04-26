@@ -155,10 +155,9 @@ func TestC4_StderrSanitizesHostileFilename(t *testing.T) {
 	stderr := <-done
 	// Use IndexByte directly to scan for raw ESC (0x1b) / CSI (0x9b)
 	// bytes — bytes.ContainsAny decodes the chars argument as runes,
-	// and U+FFFD (the LOW-1 replacement for ESC/CSI) is also the
-	// fallback rune for the invalid byte 0x9b on its own, so
-	// ContainsAny(stderr, "\x1b\x9b") gives false positives once the
-	// neutralizer substitutes FFFD.
+	// and 0x9b on its own is invalid UTF-8 that decodes as U+FFFD,
+	// so a stderr line containing a literal U+FFFD would
+	// false-positive the ContainsAny scan.
 	if bytes.IndexByte(stderr, 0x1b) >= 0 || bytes.IndexByte(stderr, 0x9b) >= 0 {
 		t.Errorf("stderr leaked ESC / 8-bit-CSI from hostile filename:\n  %q", stderr)
 	}
