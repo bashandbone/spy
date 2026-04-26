@@ -630,6 +630,38 @@ func TestUpdate_JumpToOutOfRangePageClampsToTotal(t *testing.T) {
 	}
 }
 
+// --- metaUpdatedMsg payload consumption ---
+
+func TestUpdate_MetaUpdatedMsgCachesTotalLines(t *testing.T) {
+	// Copilot review PR#13 round-2 #4 + #5: TotalLines must have an
+	// observable consumer. The handler stores the payload on
+	// m.totalLines; the footer then reads the cache instead of
+	// hitting the buffer mutex.
+	m := newTestModel(t, "alpha\nbeta\ngamma\n")
+	m, _ = applyResize(m, 80, 24)
+	if m.totalLines != 0 {
+		t.Errorf("totalLines should start at 0, got %d", m.totalLines)
+	}
+	updated, _ := m.Update(metaUpdatedMsg{TotalLines: 42})
+	mm := updated.(Model)
+	if mm.totalLines != 42 {
+		t.Errorf("metaUpdatedMsg payload not cached: got %d want 42", mm.totalLines)
+	}
+}
+
+func TestUpdate_MetaUpdatedMsgZeroPayloadIsIgnored(t *testing.T) {
+	// Defensive: a zero TotalLines (e.g. fired from a stream that
+	// closed before any lines were read) must not blow away an
+	// already-set cache.
+	m := newTestModel(t, "x\n")
+	m, _ = applyResize(m, 80, 24)
+	m.totalLines = 5
+	updated, _ := m.Update(metaUpdatedMsg{TotalLines: 0})
+	if updated.(Model).totalLines != 5 {
+		t.Errorf("zero payload should not stomp an existing cache; got %d want 5", updated.(Model).totalLines)
+	}
+}
+
 // --- T100b: toggle handlers (ActionToggleLineNumbers,
 // ActionToggleWordWrap, ActionOpenFile). ---
 

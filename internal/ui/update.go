@@ -67,18 +67,20 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case openResultMsg:
 		return m.onOpenResult(msg)
 	case metaUpdatedMsg:
-		// True no-op handler: the model state that drives the footer
-		// (m.streaming, the buffer's pinned Total) has already been
-		// mutated by [onChunk] / [streamDoneMsg] before metaUpdatedMsg
-		// arrives, and Bubble Tea's runtime re-invokes [View] after
-		// every Update, so the footer flips from "…" to the final
-		// count automatically. Re-running [Renderer.Render] +
-		// [viewport.SetContent] here would double the EOF render work
-		// (Copilot review PR#13 #3) and contradict the task spec's
-		// "without re-rendering everything" promise. The message
-		// remains as a forward-compatible signaling integration point
-		// for future consumers that need to react to total-finalized
-		// transitions.
+		// Cache the finalized line count on the model so the footer
+		// reads it on subsequent paints without taking the buffer
+		// mutex (Copilot review PR#13 round-2 #4 + #5 — TotalLines
+		// has an observable consumer). No re-render is issued here:
+		// the model state that drives the footer (m.streaming, the
+		// buffer's pinned Total) has already been mutated by
+		// [onChunk] / [streamDoneMsg] before metaUpdatedMsg arrives,
+		// and Bubble Tea re-invokes [View] after every Update — so
+		// the footer flips from "…" to the final count automatically
+		// without doubling the EOF render work (Copilot review PR#13
+		// round-1 #3).
+		if msg.TotalLines > 0 {
+			m.totalLines = msg.TotalLines
+		}
 		return m, nil
 	}
 	return m, nil
@@ -123,7 +125,8 @@ func (m Model) onOpenResult(msg openResultMsg) (tea.Model, tea.Cmd) {
 		Source:       m.source,
 	}
 	m.renderer = render.ForKind(kind, deps)
-	m.page = 1 // reset PDF page cursor on source swap
+	m.page = 1       // reset PDF page cursor on source swap
+	m.totalLines = 0 // clear the cached finalized count; new source restarts streaming
 	m.streaming = true
 	m.status = render.StatusStreaming
 	if m.stream != nil && m.stream.First.EOF {
@@ -882,6 +885,7 @@ func (m Model) onReloadResult(msg reloadResultMsg) (tea.Model, tea.Cmd) {
 	m.status = render.StatusStreaming
 	m.streaming = true
 	m.lastError = nil
+	m.totalLines = 0 // reload restarts streaming; finalized cache must clear
 	if m.stream.First.EOF {
 		m.streaming = false
 		m.status = render.StatusIdle

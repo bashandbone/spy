@@ -67,11 +67,16 @@ func (m Model) footerLine() string {
 		kind = m.source.Kind()
 		meta = m.source.Metadata()
 	}
-	// Surface the buffer's running total via Metadata.LineCount so the
-	// status bar's "<n>… lines" indicator stays accurate while the
-	// loader is still streaming. The metadata struct's LineCount is
-	// otherwise -1 until the loader's MarkComplete fires.
-	if m.stream != nil && m.stream.Buffer != nil {
+	// Surface the running / finalized total via Metadata.LineCount so
+	// the status bar's "<n>… lines" indicator stays accurate while the
+	// loader is still streaming AND flips to the final count after
+	// EOF. Prefer the [metaUpdatedMsg]-cached m.totalLines once it's
+	// non-zero so the footer doesn't take the buffer mutex on every
+	// paint; while streaming the cache is zero and we read the
+	// running total from the buffer instead.
+	if m.totalLines > 0 {
+		meta.LineCount = m.totalLines
+	} else if m.stream != nil && m.stream.Buffer != nil {
 		meta.LineCount = m.stream.Buffer.Total()
 	}
 	current := int64(0)
