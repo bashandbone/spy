@@ -94,33 +94,27 @@ func (b *LineBuffer) Append(in []source.Line) {
 }
 
 // ClearWrapCaches resets the [source.Line.Wrapped] field on every
-// resident line. Called by the UI when the user toggles word-wrap
-// (Ctrl-W) or the viewport width changes — the cached visual rows are
-// invariant on (raw line, wrap mode, viewport width), so any of those
-// flipping requires a fresh wrap-pass on the next paint.
+// resident line. The UI's word-wrap toggle (Ctrl-W) and width-change
+// handlers call this so any future per-line wrap caches the renderer
+// stashes on [source.Line.Wrapped] are invalidated when wrap mode or
+// viewport width changes — without that contract, a toggle could
+// surface stale visual rows on the next paint.
 //
-// Tracks the same lock as [SetTokens] so concurrent loader appends and
+// As of Phase 8 nothing in the renderer populates Line.Wrapped (the
+// text/code renderers re-wrap from scratch on each frame), so calling
+// ClearWrapCaches against the current build is effectively a no-op.
+// The method exists ahead of that population work so the UI's toggle
+// path is contract-correct from day one and a future renderer change
+// to memoize wrapped rows doesn't have to retrofit invalidation
+// across every caller (Copilot review PR#13 #2 — the documentation no
+// longer claims the cache is wired up).
+//
+// Holds the same lock as [SetTokens] so concurrent loader appends and
 // renderer slices stay consistent.
 func (b *LineBuffer) ClearWrapCaches() {
 	b.mu.Lock()
 	for i := range b.lines {
 		b.lines[i].Wrapped = nil
-	}
-	b.mu.Unlock()
-}
-
-// SeedWrappedForTest seeds [source.Line.Wrapped] on every resident
-// line with the supplied slice. Used exclusively by tests that
-// pre-populate the wrap cache so they can verify [ClearWrapCaches]
-// (or its production callers — currently the word-wrap toggle handler
-// in internal/ui) actually invalidates it.
-//
-// Production code MUST NOT call this. The renderer is the only legal
-// populator of Line.Wrapped and that path runs through writeWrappedLine.
-func (b *LineBuffer) SeedWrappedForTest(value []string) {
-	b.mu.Lock()
-	for i := range b.lines {
-		b.lines[i].Wrapped = append([]string(nil), value...)
 	}
 	b.mu.Unlock()
 }

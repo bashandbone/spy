@@ -156,6 +156,73 @@ func TestStatusBar_AdvisoryDroppedInCollapsedMode(t *testing.T) {
 	}
 }
 
+func TestStatusBar_WideRenderNeverExceedsWidth(t *testing.T) {
+	// Copilot review PR#13 #1: long filenames + advisories must NOT
+	// push the footer past `width`. Confirm the renderer degrades
+	// (drops advisory, then truncates name) rather than overflows.
+	cases := []struct {
+		name        string
+		displayName string
+		advisory    string
+		width       int
+	}{
+		{
+			name:        "long advisory triggers drop",
+			displayName: "main.go",
+			advisory:    "highlighting disabled because the file exceeds the configured cap",
+			width:       80,
+		},
+		{
+			name:        "long display name triggers truncation",
+			displayName: "averyveryveryveryveryveryverylongbasename-with-suffix.markdown",
+			advisory:    "",
+			width:       80,
+		},
+		{
+			name:        "both long: advisory dropped + name truncated",
+			displayName: "averyveryveryveryveryveryverylongbasename-with-suffix.markdown",
+			advisory:    "highlighting disabled because the file exceeds the configured cap",
+			width:       80,
+		},
+		{
+			name:        "extreme: width barely fits the totals + current",
+			displayName: "main.go",
+			advisory:    "",
+			width:       80, // smallest wide-mode width
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			vp := viewport.New(tc.width, 23)
+			in := StatusInput{
+				DisplayName: tc.displayName,
+				Meta:        source.Metadata{LineCount: 1234},
+				Viewport:    vp,
+				Width:       tc.width,
+				Current:     7,
+				Advisory:    tc.advisory,
+				Mono:        true, // strip ANSI for the width check
+			}
+			out := StatusBarRender(in, ThemeDark())
+			if widthOf(out) > tc.width {
+				t.Errorf("status bar width %d > budget %d: %q", widthOf(out), tc.width, out)
+			}
+			if widthOf(out) < tc.width {
+				t.Errorf("status bar width %d < budget %d (missing right-pad): %q",
+					widthOf(out), tc.width, out)
+			}
+			// Even when degrading, the totals + current segments must
+			// remain visible so the user still sees the line counter.
+			if !strings.Contains(out, "1234 lines") {
+				t.Errorf("totals segment missing under truncation: %q", out)
+			}
+			if !strings.Contains(out, "Line 7") {
+				t.Errorf("current segment missing under truncation: %q", out)
+			}
+		})
+	}
+}
+
 func TestStatusBar_MonoSuppressesANSI(t *testing.T) {
 	vp := viewport.New(80, 23)
 	in := StatusInput{

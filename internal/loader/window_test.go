@@ -257,3 +257,52 @@ func TestLineBuffer_SetTokensRespectsWindowedStartLine(t *testing.T) {
 		t.Errorf("SetTokens did not propagate to resident line: %+v", out[0].Tokens)
 	}
 }
+
+// TestLineBuffer_ClearWrapCaches verifies the wrap-cache invalidation
+// contract used by the UI's Ctrl-W toggle (T100c) and future
+// width-change handlers. Seeds [source.Line.Wrapped] on every resident
+// line via direct field access (same package), then confirms
+// [LineBuffer.ClearWrapCaches] resets every entry to nil. Living in
+// the loader package means we don't have to expose a test-only
+// SeedWrapped affordance on the production [LineBuffer] API
+// (Copilot review PR#13 #2).
+func TestLineBuffer_ClearWrapCaches(t *testing.T) {
+	src := &fakeSource{body: repeatLines(8, "alpha beta gamma"), kind: source.KindText}
+	s, err := Open(context.Background(), src, Config{})
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	collectChunks(t, s)
+	buf := s.Buffer
+	if buf == nil {
+		t.Fatal("expected non-nil Buffer")
+	}
+	// Seed Wrapped on every resident line via direct field access.
+	buf.mu.Lock()
+	if len(buf.lines) == 0 {
+		buf.mu.Unlock()
+		t.Fatal("buffer is empty; can't seed wrap caches")
+	}
+	for i := range buf.lines {
+		buf.lines[i].Wrapped = []string{"cached"}
+	}
+	buf.mu.Unlock()
+
+	buf.ClearWrapCaches()
+
+	buf.mu.Lock()
+	defer buf.mu.Unlock()
+	for i, l := range buf.lines {
+		if l.Wrapped != nil {
+			t.Errorf("line %d Wrapped not cleared: %#v", i, l.Wrapped)
+		}
+	}
+}
+
+// TestLineBuffer_ClearWrapCachesEmpty exercises the no-op path: an
+// empty buffer must not panic when the toggle handler invokes
+// ClearWrapCaches before the first chunk lands.
+func TestLineBuffer_ClearWrapCachesEmpty(t *testing.T) {
+	buf := newLineBuffer(0, 0, 0, nil)
+	buf.ClearWrapCaches() // must not panic.
+}

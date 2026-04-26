@@ -106,23 +106,69 @@ func StatusBarRender(in StatusInput, theme Theme) string {
 //
 //	" <name> | <totals> | Line <current> | <advisory> "
 //
+// The result is exactly `width` columns: shorter renders are
+// right-padded with spaces; longer renders are degraded — first by
+// dropping the advisory, then by truncating the basename — until they
+// fit, so the footer never overflows into a second visual row
+// (Copilot review PR#13 #1).
+//
 // Trailing/leading single-space padding keeps the lipgloss background
 // off the very edge of the terminal so the bar reads as a contiguous
 // strip rather than text against the cell border.
 func renderFull(in StatusInput, theme Theme, width int) string {
-	var parts []string
-	parts = append(parts, in.DisplayName)
-	parts = append(parts, totalsSegment(in))
-	parts = append(parts, currentSegment(in))
-	if in.Advisory != "" {
-		parts = append(parts, in.Advisory)
+	line := buildFullLine(in.DisplayName, totalsSegment(in), currentSegment(in), in.Advisory)
+	if lipgloss.Width(line) > width {
+		// Drop the advisory first — it's the lowest-priority chunk and
+		// dropping the whole segment is cleaner than truncating mid-word.
+		line = buildFullLine(in.DisplayName, totalsSegment(in), currentSegment(in), "")
 	}
-	line := " " + strings.Join(parts, " | ") + " "
+	if lipgloss.Width(line) > width {
+		// Still over budget: shorten the display name (its prefix is
+		// most likely a long path the upstream filepath.Base already
+		// trimmed once, so we trim runes from the END to preserve the
+		// leading filename rather than its extension).
+		shortened := truncateToWidth(in.DisplayName, maxNameWidth(width, totalsSegment(in), currentSegment(in)))
+		line = buildFullLine(shortened, totalsSegment(in), currentSegment(in), "")
+	}
+	if lipgloss.Width(line) > width {
+		// Pathological: even the bare " <… | totals | line> " doesn't
+		// fit. Truncate the whole line to width so we don't overflow.
+		line = truncateToWidth(line, width)
+	}
 	line = padToWidth(line, width)
 	if in.Mono {
 		return line
 	}
 	return theme.Footer.Render(line)
+}
+
+// buildFullLine assembles the wide-mode status line with the supplied
+// segments. Empty segments are dropped so trailing " | " separators
+// never appear (e.g. when the advisory is empty).
+func buildFullLine(name, totals, current, advisory string) string {
+	parts := make([]string, 0, 4)
+	parts = append(parts, name)
+	parts = append(parts, totals)
+	parts = append(parts, current)
+	if advisory != "" {
+		parts = append(parts, advisory)
+	}
+	return " " + strings.Join(parts, " | ") + " "
+}
+
+// maxNameWidth returns the column budget left for the display name
+// once the totals + current segments and the " | " separators + the
+// leading/trailing padding spaces are accounted for. Used by
+// [renderFull]'s name-truncation fallback.
+func maxNameWidth(width int, totals, current string) int {
+	// Layout: " <name> | <totals> | <current> "
+	// Fixed cost: leading space, " | <totals>", " | <current>", trailing space.
+	fixed := 1 + len(" | ") + lipgloss.Width(totals) + len(" | ") + lipgloss.Width(current) + 1
+	budget := width - fixed
+	if budget < 1 {
+		return 1
+	}
+	return budget
 }
 
 // renderCollapsed builds the narrow-mode status line:

@@ -653,27 +653,26 @@ func TestUpdate_ToggleLineNumbersFlipsConfigAndRerenders(t *testing.T) {
 	}
 }
 
-func TestUpdate_ToggleWordWrapFlipsConfigAndInvalidatesWrapCache(t *testing.T) {
+func TestUpdate_ToggleWordWrapFlipsConfigAndRerenders(t *testing.T) {
+	// The wrap-cache invalidation contract itself (ClearWrapCaches
+	// resets Line.Wrapped on every resident line) is exercised in
+	// internal/loader/window_test.go where the test can poke private
+	// buffer fields directly. Here we just verify that the toggle
+	// path flips the config flag and triggers a fresh render frame
+	// (Copilot review PR#13 #2 — no test-only affordance leaked into
+	// the production LineBuffer API).
 	body := strings.Repeat("alpha beta gamma delta epsilon zeta eta theta iota\n", 20)
 	m := newTestModel(t, body)
 	m, _ = applyResize(m, 40, 24)
-	// Pre-seed Wrapped on every line so we can verify invalidation.
-	if m.stream != nil && m.stream.Buffer != nil {
-		m.stream.Buffer.SeedWrappedForTest([]string{"cached"})
-	}
 	before := m.cfg.WordWrap
+	beforeView := m.viewport.View()
 	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyCtrlW})
 	mm := updated.(Model)
 	if mm.cfg.WordWrap == before {
 		t.Errorf("ActionToggleWordWrap did not flip cfg.WordWrap (still %v)", before)
 	}
-	if mm.stream != nil && mm.stream.Buffer != nil {
-		lines := mm.stream.Buffer.Slice(0, mm.stream.Buffer.Total())
-		for i, l := range lines {
-			if l.Wrapped != nil {
-				t.Errorf("line %d Wrapped cache not invalidated after wrap toggle: %#v", i, l.Wrapped)
-			}
-		}
+	if mm.viewport.View() == beforeView {
+		t.Errorf("ActionToggleWordWrap did not trigger a re-render (view unchanged)")
 	}
 }
 

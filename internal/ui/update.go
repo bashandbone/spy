@@ -67,12 +67,18 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case openResultMsg:
 		return m.onOpenResult(msg)
 	case metaUpdatedMsg:
-		// Render-only signal: the buffer's pinned total has flipped
-		// from -1 to the final count, so re-paint so the footer drops
-		// the "…" indicator.
-		if m.renderer != nil {
-			m.viewport.SetContent(m.renderer.Render(m.renderContext()))
-		}
+		// True no-op handler: the model state that drives the footer
+		// (m.streaming, the buffer's pinned Total) has already been
+		// mutated by [onChunk] / [streamDoneMsg] before metaUpdatedMsg
+		// arrives, and Bubble Tea's runtime re-invokes [View] after
+		// every Update, so the footer flips from "…" to the final
+		// count automatically. Re-running [Renderer.Render] +
+		// [viewport.SetContent] here would double the EOF render work
+		// (Copilot review PR#13 #3) and contradict the task spec's
+		// "without re-rendering everything" promise. The message
+		// remains as a forward-compatible signaling integration point
+		// for future consumers that need to react to total-finalized
+		// transitions.
 		return m, nil
 	}
 	return m, nil
