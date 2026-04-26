@@ -80,6 +80,14 @@ type Dependencies struct {
 	// Empty for non-code kinds; populated by `internal/ui` from
 	// [source.Metadata.Language] before constructing the renderer.
 	Language string
+
+	// Source is the active [source.Source] for the session. The image
+	// renderer re-opens it at render time (per research R2) so large
+	// GIFs don't pin a decoded copy in memory; the PDF renderer reads
+	// it for text extraction. Foundational text/code/markdown
+	// renderers ignore the field and pull lines from the loader's
+	// LineBuffer instead.
+	Source source.Source
 }
 
 // ForKind picks a [Renderer] for the supplied [source.Kind]. Unknown /
@@ -95,9 +103,9 @@ func ForKind(k source.Kind, deps Dependencies) Renderer {
 	case source.KindMarkdown:
 		return newMarkdownRenderer(deps)
 	case source.KindPDF:
-		return &stubRenderer{name: "PDF", pending: "US4 (T081)"}
+		return newPDFRenderer(deps, deps.Source)
 	case source.KindImage:
-		return &stubRenderer{name: "Image", pending: "US4 (T080)"}
+		return newImageRenderer(deps, deps.Source)
 	case source.KindBinary:
 		return &binaryRenderer{deps: deps}
 	default:

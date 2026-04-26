@@ -33,3 +33,28 @@ precedence = "aggregate"
 SPDX-FileCopyrightText = "2026 Adam Poulemanos"
 SPDX-License-Identifier = "MIT OR Apache-2.0"
 
+# Graphics encoder golden testdata + the deterministic input PNG.
+# Binary fixtures with no native comment syntax — tracked here.
+[[annotations]]
+path = [
+  "internal/graphics/testdata/*.bin",
+  "internal/graphics/testdata/*.png",
+]
+precedence = "aggregate"
+SPDX-FileCopyrightText = "2026 Adam Poulemanos"
+SPDX-License-Identifier = "MIT OR Apache-2.0"
+
+# PDF test fixtures. Both files are generated locally by a small Go
+# program that emits a deterministic minimal-valid PDF carrying the
+# sentinel string "Dummy PDF file" — multi-page.pdf is the same
+# document merged 3× via pdfcpu's API. No third-party provenance.
+[[annotations]]
+path = [
+  "tests/e2e/fixtures/dummy.pdf",
+  "tests/e2e/fixtures/multi-page.pdf",
+]
+precedence = "aggregate"
+SPDX-FileCopyrightText = "2026 Adam Poulemanos"
+SPDX-License-Identifier = "MIT OR Apache-2.0"
+
+

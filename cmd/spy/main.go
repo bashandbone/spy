@@ -112,8 +112,6 @@ func run(args []string) int {
 	// drive the runtime cleanup defer chain. "auto" / "" leaves the
 	// auto-detected protocol alone (Copilot review PR#7 #1).
 	caps.Graphics = applyGraphicsOverride(caps.Graphics, cfg.Graphics)
-	cleanupGraphics := graphics.CleanupFunc(caps.Graphics)
-	defer cleanupGraphics()
 
 	// 3. Pick source. FromArgs honours file paths; "-" / stdin
 	//    construction is deferred to US5 so we surface ErrNoInput here
@@ -127,10 +125,21 @@ func run(args []string) int {
 	// Non-TTY stdout falls back to degenerate-cat (verbatim copy, exit
 	// 0) per contracts/cli.md "Stdout / stderr / exit codes". exit 5
 	// is reserved for explicitly TTY-required paths (Copilot review
-	// PR#7 #29).
+	// PR#7 #29). The graphics cleanup defer is deliberately registered
+	// AFTER this branch — on the non-TTY path no graphics escapes were
+	// emitted (the runDegenerate copier just streams bytes), so firing
+	// the cleanup escape would pollute stdout (Phase 6 US4: the Kitty
+	// "delete all images" sequence is a real protocol message that
+	// shows up as garbage when piped).
 	if !caps.IsTTY {
 		return runDegenerate(src)
 	}
+
+	// 3a. Now that we know the TUI will actually start, register the
+	//     graphics cleanup defer so it fires on tea.Quit, on SIGINT,
+	//     AND on panic (research R10).
+	cleanupGraphics := graphics.CleanupFunc(caps.Graphics)
+	defer cleanupGraphics()
 
 	// 4. Open the loader stream.
 	ctx, cancel := context.WithCancel(context.Background())
