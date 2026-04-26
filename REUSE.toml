@@ -44,14 +44,17 @@ precedence = "aggregate"
 SPDX-FileCopyrightText = "2026 Adam Poulemanos"
 SPDX-License-Identifier = "MIT OR Apache-2.0"
 
-# PDF test fixtures. Both files are generated locally by a small Go
+# PDF + image test fixtures. PDFs: generated locally by a small Go
 # program that emits a deterministic minimal-valid PDF carrying the
 # sentinel string "Dummy PDF file" — multi-page.pdf is the same
 # document merged 3× via pdfcpu's API. No third-party provenance.
+# Image: small.png is a copy of internal/graphics/testdata/kitty_input.png
+# (the deterministic 16×16 gradient PNG used by the encoder goldens).
 [[annotations]]
 path = [
-  "tests/e2e/fixtures/dummy.pdf",
-  "tests/e2e/fixtures/multi-page.pdf",
+  "tests/fixtures/pdf/dummy.pdf",
+  "tests/fixtures/pdf/multi-page.pdf",
+  "tests/fixtures/img/small.png",
 ]
 precedence = "aggregate"
 SPDX-FileCopyrightText = "2026 Adam Poulemanos"

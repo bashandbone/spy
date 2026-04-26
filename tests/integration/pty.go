@@ -86,6 +86,99 @@ func NewPTYProgram(t *testing.T, args []string, env map[string]string) *PTYProgr
 	return NewPTYProgramOpts(t, args, env, PTYOptions{})
 }
 
+// NewPTYProgramWithStdin spawns spy with stdin attached to the
+// returned `stdin` pipe and stdout/stderr attached to a PTY. Tests
+// for the US5 stdin-piping path use this to simulate the contract
+// `cat file.go | spy` (stdin: non-TTY pipe; stdout: TTY).
+//
+// The caller writes input bytes into `stdin` and closes it to signal
+// EOF (so spy's loader sees end-of-stream and the streaming "…"
+// indicator collapses to the final line count). The PTY remains the
+// caller's window onto the alt-screen frames.
+//
+// `t.Cleanup` closes both PTY and stdin pipe at end of test.
+func NewPTYProgramWithStdin(t *testing.T, args []string, env map[string]string, opts PTYOptions) (p *PTYProgram, stdin *os.File) {
+	t.Helper()
+	if runtime.GOOS == "windows" {
+		t.Skip("PTY harness requires a Unix-like OS (creack/pty does not provide ConPTY parity)")
+	}
+	bin := opts.BinaryPath
+	if bin == "" {
+		bin = buildBinary(t)
+	}
+	cwd := opts.CWD
+	if cwd == "" {
+		cwd = t.TempDir()
+	}
+	cols := opts.Cols
+	if cols == 0 {
+		cols = 80
+	}
+	rows := opts.Rows
+	if rows == 0 {
+		rows = 24
+	}
+
+	master, slave, err := pty.Open()
+	if err != nil {
+		t.Fatalf("pty.Open: %v", err)
+	}
+	if err := pty.Setsize(master, &pty.Winsize{Cols: cols, Rows: rows}); err != nil {
+		_ = master.Close()
+		_ = slave.Close()
+		t.Fatalf("pty.Setsize: %v", err)
+	}
+
+	stdinR, stdinW, err := os.Pipe()
+	if err != nil {
+		_ = master.Close()
+		_ = slave.Close()
+		t.Fatalf("os.Pipe: %v", err)
+	}
+
+	cmd := exec.Command(bin, args...)
+	cmd.Dir = cwd
+	cmd.Env = mergeEnv(env)
+	cmd.Stdin = stdinR
+	cmd.Stdout = slave
+	cmd.Stderr = slave
+	// Make the PTY slave the controlling terminal of the spawned
+	// process — without Setsid+Setctty, golang.org/x/term.IsTerminal(1)
+	// returns true on the slave fd but Bubble Tea's renderer fails to
+	// install signal handlers and key parsing. With these set the
+	// child's session leader is the new pgid and the slave at fd 1
+	// (cmd.Stdout) is its controlling tty.
+	//
+	// Ctty: 1 — the slave is at cmd.Stdout (child fd 1), not stdin
+	// (which we routed to a pipe for the test input). Without an
+	// explicit Ctty index Setctty defaults to fd 0 and ioctl fails
+	// with "inappropriate ioctl for device" because the pipe isn't
+	// a tty.
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true, Setctty: true, Ctty: 1}
+
+	if err := cmd.Start(); err != nil {
+		_ = master.Close()
+		_ = slave.Close()
+		_ = stdinR.Close()
+		_ = stdinW.Close()
+		t.Fatalf("cmd.Start: %v", err)
+	}
+	// Close our copies of the slave and stdin-read ends — only the
+	// child holds them past this point.
+	_ = slave.Close()
+	_ = stdinR.Close()
+
+	p = &PTYProgram{t: t, cmd: cmd, pty: master}
+	if !opts.SkipCleanup {
+		t.Cleanup(func() {
+			_ = stdinW.Close()
+			_ = p.Close()
+		})
+	}
+	go p.drain()
+	return p, stdinW
+}
+
 // NewPTYProgramOpts is the option-bearing form of [NewPTYProgram].
 func NewPTYProgramOpts(t *testing.T, args []string, env map[string]string, opts PTYOptions) *PTYProgram {
 	t.Helper()

@@ -85,7 +85,15 @@ type StatusInput struct {
 // always single-line and exactly [StatusInput.Width] columns wide
 // (padded right). Below [StatusBarMinWidth] columns the format
 // collapses to `<short-name> · L<current>`.
+//
+// The user-controlled string fields (DisplayName, Advisory) are
+// funnelled through [Neutralize] at the entry point so embedded
+// `\x1b` / `\x9b` bytes from a hostile filename or upstream loader
+// warning cannot drive terminal protocols. Acceptance review C4.
 func StatusBarRender(in StatusInput, theme Theme) string {
+	in.DisplayName = Neutralize(in.DisplayName)
+	in.Advisory = Neutralize(in.Advisory)
+
 	width := in.Width
 	if width <= 0 {
 		width = in.Viewport.Width

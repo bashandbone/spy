@@ -120,13 +120,19 @@ func glamourStyleForTheme(theme Theme) string {
 
 // assembleRaw joins the raw line content with newlines so Glamour sees
 // the document as one Markdown blob.
+//
+// Each line is funnelled through [Neutralize] before concatenation:
+// Glamour's goldmark backend does not strip `\x1b` / `\x9b` bytes
+// from non-code-block content, so a markdown file with an embedded
+// OSC sequence (e.g. ` <!-- \x1b]2;evil\x07 --> `) would otherwise
+// reach the terminal verbatim. Acceptance review C4.
 func assembleRaw(lines []source.Line) string {
 	var b strings.Builder
 	for i, l := range lines {
 		if i > 0 {
 			b.WriteByte('\n')
 		}
-		b.WriteString(l.Raw)
+		b.WriteString(Neutralize(l.Raw))
 	}
 	b.WriteByte('\n')
 	return b.String()

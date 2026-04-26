@@ -43,6 +43,15 @@ jobs:
       - name: make test-race
         run: make test-race
 
+      - name: tests/perf PR-gate (default tier)
+        # The perf benches under tests/perf/ enforce the SC-001..SC-008
+        # PR-gate budgets (first frame, scroll p95, search ≤500ms,
+        # theme swap, dismiss latency, etc.). The heavier nightly tier
+        # is gated by `-tags perf` and runs in nightly-perf.yml; this
+        # step covers the default-tag tests so a regression in the
+        # PR-gate budgets doesn't slip past PR review.
+        run: go test -count=1 -timeout 120s ./tests/perf/...
+
       - name: make cover (merged default + fitz)
         run: make cover
 

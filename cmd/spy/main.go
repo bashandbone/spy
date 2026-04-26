@@ -10,7 +10,9 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/signal"
 	"strings"
+	"syscall"
 
 	tea "github.com/charmbracelet/bubbletea"
 
@@ -56,7 +58,10 @@ func main() {
 func run(args []string, stdin *os.File) int {
 	pf, err := ParseFlags(args)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "spy: %v\n", err)
+		// Flag parse errors can include the user's argv verbatim
+		// (e.g. "unknown flag: --\x1b]2;evil\x07"). Sanitise before
+		// stderr — acceptance review C4.
+		fmt.Fprintf(os.Stderr, "spy: %s\n", render.Neutralize(err.Error()))
 		return exitUsageError
 	}
 	if pf.Help {
@@ -101,13 +106,17 @@ func run(args []string, stdin *os.File) int {
 		FlagHighlightCap:   pf.HighlightCap, // *int64; nil when unset, &0 disables
 	})
 	for _, w := range warnings {
+		// Config warnings can quote user-supplied TOML key/value text
+		// (e.g. "unknown key 'foo\x1b]2;evil\x07' in [keys]").
+		// Sanitise before stderr — acceptance review C4.
+		safeW := render.Neutralize(w.Error())
 		if errors.Is(w, config.ErrConfigNotFound) {
-			fmt.Fprintf(os.Stderr, "spy: %v\n", w)
+			fmt.Fprintf(os.Stderr, "spy: %s\n", safeW)
 			return exitUsageError
 		}
 		// Soft warnings (unknown key, type mismatch) go to stderr but
 		// don't abort.
-		fmt.Fprintf(os.Stderr, "spy: %v\n", w)
+		fmt.Fprintf(os.Stderr, "spy: %s\n", safeW)
 	}
 	if pf.NoColor {
 		cfg.NoColor = true
@@ -175,7 +184,10 @@ func run(args []string, stdin *os.File) int {
 	if len(cfg.Keys) > 0 {
 		mergedKM, kerrs := keys.ApplyOverrides(baseKeyMap, cfg.Keys)
 		for _, e := range kerrs {
-			fmt.Fprintf(os.Stderr, "spy: %v\n", e)
+			// Keymap-override errors quote user-supplied action /
+			// key strings from cfg.Keys. Sanitise before stderr —
+			// acceptance review C4.
+			fmt.Fprintf(os.Stderr, "spy: %s\n", render.Neutralize(e.Error()))
 		}
 		baseKeyMap = mergedKM
 	}
@@ -201,24 +213,117 @@ func run(args []string, stdin *os.File) int {
 		Cancel:       cancel,
 	})
 
+	// Install our own SIGINT/SIGTERM handler BEFORE tea.NewProgram so
+	// we can return the documented exit codes (130 for SIGINT, 143
+	// for SIGTERM per contracts/cli.md). Without
+	// tea.WithoutSignalHandler, Bubble Tea's internal handler catches
+	// SIGINT and converts to tea.Quit — prog.Run then returns nil
+	// (or a generic error) and we'd exit 0/1 instead of 130. SIGTERM
+	// receives no special handling from Bubble Tea v1, but the
+	// process would still exit 0 because tea.Quit short-circuits
+	// before the signal can terminate the process.
+	//
+	// signal.Notify also suppresses Go's default signal behavior, so
+	// the program won't be torn down before our deferred
+	// term.Restore + graphics.CleanupFunc chain fires.
+	sigCh := make(chan os.Signal, 1)
+	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
+	defer signal.Stop(sigCh)
+
 	// US1 enables MouseCellMotion so future search-prompt UI can react to
 	// click-to-scroll. Bubble Tea handles SIGWINCH internally via its
 	// terminal-renderer goroutine, so no extra option is required.
-	prog := tea.NewProgram(model, tea.WithAltScreen(), tea.WithMouseCellMotion())
+	prog := tea.NewProgram(model,
+		tea.WithAltScreen(),
+		tea.WithMouseCellMotion(),
+		tea.WithoutSignalHandler(),
+	)
+
+	// Goroutine: when a signal arrives, translate it to tea.Quit so
+	// the alt-screen exit and graphics cleanup escapes still fire via
+	// Bubble Tea's normal teardown. The signal value is stashed in
+	// `caught` so the post-Run path can decide between exit-on-signal
+	// (128+signum) and exit-on-clean-quit (exitOK).
+	//
+	// `caught` is buffered (cap 1) so the send never blocks. A
+	// separate `done` channel lets the forwarding goroutine exit
+	// cleanly when run() returns without receiving a signal —
+	// `signal.Stop(sigCh)` unregisters delivery but does not close
+	// sigCh, so a bare `<-sigCh` would leak the goroutine across
+	// every test invocation that exercises run() (Copilot review
+	// PR#15 #8).
+	caught := make(chan os.Signal, 1)
+	done := make(chan struct{})
+	defer close(done)
+	go func() {
+		select {
+		case sig, ok := <-sigCh:
+			if !ok {
+				return
+			}
+			caught <- sig
+			// Send the QuitMsg directly. `tea.Quit` is a Cmd
+			// constructor (a func returning a Msg) — passing it
+			// as `prog.Send(tea.Quit())` would deliver the Cmd
+			// itself as a Msg, which the update loop ignores.
+			// The QuitMsg value is what the renderer's teardown
+			// path watches for.
+			prog.Send(tea.QuitMsg{})
+		case <-done:
+			return
+		}
+	}()
+
 	if _, err := prog.Run(); err != nil {
 		// Cancel the loader so its background goroutine doesn't leak
 		// past the program's error path (Copilot review PR#7 #2).
 		cancel()
-		fmt.Fprintf(os.Stderr, "spy: tea program: %v\n", err)
+		// A signal that fired DURING Run still wins — return
+		// 128+signum so the caller sees the documented exit code
+		// even if Bubble Tea's teardown surfaced an error.
+		if sig := drainCaughtSignal(caught); sig != 0 {
+			return 128 + int(sig)
+		}
+		// Bubble Tea errors aren't ordinarily user-controlled, but a
+		// rendering error chain can wrap upstream string content
+		// (e.g. file path in a renderer-init failure). Sanitise
+		// defensively — acceptance review C4.
+		fmt.Fprintf(os.Stderr, "spy: tea program: %s\n", render.Neutralize(err.Error()))
 		return exitGenericError
 	}
+
+	// Clean tea.Run exit. If a signal triggered it, return the
+	// matching exit code; otherwise the user pressed q/esc and we
+	// return exitOK.
+	if sig := drainCaughtSignal(caught); sig != 0 {
+		return 128 + int(sig)
+	}
 	return exitOK
+}
+
+// drainCaughtSignal returns the signal number received on `caught`
+// without blocking, or 0 if the channel is empty. Exit codes per
+// `contracts/cli.md`: SIGINT (signal 2) → 130; SIGTERM (signal 15)
+// → 143.
+func drainCaughtSignal(caught <-chan os.Signal) syscall.Signal {
+	select {
+	case sig := <-caught:
+		if s, ok := sig.(syscall.Signal); ok {
+			return s
+		}
+	default:
+	}
+	return 0
 }
 
 // runDegenerate is the contracts/cli.md "stdout (non-TTY)" path:
 // open the source and stream its bytes verbatim to stdout, exit 0.
 // No alt-screen, no rendering, no graphics — `spy file.go > out.txt`
 // behaves like `cat file.go > out.txt`.
+//
+// The DisplayName passed to exitForSourceError is already sanitised
+// inside that helper. The error is sanitised before reaching stderr.
+// Acceptance review C4.
 func runDegenerate(src source.Source) int {
 	rc, err := src.Open()
 	if err != nil {
@@ -226,7 +331,7 @@ func runDegenerate(src source.Source) int {
 	}
 	defer rc.Close()
 	if _, err := io.Copy(os.Stdout, rc); err != nil {
-		fmt.Fprintf(os.Stderr, "spy: write stdout: %v\n", err)
+		fmt.Fprintf(os.Stderr, "spy: write stdout: %s\n", render.Neutralize(err.Error()))
 		return exitIOError
 	}
 	return exitOK
@@ -279,11 +384,18 @@ func applyGraphicsOverride(detected term.Graphics, override string) term.Graphic
 // exitForSourceError maps a source-layer error to the documented exit
 // code from contracts/cli.md. The stderr line uses the
 // "spy: <reason>: <detail>" format the contract requires.
+//
+// `target` is sanitised through [render.Neutralize] before reaching
+// stderr because it's user-controlled input (the filename arg) and a
+// hostile path containing `\x1b]2;evil\x07` would otherwise drive the
+// terminal title before alt-screen even starts. Same for the wrapped
+// error string. Acceptance review C4.
 func exitForSourceError(err error, args []string) int {
 	target := "<no input>"
 	if len(args) > 0 {
-		target = args[0]
+		target = render.Neutralize(args[0])
 	}
+	safeErr := render.Neutralize(err.Error())
 	switch {
 	case errors.Is(err, source.ErrNoInput):
 		// US5 turned StdinSource on: ErrNoInput now reflects the
@@ -298,7 +410,7 @@ func exitForSourceError(err error, args []string) int {
 	case errors.Is(err, source.ErrAmbiguousArgs):
 		// `-` alongside FILE, or multiple FILEs — the contract row
 		// "present yes — yes" is a usage error mapped to exit 2.
-		fmt.Fprintf(os.Stderr, "spy: usage: %v\n", err)
+		fmt.Fprintf(os.Stderr, "spy: usage: %s\n", safeErr)
 		return exitUsageError
 	case errors.Is(err, source.ErrNotFound):
 		fmt.Fprintf(os.Stderr, "spy: cannot open: %s: not found\n", target)
@@ -310,10 +422,10 @@ func exitForSourceError(err error, args []string) int {
 		fmt.Fprintf(os.Stderr, "spy: binary file: %s: refusing to render binary content\n", target)
 		return exitUnsupported
 	case errors.Is(err, source.ErrUnsupported):
-		fmt.Fprintf(os.Stderr, "spy: unsupported format: %s: %v\n", target, err)
+		fmt.Fprintf(os.Stderr, "spy: unsupported format: %s: %s\n", target, safeErr)
 		return exitUnsupported
 	}
-	fmt.Fprintf(os.Stderr, "spy: %v\n", err)
+	fmt.Fprintf(os.Stderr, "spy: %s\n", safeErr)
 	return exitGenericError
 }
 
