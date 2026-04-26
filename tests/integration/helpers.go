@@ -6,11 +6,49 @@ package integration
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/knitli/spy/internal/loader"
 )
+
+// DrainStreamErrs reads the loader stream's error channel to EOF and
+// fails the test (via t.Fatalf) on any error that is NOT a documented
+// warning sentinel. Warning-class errors (ErrLineTruncated,
+// ErrStdinNonSeekable) accumulate in the returned slice so the caller
+// can inspect them — but they don't fail the test.
+//
+// Tests that consume stream.Errs from internal/loader should funnel
+// through here rather than spinning a `for range stream.Errs {}` that
+// silently discards fatal load errors. A perf gate that records
+// timings against a half-loaded stream is a false-green; a regression
+// test that asserts on rendered content from a partial buffer is a
+// false-positive. Both are caught by funneling here.
+func DrainStreamErrs(t *testing.T, errs <-chan error) []error {
+	t.Helper()
+	var warnings []error
+	for err := range errs {
+		if err == nil {
+			continue
+		}
+		if isLoaderWarning(err) {
+			warnings = append(warnings, err)
+			continue
+		}
+		t.Fatalf("loader stream emitted fatal error: %v", err)
+	}
+	return warnings
+}
+
+// isLoaderWarning reports whether `err` is one of the documented
+// non-fatal warning sentinels emitted on [loader.Stream.Errs].
+func isLoaderWarning(err error) bool {
+	return errors.Is(err, loader.ErrLineTruncated) ||
+		errors.Is(err, loader.ErrStdinNonSeekable)
+}
 
 // ReadGolden reads the golden file at the given relative path under
 // tests/integration/golden/ and returns its bytes. Fails the test if

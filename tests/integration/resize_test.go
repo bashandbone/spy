@@ -53,8 +53,7 @@ func TestResize_PreservesViewportAnchor(t *testing.T) {
 	}
 	for range stream.Updates {
 	}
-	for range stream.Errs {
-	}
+	DrainStreamErrs(t, stream.Errs)
 
 	cfg := config.Defaults()
 	cfg.WordWrap = true

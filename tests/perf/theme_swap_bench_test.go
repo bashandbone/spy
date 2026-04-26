@@ -24,6 +24,7 @@ import (
 	"github.com/knitli/spy/internal/source"
 	"github.com/knitli/spy/internal/term"
 	"github.com/knitli/spy/internal/ui"
+	"github.com/knitli/spy/tests/integration"
 )
 
 // memSource adapts a string body into a [source.Source]. Used by the
@@ -97,8 +98,7 @@ func measureThemeSwap(t *testing.T, lines int, limit time.Duration, failOnBudget
 	// timing — we want to measure pure re-render, not load latency.
 	for range stream.Updates {
 	}
-	for range stream.Errs {
-	}
+	integration.DrainStreamErrs(t, stream.Errs)
 
 	cfg := config.Defaults()
 	caps := term.Capabilities{Cols: 100, Rows: 30}

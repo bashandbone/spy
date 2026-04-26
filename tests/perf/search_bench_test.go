@@ -15,6 +15,7 @@ import (
 	"github.com/knitli/spy/internal/loader"
 	"github.com/knitli/spy/internal/search"
 	"github.com/knitli/spy/internal/source"
+	"github.com/knitli/spy/tests/integration"
 )
 
 // osOpenAppend is a tiny shim so the helper above doesn't pull os
@@ -47,8 +48,7 @@ func TestSearch_Under500ms(t *testing.T) {
 	// buffer, mirroring the steady-state case the user experiences.
 	for range stream.Updates {
 	}
-	for range stream.Errs {
-	}
+	integration.DrainStreamErrs(t, stream.Errs)
 
 	matcher, err := search.Compile(needle, false, search.CaseSmart)
 	if err != nil {
@@ -76,15 +76,14 @@ func TestSearch_Under500ms(t *testing.T) {
 }
 
 // writeSyntheticFileWithNeedle is [writeSyntheticFile] with the
-// needle embedded once on a line near the tail of the file. The
-// fixture remains close to `targetBytes` total — the needle line
-// replaces one of the synthetic stride-256 lines rather than being
-// appended on top.
+// `needle` appended on its own line at EOF. The resulting file is
+// `targetBytes + len(needle) + 1` bytes — slightly above the nominal
+// target — which is fine for the SC-003 measurement (the budget is
+// against the file as scanned, and the few extra bytes don't shift
+// the scaling-curve regression signal).
 func writeSyntheticFileWithNeedle(t *testing.T, targetBytes, lineBytes int, needle string) string {
 	t.Helper()
 	path := writeSyntheticFile(t, targetBytes, lineBytes)
-	// Append the needle on its own line at EOF. Search.Scan will see
-	// it as the last (or near-last) match.
 	f, err := osOpenAppend(path)
 	if err != nil {
 		t.Fatalf("open for append: %v", err)

@@ -15,6 +15,7 @@ import (
 
 	"github.com/knitli/spy/internal/loader"
 	"github.com/knitli/spy/internal/source"
+	"github.com/knitli/spy/tests/integration"
 )
 
 // TestLargeFile_PRGate is the SC-005 PR-gate budget: load a 200 MiB
@@ -48,8 +49,7 @@ func TestLargeFile_PRGate(t *testing.T) {
 	}
 	for range stream.Updates {
 	}
-	for range stream.Errs {
-	}
+	integration.DrainStreamErrs(t, stream.Errs)
 
 	rssAfter := residentBytes(t)
 	delta := rssAfter - rssBefore

@@ -12,6 +12,7 @@ import (
 
 	"github.com/knitli/spy/internal/loader"
 	"github.com/knitli/spy/internal/source"
+	"github.com/knitli/spy/tests/integration"
 )
 
 // TestLargeFile_Nightly is the SC-005 1 GiB / 500 MiB heavyweight case
@@ -42,8 +43,7 @@ func TestLargeFile_Nightly(t *testing.T) {
 	}
 	for range stream.Updates {
 	}
-	for range stream.Errs {
-	}
+	integration.DrainStreamErrs(t, stream.Errs)
 
 	rssAfter := residentBytes(t)
 	delta := rssAfter - rssBefore

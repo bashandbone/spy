@@ -20,6 +20,7 @@ import (
 	"github.com/knitli/spy/internal/source"
 	"github.com/knitli/spy/internal/term"
 	"github.com/knitli/spy/internal/ui"
+	"github.com/knitli/spy/tests/integration"
 
 	tea "github.com/charmbracelet/bubbletea"
 )
@@ -67,8 +68,7 @@ func TestFirstFrame_Under100ms(t *testing.T) {
 		// Drain background goroutine.
 		for range stream.Updates {
 		}
-		for range stream.Errs {
-		}
+		integration.DrainStreamErrs(t, stream.Errs)
 	}
 
 	// First-frame is a per-launch experience, not a steady-state

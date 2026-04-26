@@ -134,11 +134,15 @@ func TestHighlightCorpus_LinguistTop50(t *testing.T) {
 
 	// Hard gate: pass-rate. We scale the threshold to whatever's
 	// actually present so partial corpora still gate against
-	// regressions. With the full 50 fixtures the threshold is 47.
+	// regressions. With the full 50 fixtures the threshold is 47
+	// (≥ 94%). For smaller corpora, scale via ceiling division so
+	// the requirement stays at or above 94% — integer flooring would
+	// allow 46/49 to pass when 94% of 49 is 46.06.
 	wantPass := passThreshold
 	if len(results) < totalRequired {
-		// 94 % of whatever's in the corpus.
-		wantPass = (len(results) * passThreshold) / totalRequired
+		// ceil(len(results) * passThreshold / totalRequired).
+		num := len(results) * passThreshold
+		wantPass = (num + totalRequired - 1) / totalRequired
 		if wantPass < 1 {
 			wantPass = len(results)
 		}

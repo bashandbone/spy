@@ -161,14 +161,17 @@ func (p *PTYProgram) Snapshot() []byte {
 // consumed; use [PTYProgram.Snapshot] / [PTYProgram.Read] afterwards.
 func (p *PTYProgram) WaitFor(needle string, timeout time.Duration) bool {
 	p.t.Helper()
+	// Convert the needle once; bytes.Contains over the precomputed
+	// slice avoids an allocation on every polling iteration.
+	target := []byte(needle)
 	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {
 		p.mu.Lock()
-		if bytes.Contains(p.buf.Bytes(), []byte(needle)) {
-			p.mu.Unlock()
+		hit := bytes.Contains(p.buf.Bytes(), target)
+		p.mu.Unlock()
+		if hit {
 			return true
 		}
-		p.mu.Unlock()
 		time.Sleep(10 * time.Millisecond)
 	}
 	return false
@@ -215,10 +218,14 @@ func (p *PTYProgram) Signal(sig os.Signal) {
 }
 
 // Close tears down the PTY and reaps the process. Idempotent.
+//
+// Returns the first PTY-close error if any; the process kill and
+// drain-reap paths swallow their errors because they're best-effort
+// (the process may already be defunct).
 func (p *PTYProgram) Close() error {
 	var err error
 	p.closeOnce.Do(func() {
-		_ = p.pty.Close()
+		err = p.pty.Close()
 		if p.cmd.Process != nil {
 			_ = p.cmd.Process.Kill()
 		}

@@ -23,6 +23,7 @@ import (
 	"github.com/knitli/spy/internal/source"
 	"github.com/knitli/spy/internal/term"
 	"github.com/knitli/spy/internal/ui"
+	"github.com/knitli/spy/tests/integration"
 )
 
 // TestScroll_60fps enforces SC-002: 100 sequential ScrollDown actions
@@ -42,8 +43,7 @@ func TestScroll_60fps(t *testing.T) {
 	}
 	for range stream.Updates {
 	}
-	for range stream.Errs {
-	}
+	integration.DrainStreamErrs(t, stream.Errs)
 
 	cfg := config.Defaults()
 	caps := term.Capabilities{Cols: 80, Rows: 24}

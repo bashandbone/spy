@@ -43,8 +43,7 @@ func TestEscapeInjection_OSCSequenceNeutralised(t *testing.T) {
 	}
 	for range stream.Updates {
 	}
-	for range stream.Errs {
-	}
+	DrainStreamErrs(t, stream.Errs)
 	cfg := config.Defaults()
 	caps := term.Capabilities{Cols: 80, Rows: 24}
 	hl := highlight.New(nil, term.ColorTrueColor, 5*1024*1024)
