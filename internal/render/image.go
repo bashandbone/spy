@@ -108,30 +108,49 @@ func (r *imageRenderer) RowToLine(_ RenderContext, _ int) int64 { return 0 }
 
 // decode opens the source fresh and decodes via the standard image
 // decoders. The decoders are registered via blank imports above.
-func (r *imageRenderer) decode() (image.Image, error) {
-	rc, err := r.src.Open()
-	if err != nil {
-		return nil, fmt.Errorf("open: %w", err)
+//
+// `image.Decode` is the trust boundary for attacker-controlled image
+// bytes. The stdlib PNG/JPEG/GIF decoders are panic-safe in the
+// general case, but third-party `golang.org/x/image/{bmp,webp}`
+// decoders have triggered runtime panics on malformed input
+// historically. The deferred recover here keeps `spy <evil.png>`
+// from tearing down the alt-screen — surfaced as
+// [ErrUnsupportedDecoder] so the metadata-fallback block fires.
+func (r *imageRenderer) decode() (img image.Image, err error) {
+	rc, ferr := r.src.Open()
+	if ferr != nil {
+		return nil, fmt.Errorf("open: %w", ferr)
 	}
 	defer rc.Close()
-	img, _, err := image.Decode(rc)
-	if err != nil {
-		return nil, fmt.Errorf("decode: %w", err)
+	defer func() {
+		if rec := recover(); rec != nil {
+			img = nil
+			err = fmt.Errorf("%w: image decoder panicked: %v", ErrUnsupportedDecoder, rec)
+		}
+	}()
+	im, _, derr := image.Decode(rc)
+	if derr != nil {
+		return nil, fmt.Errorf("decode: %w", derr)
 	}
-	return img, nil
+	return im, nil
 }
 
 // metadataBlock formats the fallback message displayed when graphics
 // are unavailable or decoding fails. The block is deterministic so the
 // integration tests can assert against it without flake.
+//
+// DisplayName, the source path, and the optional `note` all pass
+// through [Neutralize] so an attacker-controlled filename containing
+// OSC payload bytes cannot reach the terminal. Acceptance review C4.
 func (r *imageRenderer) metadataBlock(_ RenderContext, note string) string {
 	if r.src == nil {
 		return "[image: no source attached]\n"
 	}
 	md := r.src.Metadata()
 	dims := r.dimensions()
+	name := Neutralize(r.src.DisplayName())
 	var b strings.Builder
-	fmt.Fprintf(&b, "[image: %s]\n", r.src.DisplayName())
+	fmt.Fprintf(&b, "[image: %s]\n", name)
 	if dims != "" {
 		fmt.Fprintf(&b, "  dimensions: %s\n", dims)
 	}
@@ -139,7 +158,7 @@ func (r *imageRenderer) metadataBlock(_ RenderContext, note string) string {
 		fmt.Fprintf(&b, "  size: %s\n", humanSize(md.Size))
 	}
 	if md.Path != "" && md.Path != r.src.DisplayName() {
-		fmt.Fprintf(&b, "  path: %s\n", md.Path)
+		fmt.Fprintf(&b, "  path: %s\n", Neutralize(md.Path))
 	}
 	// The fallback message branches on whether `note` was set: a
 	// non-empty note means the renderer hit a real processing error
@@ -147,7 +166,7 @@ func (r *imageRenderer) metadataBlock(_ RenderContext, note string) string {
 	// is misleading in that case (Copilot review PR#11 #7).
 	if note != "" {
 		fmt.Fprintf(&b, "  fallback: unable to render inline image\n")
-		fmt.Fprintf(&b, "  note: %s\n", note)
+		fmt.Fprintf(&b, "  note: %s\n", Neutralize(note))
 	} else {
 		fmt.Fprintf(&b, "  fallback: terminal lacks inline-image support\n")
 	}
@@ -157,10 +176,19 @@ func (r *imageRenderer) metadataBlock(_ RenderContext, note string) string {
 // dimensions reads the source bytes once and pulls width / height from
 // the image metadata via [image.DecodeConfig] (cheap — no full
 // rasterization). Returns empty on any error.
-func (r *imageRenderer) dimensions() string {
+//
+// Like [imageRenderer.decode], the deferred recover here keeps a
+// hostile / corrupt blob from tearing down the program — the
+// metadata block falls back to "" dimensions instead of crashing.
+func (r *imageRenderer) dimensions() (s string) {
 	if r.src == nil {
 		return ""
 	}
+	defer func() {
+		if rec := recover(); rec != nil {
+			s = ""
+		}
+	}()
 	rc, err := r.src.Open()
 	if err != nil {
 		return ""

@@ -200,24 +200,9 @@ func visualRowsForFirstLine(view string) int {
 	return rows
 }
 
-// stripANSI removes CSI escape sequences from `s`. Lightweight enough
-// to share between the two helpers above without pulling in regexp.
-func stripANSI(s string) string {
-	var b strings.Builder
-	b.Grow(len(s))
-	for i := 0; i < len(s); i++ {
-		if s[i] == 0x1b && i+1 < len(s) && s[i+1] == '[' {
-			j := i + 2
-			for j < len(s) && s[j] != 'm' && s[j] != 'H' && s[j] != 'J' && s[j] != 'K' {
-				j++
-			}
-			i = j
-			continue
-		}
-		b.WriteByte(s[i])
-	}
-	return b.String()
-}
+// stripANSI is shared with all integration tests; declared in
+// helpers.go so it's available in both default and `-race` builds
+// (this file is gated by `//go:build !race`).
 
 // lastNonEmptyLine returns the last non-empty line of `s` for diag.
 func lastNonEmptyLine(s string) string {

@@ -42,12 +42,12 @@ func (f *fakePDFSource) Metadata() source.Metadata {
 }
 
 // loadFixturePDF reads the W3C dummy PDF (or the merged 3-page variant)
-// shipped under tests/e2e/fixtures/. The file is tracked in git so the
+// shipped under tests/fixtures/pdf/. The file is tracked in git so the
 // unit test runs without a network dep — it's the same fixture the
 // integration suite (T072b) drives via the PTY harness.
 func loadFixturePDF(t *testing.T, name string) []byte {
 	t.Helper()
-	body, err := os.ReadFile(filepath.Join("..", "..", "tests", "e2e", "fixtures", name))
+	body, err := os.ReadFile(filepath.Join("..", "..", "tests", "fixtures", "pdf", name))
 	if err != nil {
 		t.Fatalf("read fixture %s: %v", name, err)
 	}

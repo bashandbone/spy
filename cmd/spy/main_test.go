@@ -5,6 +5,7 @@
 package main
 
 import (
+	"bytes"
 	"io"
 	"os"
 	"path/filepath"
@@ -107,6 +108,53 @@ func TestRun_ExplicitMissingConfigExitsUsage(t *testing.T) {
 	got := run([]string{"--config", filepath.Join(t.TempDir(), "no.toml")}, nil)
 	if got != exitUsageError {
 		t.Errorf("missing --config: got exit %d want %d", got, exitUsageError)
+	}
+}
+
+// TestC4_StderrSanitizesHostileFilename pins the acceptance-review C4
+// contract that user-controlled file paths reach stderr only after
+// passing through render.Neutralize. We construct a path containing
+// the OSC 2 "set window title" payload, drive run() through the
+// missing-file path, and assert stderr carries no `\x1b` / `\x9b`
+// bytes.
+func TestC4_StderrSanitizesHostileFilename(t *testing.T) {
+	hostilePath := "/tmp/evil\x1b]2;injected\x07.txt"
+
+	origStderr := os.Stderr
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("pipe: %v", err)
+	}
+	os.Stderr = w
+	t.Cleanup(func() {
+		os.Stderr = origStderr
+		_ = r.Close()
+	})
+
+	// Reader goroutine drains until EOF so we capture the full
+	// stderr stream — the prior fixed 4 KiB buffer + io.ReadFull
+	// would silently truncate longer error chains and could leak
+	// the FD if the reader blocked waiting for more bytes than
+	// the writer ever produced.
+	done := make(chan []byte, 1)
+	go func() {
+		body, _ := io.ReadAll(r)
+		done <- body
+	}()
+
+	got := run([]string{"--no-config", hostilePath}, nil)
+	w.Close() // signal EOF to the reader so io.ReadAll returns
+
+	// Exit code: the path won't resolve so we expect either ErrNotFound
+	// (exit 3) or an unsupported-format mapping. Either is fine for
+	// this assertion — we only care about the stderr body.
+	if got != exitIOError && got != exitUnsupported {
+		t.Logf("note: hostile-path run exited %d (acceptable: 3 or 4)", got)
+	}
+
+	stderr := <-done
+	if bytes.ContainsAny(stderr, "\x1b\x9b") {
+		t.Errorf("stderr leaked ESC / 8-bit-CSI from hostile filename:\n  %q", stderr)
 	}
 }
 
