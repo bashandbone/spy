@@ -8,6 +8,7 @@ package perf
 
 import (
 	"context"
+	"runtime"
 	"testing"
 
 	"github.com/knitli/spy/internal/loader"
@@ -20,12 +21,6 @@ import (
 // with `RUNNER_OS_RAM_HINT=8192`. Failure files an issue tagged
 // `perf-regression` rather than blocking PRs, so blame attribution
 // stays clear at the nightly cadence.
-//
-// HONESTY NOTE: like TestLargeFile_PRGate, this case currently
-// reports an RSS delta well over the 500 MiB target after the H4
-// switch from HeapInuse to OS-RSS. The strict assertion is held
-// behind https://github.com/bashandbone/spy/issues/21 (loader memory
-// profile fix) — until then this is **advisory** (log-only).
 func TestLargeFile_Nightly(t *testing.T) {
 	const sizeBytes = 1 << 30 // 1 GiB
 	const lineBytes = 256
@@ -52,10 +47,13 @@ func TestLargeFile_Nightly(t *testing.T) {
 	integration.DrainStreamErrs(t, stream.Errs)
 
 	rssAfter, source1 := residentBytes(t)
+	// Keep stream alive so debug.FreeOSMemory() inside residentBytes does
+	// not cause the GC to collect the buffer before the RSS snapshot.
+	runtime.KeepAlive(stream)
 	delta := rssAfter - rssBefore
 	const limitBytes = 500 * 1024 * 1024 // 500 MiB
 	if delta > limitBytes {
-		t.Logf("SC-005 nightly ADVISORY: RSS delta %.1f MiB exceeds %.0f MiB target (measured via %s → %s); see issue #21",
+		t.Errorf("SC-005 nightly: RSS delta %.1f MiB exceeds %.0f MiB budget (measured via %s → %s)",
 			float64(delta)/1024/1024, float64(limitBytes)/1024/1024, source0, source1)
 	} else {
 		t.Logf("SC-005 nightly: RSS delta %.1f MiB (limit %.0f MiB; measured via %s)",

@@ -9,9 +9,32 @@ import (
 	"errors"
 	"io"
 	"sync"
+	"unsafe"
 
 	"github.com/knitli/spy/internal/source"
 )
+
+// storedLine is the compact internal representation kept in b.lines.
+// Storing only Number and Raw (24 bytes) instead of the full
+// source.Line (72 bytes, including two nil-slice headers for Tokens and
+// Wrapped) cuts per-line struct overhead by two thirds. For a 200 MiB
+// file with 256-byte lines this saves ~38 MiB of backing-array memory.
+//
+// Tokens and Wrapped are stored in the LineBuffer's side-channel maps
+// (b.tokens, b.wrapped) keyed by line number; they are nil for the vast
+// majority of lines (only rendered/highlighted lines populate them).
+// Slice() merges the maps back into source.Line on read.
+type storedLine struct {
+	Number int64
+	Raw    string
+}
+
+// storedLineOverheadBytes is the per-line fixed memory cost of storedLine
+// itself (struct layout: int64 + string header). Added to residentBytes
+// accounting so windowing triggers on actual bytes-in-use, not just
+// len(Raw). Computed via unsafe.Sizeof so it stays correct across
+// architectures if the struct layout ever changes.
+var storedLineOverheadBytes = int64(unsafe.Sizeof(storedLine{}))
 
 // LineBuffer is the resident hot region the renderer slices into. Below
 // `maxResidentBytes` it holds every line; above it, the buffer flips to
@@ -24,7 +47,14 @@ import (
 // negligible compared to scan throughput.
 type LineBuffer struct {
 	mu         sync.Mutex
-	lines      []source.Line // index 0 == first resident line
+	lines      []storedLine // index 0 == first resident line; compact repr.
+	// tokens and wrapped are side-channel maps keyed by 1-based line
+	// number. They are nil (zero-allocation) when no line has been
+	// highlighted or word-wrapped, which is the common case during
+	// initial load. Storing them here (rather than in storedLine) is
+	// what lets storedLine stay at 24 bytes.
+	tokens  map[int64][]source.Token
+	wrapped map[int64][]string
 	startLine  int64         // 1-based line number of lines[0]
 	totalLines int64         // last seen total; -1 while streaming
 	// streamStarted flips true on the first [LineBuffer.Append] or
@@ -106,13 +136,33 @@ func newLineBuffer(maxResidentBytes int64, windowSize int, maxLineBytes int64, s
 // `in` slice counts as "the loader is producing", because EOF is
 // reported via MarkComplete and the consumer needs Total() to switch
 // to "0 confirmed" rather than "-1 still unknown".
+//
+// residentBytes now accounts for both the string content (len(l.Raw))
+// AND the per-struct overhead (storedLineOverheadBytes bytes) so
+// the windowing threshold reflects actual bytes-in-use rather than just
+// raw content bytes. Previously only len(l.Raw) was tracked, causing the
+// threshold to fire too late and the RSS to overshoot the budget.
 func (b *LineBuffer) Append(in []source.Line) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	b.streamStarted = true
 	for _, l := range in {
-		b.lines = append(b.lines, l)
-		b.residentBytes += int64(len(l.Raw))
+		b.lines = append(b.lines, storedLine{Number: l.Number, Raw: l.Raw})
+		b.residentBytes += int64(len(l.Raw)) + storedLineOverheadBytes
+		// Preserve any Tokens/Wrapped that the caller may have pre-set
+		// (rare in practice; loader chunks always arrive with nil fields).
+		if l.Tokens != nil {
+			if b.tokens == nil {
+				b.tokens = make(map[int64][]source.Token)
+			}
+			b.tokens[l.Number] = l.Tokens
+		}
+		if l.Wrapped != nil {
+			if b.wrapped == nil {
+				b.wrapped = make(map[int64][]string)
+			}
+			b.wrapped[l.Number] = l.Wrapped
+		}
 	}
 	if b.maxResidentBytes > 0 && b.residentBytes > b.maxResidentBytes {
 		b.windowed = true
@@ -120,12 +170,14 @@ func (b *LineBuffer) Append(in []source.Line) {
 	}
 }
 
-// ClearWrapCaches resets the [source.Line.Wrapped] field on every
-// resident line. The UI's word-wrap toggle (Ctrl-W) and width-change
-// handlers call this so any future per-line wrap caches the renderer
-// stashes on [source.Line.Wrapped] are invalidated when wrap mode or
-// viewport width changes — without that contract, a toggle could
-// surface stale visual rows on the next paint.
+// ClearWrapCaches resets the word-wrap cache for every resident line.
+// The UI's word-wrap toggle (Ctrl-W) and width-change handlers call this
+// so any future per-line wrap caches the renderer stashes are invalidated
+// when wrap mode or viewport width changes — without that contract, a
+// toggle could surface stale visual rows on the next paint.
+//
+// Wrap data is stored in the b.wrapped side-channel map (not in the
+// storedLine struct), so clearing it is simply zeroing the map.
 //
 // As of Phase 8 nothing in the renderer populates Line.Wrapped (the
 // text/code renderers re-wrap from scratch on each frame), so calling
@@ -140,9 +192,7 @@ func (b *LineBuffer) Append(in []source.Line) {
 // renderer slices stay consistent.
 func (b *LineBuffer) ClearWrapCaches() {
 	b.mu.Lock()
-	for i := range b.lines {
-		b.lines[i].Wrapped = nil
-	}
+	b.wrapped = nil
 	b.mu.Unlock()
 }
 
@@ -155,10 +205,13 @@ func (b *LineBuffer) ClearWrapCaches() {
 //
 // Callers (currently `internal/ui`) highlight a freshly-arrived chunk
 // then immediately invoke SetTokens so the buffer's stored copies pick
-// up the tokens. Without this, the buffer's struct-copies retain
+// up the tokens. Without this, the buffer's stored lines retain
 // `Tokens == nil` and the renderer re-lexes on every frame — burning
 // the highlighter's byte cap on each repaint (Copilot review PR#8 #1
 // + #3).
+//
+// Tokens are kept in the b.tokens side-channel map (not in the
+// compact storedLine struct) so line storage stays at 24 bytes/line.
 func (b *LineBuffer) SetTokens(lines []source.Line) {
 	if len(lines) == 0 {
 		return
@@ -173,8 +226,16 @@ func (b *LineBuffer) SetTokens(lines []source.Line) {
 		if in.Number < b.startLine || in.Number >= residentEnd {
 			continue
 		}
-		idx := int(in.Number - b.startLine)
-		b.lines[idx].Tokens = in.Tokens
+		if in.Tokens == nil {
+			if b.tokens != nil {
+				delete(b.tokens, in.Number)
+			}
+		} else {
+			if b.tokens == nil {
+				b.tokens = make(map[int64][]source.Token)
+			}
+			b.tokens[in.Number] = in.Tokens
+		}
 	}
 }
 
@@ -245,6 +306,10 @@ func (b *LineBuffer) ResidentStartLine() int64 {
 //
 // `start` and `end` are 0-based line indices in the source, matching the
 // Slice contract in internal-apis.md.
+//
+// Internally, resident lines are stored as compact [storedLine] values
+// (Number + Raw only). Slice reconstructs full [source.Line] values by
+// merging in any Tokens/Wrapped from the side-channel maps.
 func (b *LineBuffer) Slice(start, end int64) []source.Line {
 	if start < 0 {
 		start = 0
@@ -269,8 +334,7 @@ func (b *LineBuffer) Slice(start, end int64) []source.Line {
 		if to > len(b.lines) {
 			to = len(b.lines)
 		}
-		out := make([]source.Line, to-from)
-		copy(out, b.lines[from:to])
+		out := b.buildLines(from, to)
 		b.mu.Unlock()
 		return out
 	}
@@ -287,8 +351,7 @@ func (b *LineBuffer) Slice(start, end int64) []source.Line {
 		}
 		fromIdx := int(from - residentStart)
 		toIdx := int(to - residentStart)
-		out := make([]source.Line, toIdx-fromIdx)
-		copy(out, b.lines[fromIdx:toIdx])
+		out := b.buildLines(fromIdx, toIdx)
 		b.mu.Unlock()
 		return out
 	}
@@ -325,6 +388,29 @@ func (b *LineBuffer) Slice(start, end int64) []source.Line {
 			b.mu.Unlock()
 		}
 		return nil
+	}
+	return out
+}
+
+// buildLines constructs a []source.Line from b.lines[from:to], merging
+// any Tokens and Wrapped from the side-channel maps. Caller must hold b.mu.
+func (b *LineBuffer) buildLines(from, to int) []source.Line {
+	out := make([]source.Line, to-from)
+	// Fast path: no tokens or wrapped data has been set yet (the common
+	// case during initial load). Skip both map lookups entirely.
+	if b.tokens == nil && b.wrapped == nil {
+		for i, sl := range b.lines[from:to] {
+			out[i] = source.Line{Number: sl.Number, Raw: sl.Raw}
+		}
+		return out
+	}
+	for i, sl := range b.lines[from:to] {
+		out[i] = source.Line{
+			Number:  sl.Number,
+			Raw:     sl.Raw,
+			Tokens:  b.tokens[sl.Number],  // nil when not in map
+			Wrapped: b.wrapped[sl.Number], // nil when not in map
+		}
 	}
 	return out
 }
@@ -410,6 +496,12 @@ func (b *LineBuffer) CloseWarningSink() {
 
 // evictLocked drops oldest lines until residentBytes fits the cap or
 // only the configured window remains. Caller must hold b.mu.
+//
+// Each evicted storedLine is zeroed before the slice head advances so
+// the Raw string pointer is released; the GC can then collect the
+// string backing data even though the storedLine struct slot still
+// occupies the backing array. Side-channel tokens/wrapped map entries
+// for evicted line numbers are also removed.
 func (b *LineBuffer) evictLocked() {
 	target := b.maxResidentBytes
 	if target <= 0 {
@@ -417,8 +509,17 @@ func (b *LineBuffer) evictLocked() {
 	}
 	for b.residentBytes > target && len(b.lines) > b.windowSize {
 		dropped := b.lines[0]
-		b.residentBytes -= int64(len(dropped.Raw))
+		b.residentBytes -= int64(len(dropped.Raw)) + storedLineOverheadBytes
+		// Zero out the slot so the Raw string can be GCed even
+		// though the backing array element still exists.
+		b.lines[0] = storedLine{}
 		b.lines = b.lines[1:]
+		if b.tokens != nil {
+			delete(b.tokens, dropped.Number)
+		}
+		if b.wrapped != nil {
+			delete(b.wrapped, dropped.Number)
+		}
 		b.startLine++
 	}
 }
@@ -441,11 +542,15 @@ func readWindow(src source.Source, start, end, maxLineBytes int64) ([]source.Lin
 	reader := bufio.NewReaderSize(rs, readerBufferBytes)
 	var out []source.Line
 	var lineNo int64 = 1
+	var lineBuf []byte
 	for {
 		if lineNo >= end {
 			break
 		}
-		raw, _, err := readLine(reader, maxLineBytes)
+		var raw []byte
+		var err error
+		raw, _, err = readLine(reader, maxLineBytes, lineBuf)
+		lineBuf = raw
 		if errors.Is(err, io.EOF) {
 			if len(raw) > 0 && lineNo >= start {
 				out = append(out, source.Line{Number: lineNo, Raw: string(raw)})
