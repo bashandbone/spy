@@ -32,18 +32,18 @@ type imageRenderer struct {
 	deps Dependencies
 	src  source.Source
 
-	// cachedFrame stores the last successful render keyed by protocol
-	// + frame size. Re-rendering the same image on every viewport tick
-	// would re-encode the PNG / sixel which is expensive on every key
-	// press; the cache invalidates whenever the protocol or dimensions
-	// change. Note this is the *encoded escape stream* — not the raw
-	// image — so the resident memory cost is the same order as the
-	// transmitted bytes (10s of KB for typical screenshots).
-	cachedFrame  string
-	cachedProto  term.Graphics
-	cachedCols   int
-	cachedRows   int
-	cachedFailed bool
+	// cachedFrame is the last rendered frame keyed by (proto, cols,
+	// rows). Stored regardless of whether the graphics path succeeded
+	// or fell back to the metadata block — both outputs are stable
+	// for a given key, so repeat renders (every key press is one)
+	// hit the cache instead of re-decoding / re-encoding the PNG or
+	// re-stat'ing the source for the metadata block (Copilot review
+	// PR#11 round-3).
+	cachedFrame string
+	cachedProto term.Graphics
+	cachedCols  int
+	cachedRows  int
+	cacheValid  bool
 }
 
 // newImageRenderer wires the per-source state. Returning a fresh
@@ -55,30 +55,45 @@ func newImageRenderer(deps Dependencies, src source.Source) *imageRenderer {
 
 func (r *imageRenderer) Render(ctx RenderContext) string {
 	if r.src == nil {
+		// nil-source placeholder is constant — no need to cache.
 		return r.metadataBlock(ctx, "no source attached")
 	}
 	proto := ctx.Capabilities.Graphics
 	cols := ctx.Capabilities.Cols
 	rows := ctx.Capabilities.Rows
+
+	// Cache hit: the frame for this (proto, cols, rows) was already
+	// computed (success OR fallback). Repeat renders (every key
+	// press triggers one) skip both the graphics encode AND the
+	// metadata-block stat'ing — both are expensive on slow disks /
+	// terminals and produce a deterministic result for a stable key.
+	if r.cacheValid && r.cachedProto == proto &&
+		r.cachedCols == cols && r.cachedRows == rows {
+		return r.cachedFrame
+	}
+
+	out := r.renderFresh(ctx, proto, cols, rows)
+	r.cachedFrame = out
+	r.cachedProto = proto
+	r.cachedCols = cols
+	r.cachedRows = rows
+	r.cacheValid = true
+	return out
+}
+
+// renderFresh produces the frame for the given key without touching the
+// cache. The graphics path is short-circuited on GraphicsNone so the
+// fallback fires before the renderer pays the open / decode cost.
+func (r *imageRenderer) renderFresh(ctx RenderContext, proto term.Graphics, cols, rows int) string {
 	if proto == term.GraphicsNone {
 		return r.metadataBlock(ctx, "")
 	}
-	// Reuse a cached frame when the protocol and dimensions haven't
-	// changed. The renderer is otherwise re-invoked on every chunk and
-	// every key press — encoding a multi-MB PNG each time is wasteful
-	// and causes audible latency on slow terminals.
-	if !r.cachedFailed && r.cachedFrame != "" &&
-		r.cachedProto == proto && r.cachedCols == cols && r.cachedRows == rows {
-		return r.cachedFrame
-	}
 	img, err := r.decode()
 	if err != nil {
-		r.cachedFailed = true
 		return r.metadataBlock(ctx, fmt.Sprintf("decode failed: %v", err))
 	}
 	out, err := graphics.Render(proto, img, cols, rows)
 	if err != nil {
-		r.cachedFailed = true
 		return r.metadataBlock(ctx, fmt.Sprintf("encode failed: %v", err))
 	}
 	if out == "" {
@@ -86,11 +101,6 @@ func (r *imageRenderer) Render(ctx RenderContext) string {
 		// same as the GraphicsNone branch so we still show metadata.
 		return r.metadataBlock(ctx, "")
 	}
-	r.cachedFrame = out
-	r.cachedProto = proto
-	r.cachedCols = cols
-	r.cachedRows = rows
-	r.cachedFailed = false
 	return out
 }
 

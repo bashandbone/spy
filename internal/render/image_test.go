@@ -157,6 +157,53 @@ func TestImageRenderer_CacheReusesEncodedFrame(t *testing.T) {
 	}
 }
 
+// countingImageSource wraps a source body but records how many times
+// Open / Reopen has been invoked so the negative-cache test can assert
+// that a failing decode path doesn't keep re-opening the file on every
+// render (Copilot review PR#11 round-3).
+type countingImageSource struct {
+	name      string
+	body      []byte
+	openCalls int
+}
+
+func (c *countingImageSource) Kind() source.Kind { return source.KindImage }
+func (c *countingImageSource) DisplayName() string {
+	return c.name
+}
+func (c *countingImageSource) Open() (io.ReadCloser, error) {
+	c.openCalls++
+	return io.NopCloser(bytes.NewReader(c.body)), nil
+}
+func (c *countingImageSource) Reopen() (io.ReadSeeker, error) {
+	c.openCalls++
+	return bytes.NewReader(c.body), nil
+}
+func (c *countingImageSource) Metadata() source.Metadata {
+	return source.Metadata{Path: c.name, Size: int64(len(c.body))}
+}
+
+func TestImageRenderer_FailedDecodeIsCached(t *testing.T) {
+	// First render fails decode and produces the metadata fallback;
+	// subsequent renders must hit the cache instead of re-opening +
+	// re-decoding the broken bytes (Copilot review PR#11 round-3).
+	src := &countingImageSource{name: "bogus.png", body: []byte("not a real image")}
+	deps := Dependencies{Theme: ThemeDark(), Source: src}
+	r := newImageRenderer(deps, src)
+	caps := term.Capabilities{Cols: 80, Rows: 24, Graphics: term.GraphicsKitty}
+	out1 := r.Render(RenderContext{Capabilities: caps})
+	openAfterFirst := src.openCalls
+	out2 := r.Render(RenderContext{Capabilities: caps})
+	out3 := r.Render(RenderContext{Capabilities: caps})
+	if out1 != out2 || out2 != out3 {
+		t.Errorf("failed-decode fallback should be stable across renders")
+	}
+	if src.openCalls != openAfterFirst {
+		t.Errorf("subsequent renders should not re-open the source: got %d additional opens",
+			src.openCalls-openAfterFirst)
+	}
+}
+
 func TestImageRenderer_DimensionsHelperHandlesError(t *testing.T) {
 	r := newImageRenderer(Dependencies{Theme: ThemeDark()}, &errImageSource{name: "x.png"})
 	if got := r.dimensions(); got != "" {

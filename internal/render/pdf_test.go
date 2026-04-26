@@ -170,6 +170,69 @@ func TestPDFRenderer_MultiPageNavigation(t *testing.T) {
 	}
 }
 
+// countingPDFSource records open calls so the negative-cache test
+// can confirm a failing extraction path doesn't keep re-parsing the
+// PDF on every render (Copilot review PR#11 round-3).
+type countingPDFSource struct {
+	name      string
+	body      []byte
+	openCalls int
+}
+
+func (c *countingPDFSource) Kind() source.Kind   { return source.KindPDF }
+func (c *countingPDFSource) DisplayName() string { return c.name }
+func (c *countingPDFSource) Open() (io.ReadCloser, error) {
+	c.openCalls++
+	return io.NopCloser(bytes.NewReader(c.body)), nil
+}
+func (c *countingPDFSource) Reopen() (io.ReadSeeker, error) {
+	c.openCalls++
+	return bytes.NewReader(c.body), nil
+}
+func (c *countingPDFSource) Metadata() source.Metadata {
+	return source.Metadata{Path: c.name, Size: int64(len(c.body))}
+}
+
+func TestPDFRenderer_FailedExtractIsCached(t *testing.T) {
+	// First render fails text extraction; subsequent renders must hit
+	// the cache instead of re-opening and re-parsing the bogus PDF
+	// (Copilot review PR#11 round-3).
+	src := &countingPDFSource{name: "bogus.pdf", body: []byte("not a pdf")}
+	deps := Dependencies{Theme: ThemeDark(), Source: src}
+	r := ForKind(source.KindPDF, deps)
+	ctx := RenderContext{
+		Capabilities: term.Capabilities{Cols: 80, Rows: 24, Graphics: term.GraphicsNone},
+		Page:         1,
+	}
+	out1 := r.Render(ctx)
+	openAfterFirst := src.openCalls
+	out2 := r.Render(ctx)
+	out3 := r.Render(ctx)
+	if out1 != out2 || out2 != out3 {
+		t.Errorf("failed-extract fallback should be stable across renders")
+	}
+	if src.openCalls != openAfterFirst {
+		t.Errorf("subsequent renders should not re-open the source: got %d additional opens",
+			src.openCalls-openAfterFirst)
+	}
+}
+
+func TestPDFRenderer_PageChangeInvalidatesCache(t *testing.T) {
+	// `]` advances the page; the new page must trigger a fresh render
+	// because the cache key is (page, proto, cols, rows). With our
+	// fixture this means the rendered text differs from page 1.
+	body := loadFixturePDF(t, "multi-page.pdf")
+	src := &fakePDFSource{name: "multi-page.pdf", bytes: body, pageCount: 3}
+	deps := Dependencies{Theme: ThemeDark(), Source: src}
+	r := ForKind(source.KindPDF, deps)
+	caps := term.Capabilities{Cols: 80, Rows: 24, Graphics: term.GraphicsNone}
+	out1 := r.Render(RenderContext{Capabilities: caps, Page: 1})
+	out2 := r.Render(RenderContext{Capabilities: caps, Page: 2})
+	if out1 == out2 {
+		t.Errorf("page 1 and page 2 should render different headers")
+	}
+}
+
 func TestPDFRenderer_RowToLineAlwaysZero(t *testing.T) {
 	deps := Dependencies{Theme: ThemeDark()}
 	r := ForKind(source.KindPDF, deps)

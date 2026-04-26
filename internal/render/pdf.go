@@ -39,16 +39,20 @@ type pdfRenderer struct {
 	deps Dependencies
 	src  source.Source
 
-	// cachedPage / cachedFrame memoize the rasterized page across
-	// re-renders. Same logic as [imageRenderer]: encoding takes 100ms+
-	// for a typical page on slow hardware, so caching the frame keyed
-	// on `(page, proto, cols, rows)` keeps key-press latency low.
-	cachedPage   int
-	cachedProto  term.Graphics
-	cachedCols   int
-	cachedRows   int
-	cachedFrame  string
-	cachedFailed bool
+	// cachedFrame memoizes the rendered output keyed on (page, proto,
+	// cols, rows). Stored regardless of whether the graphics path
+	// succeeded or fell back to the text/metadata block — both
+	// outputs are stable for a given key, so repeat renders (every
+	// key press triggers one) skip both the rasterize-encode pipeline
+	// AND the per-page text extraction (Copilot review PR#11
+	// round-3). Encoding takes 100 ms+ for a typical page on slow
+	// hardware; without a hard cache hit the user feels every keypress.
+	cachedPage  int
+	cachedProto term.Graphics
+	cachedCols  int
+	cachedRows  int
+	cachedFrame string
+	cacheValid  bool
 
 	// cachedText memoizes the per-page plain-text extraction so
 	// `]`/`[` page navigation doesn't re-parse the entire file each
@@ -74,6 +78,7 @@ func newPDFRenderer(deps Dependencies, src source.Source) *pdfRenderer {
 
 func (r *pdfRenderer) Render(ctx RenderContext) string {
 	if r.src == nil {
+		// nil-source placeholder is constant — no need to cache.
 		return r.metadataBlock("no source attached", 0, 0)
 	}
 	page := ctx.Page
@@ -84,24 +89,36 @@ func (r *pdfRenderer) Render(ctx RenderContext) string {
 	cols := ctx.Capabilities.Cols
 	rows := ctx.Capabilities.Rows
 
-	// Graphics-capable + fitz-enabled build: rasterize and emit.
+	// Cache hit: the frame for this (page, proto, cols, rows) was
+	// already computed (success OR fallback). Repeat renders skip
+	// both the rasterize / encode pipeline AND the per-page text
+	// extraction.
+	if r.cacheValid && r.cachedPage == page && r.cachedProto == proto &&
+		r.cachedCols == cols && r.cachedRows == rows {
+		return r.cachedFrame
+	}
+
+	out := r.renderFresh(page, proto, cols, rows)
+	r.cachedFrame = out
+	r.cachedPage = page
+	r.cachedProto = proto
+	r.cachedCols = cols
+	r.cachedRows = rows
+	r.cacheValid = true
+	return out
+}
+
+// renderFresh produces the frame for the given key without consulting
+// the cache. The graphics path is tried first when the terminal
+// supports it; otherwise (or on rasterize/encode failure / fitz-disabled
+// build) the text-extraction fallback runs unconditionally.
+func (r *pdfRenderer) renderFresh(page int, proto term.Graphics, cols, rows int) string {
 	if proto != term.GraphicsNone {
-		if !r.cachedFailed && r.cachedFrame != "" &&
-			r.cachedPage == page && r.cachedProto == proto &&
-			r.cachedCols == cols && r.cachedRows == rows {
-			return r.cachedFrame
-		}
 		img, err := rasterizePDFPage(r.src, page-1)
 		switch {
 		case err == nil:
 			out, encErr := graphics.Render(proto, img, cols, rows)
 			if encErr == nil && out != "" {
-				r.cachedFrame = out
-				r.cachedPage = page
-				r.cachedProto = proto
-				r.cachedCols = cols
-				r.cachedRows = rows
-				r.cachedFailed = false
 				return out
 			}
 			// fall through to text fallback on encode error
@@ -110,7 +127,6 @@ func (r *pdfRenderer) Render(ctx RenderContext) string {
 			// the text path. The fallback message in metadataBlock
 			// surfaces the reason if the text path also fails.
 		default:
-			r.cachedFailed = true
 			// fall through silently to the text fallback. If the text
 			// path also fails, that later error is surfaced via
 			// metadataBlock; the rasterize-side error is intentionally
