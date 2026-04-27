@@ -15,6 +15,7 @@ import (
 	"syscall"
 
 	tea "github.com/charmbracelet/bubbletea"
+	xterm "golang.org/x/term"
 
 	"github.com/alecthomas/chroma/v2/styles"
 
@@ -71,6 +72,22 @@ func run(args []string, stdin *os.File) int {
 	if pf.Version {
 		fmt.Fprintf(os.Stdout, "spy %s\n", version)
 		return exitOK
+	}
+
+	// Tmux popup dispatch: if we're inside tmux, stdin is present and is
+	// a TTY (not piped), and the user hasn't opted out, re-exec via tmux
+	// display-popup so spy occupies the full terminal window rather than
+	// the current pane. The PopupSentinelEnv variable is injected into
+	// the shell command so the inner process skips this block.
+	if os.Getenv(term.PopupSentinelEnv) == "" &&
+		!pf.NoPopup &&
+		os.Getenv("TMUX") != "" &&
+		stdin != nil && xterm.IsTerminal(int(stdin.Fd())) {
+		if exitCode, err := term.LaunchTmuxPopup(args); err == nil {
+			return exitCode
+		}
+		// tmux unavailable or display-popup failed to start → fall
+		// through to normal pager mode rather than exiting with an error.
 	}
 
 	// 1. Probe terminal capabilities. We defer Restore + cleanup AFTER

@@ -22,6 +22,8 @@ import (
 	"time"
 
 	"github.com/creack/pty"
+
+	"github.com/knitli/spy/internal/term"
 )
 
 // AltScreenEnter is the canonical CSI sequence Bubble Tea emits when
@@ -474,22 +476,35 @@ func moduleRoot(t *testing.T) string {
 	}
 }
 
+// stripFromTests lists environment variables that should never be
+// inherited by test subprocesses unless the test explicitly sets them.
+// TMUX and TMUX_PANE would trigger spy's tmux popup re-launch even in
+// PTY tests that have no real tmux session; _SPY_POPUP_ACTIVE is the
+// internal sentinel that prevents recursive popup launches.
+var stripFromTests = map[string]struct{}{
+	"TMUX":                {},
+	"TMUX_PANE":           {},
+	term.PopupSentinelEnv: {},
+}
+
 // mergeEnv composes the spawned process environment from the parent
 // environment plus `env`. Keys in `env` override the inherited value.
-// A nil `env` yields the parent environment unchanged.
+// Variables in [stripFromTests] are removed unless the caller re-adds
+// them in `env`. A nil `env` still applies the strip list.
 func mergeEnv(env map[string]string) []string {
 	parent := os.Environ()
-	if len(env) == 0 {
-		return parent
-	}
-	// Drop any inherited entry the caller is overriding.
 	out := make([]string, 0, len(parent)+len(env))
 	for _, kv := range parent {
 		key := kv
 		if i := indexByte(kv, '='); i >= 0 {
 			key = kv[:i]
 		}
+		// Skip variables the caller is overriding or that are stripped
+		// from the test environment by default.
 		if _, ok := env[key]; ok {
+			continue
+		}
+		if _, strip := stripFromTests[key]; strip {
 			continue
 		}
 		out = append(out, kv)
