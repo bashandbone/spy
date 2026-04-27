@@ -5,6 +5,7 @@
 package term
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -25,13 +26,17 @@ const PopupSentinelEnv = "_SPY_POPUP_ACTIVE"
 // prepends the PopupSentinelEnv assignment to the shell command so the
 // inner process skips re-launch.
 //
-// Returns nil on a clean popup exit (user pressed q). Returns an error if
-// tmux is not found, display-popup is unsupported, or the subprocess fails
-// to start; callers should fall through to normal pager mode on error.
-func LaunchTmuxPopup(originalArgs []string) error {
+// Returns (exitCode, nil) when the popup ran to completion — including
+// non-zero inner exits such as Ctrl-C (130) or signal-driven exits. The
+// caller should propagate exitCode directly.
+//
+// Returns (0, err) only when tmux itself could not be found or the
+// subprocess failed to start; the caller should fall through to normal
+// pager mode.
+func LaunchTmuxPopup(originalArgs []string) (int, error) {
 	exe, err := os.Executable()
 	if err != nil {
-		return fmt.Errorf("popup: resolve executable: %w", err)
+		return 0, fmt.Errorf("popup: resolve executable: %w", err)
 	}
 
 	// Build a POSIX shell command string:
@@ -57,7 +62,20 @@ func LaunchTmuxPopup(originalArgs []string) error {
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
-	return cmd.Run()
+
+	if err := cmd.Run(); err != nil {
+		var exitErr *exec.ExitError
+		if errors.As(err, &exitErr) {
+			// tmux launched and ran the popup; the inner spy process
+			// exited non-zero (e.g. Ctrl-C → 130). Return that code so
+			// the caller can propagate it without re-running spy.
+			return exitErr.ExitCode(), nil
+		}
+		// tmux not found or could not start — let the caller fall
+		// through to normal pager mode.
+		return 0, err
+	}
+	return 0, nil
 }
 
 // shellQuote wraps s in single quotes with interior single-quote characters

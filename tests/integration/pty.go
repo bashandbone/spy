@@ -22,6 +22,8 @@ import (
 	"time"
 
 	"github.com/creack/pty"
+
+	"github.com/knitli/spy/internal/term"
 )
 
 // AltScreenEnter is the canonical CSI sequence Bubble Tea emits when
@@ -480,9 +482,9 @@ func moduleRoot(t *testing.T) string {
 // PTY tests that have no real tmux session; _SPY_POPUP_ACTIVE is the
 // internal sentinel that prevents recursive popup launches.
 var stripFromTests = map[string]struct{}{
-	"TMUX":              {},
-	"TMUX_PANE":         {},
-	"_SPY_POPUP_ACTIVE": {},
+	"TMUX":                {},
+	"TMUX_PANE":           {},
+	term.PopupSentinelEnv: {},
 }
 
 // mergeEnv composes the spawned process environment from the parent
