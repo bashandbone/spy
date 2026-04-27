@@ -169,7 +169,11 @@ func run(args []string, stdin *os.File) int {
 	// the cleanup escape would pollute stdout (Phase 6 US4: the Kitty
 	// "delete all images" sequence is a real protocol message that
 	// shows up as garbage when piped).
-	if !caps.IsTTY {
+	// Skip degenerate mode when running inside a tmux popup: the popup
+	// PTY may not pass IsTerminal checks on some platforms (e.g. WSL2)
+	// even though a real terminal is present. The sentinel guarantees we
+	// were launched by LaunchTmuxPopup and have a usable PTY.
+	if !caps.IsTTY && os.Getenv(term.PopupSentinelEnv) == "" {
 		return runDegenerate(src)
 	}
 

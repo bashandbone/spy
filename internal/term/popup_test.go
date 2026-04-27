@@ -52,17 +52,14 @@ func TestShellQuote_SafeForShell(t *testing.T) {
 }
 
 func TestPopupSentinelEnv(t *testing.T) {
-	// Validate that PopupSentinelEnv is a legal POSIX shell variable name:
-	// must be non-empty, start with a letter or underscore, and contain
-	// only letters, digits, or underscores. This is stricter than the old
-	// check so it would catch a change that breaks the shell assignment
-	// prefix used in LaunchTmuxPopup.
+	// Validate that PopupSentinelEnv is a legal env-var name: non-empty,
+	// starts with a letter or underscore, contains only letters, digits,
+	// or underscores. This ensures it is valid for tmux's -e NAME=value
+	// flag syntax as well as a standard OS environment variable.
 	if PopupSentinelEnv == "" {
 		t.Fatal("PopupSentinelEnv must not be empty")
 	}
-	// POSIX shell variable names are [A-Za-z_][A-Za-z0-9_]* — ASCII only.
-	// Non-ASCII letters accepted by unicode.IsLetter would break the shell
-	// assignment prefix used in LaunchTmuxPopup.
+	// POSIX env var names are [A-Za-z_][A-Za-z0-9_]* — ASCII only.
 	for i, c := range PopupSentinelEnv {
 		isASCIILetter := (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z')
 		isASCIIDigit := c >= '0' && c <= '9'
@@ -172,5 +169,55 @@ func TestLaunchTmuxPopup_NonZeroExit(t *testing.T) {
 	}
 	if code != 130 {
 		t.Errorf("expected exit code 130, got %d", code)
+	}
+}
+
+func TestLaunchTmuxPopup_SentinelViaEnvFlag(t *testing.T) {
+	// LaunchTmuxPopup must pass the sentinel via tmux -e NAME=val, not as
+	// a shell prefix assignment in the command string. This ensures the
+	// sentinel reaches the inner process even on platforms (e.g. WSL2)
+	// where the popup PTY fails IsTerminal checks before the shell runs.
+	dir := t.TempDir()
+	argsFile := filepath.Join(dir, "tmux-args")
+	// Write a fake tmux that records each argument on its own line.
+	script := "#!/bin/sh\n" +
+		"case \"$1\" in\n" +
+		"  list-commands) printf 'display-popup\\n'; exit 0 ;;\n" +
+		"  *) for arg in \"$@\"; do printf '%s\\n' \"$arg\"; done > " + argsFile + "; exit 0 ;;\n" +
+		"esac\n"
+	if err := os.WriteFile(filepath.Join(dir, "tmux"), []byte(script), 0o755); err != nil {
+		t.Fatalf("write fake tmux: %v", err)
+	}
+	t.Setenv("PATH", dir+string(filepath.ListSeparator)+os.Getenv("PATH"))
+
+	if _, err := LaunchTmuxPopup([]string{"file.txt"}); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	data, err := os.ReadFile(argsFile)
+	if err != nil {
+		t.Fatalf("read args file: %v", err)
+	}
+	args := strings.Split(strings.TrimSpace(string(data)), "\n")
+
+	// Verify -e PopupSentinelEnv=1 is present as consecutive arguments.
+	foundSentinel := false
+	for i, arg := range args {
+		if arg == "-e" && i+1 < len(args) && args[i+1] == PopupSentinelEnv+"=1" {
+			foundSentinel = true
+			break
+		}
+	}
+	if !foundSentinel {
+		t.Errorf("tmux args missing -e %s=1; got: %v", PopupSentinelEnv, args)
+	}
+
+	// Verify the command string (last arg) does NOT start with the sentinel
+	// as a shell prefix assignment.
+	if len(args) > 0 {
+		last := args[len(args)-1]
+		if strings.HasPrefix(last, PopupSentinelEnv+"=") {
+			t.Errorf("command string contains shell prefix assignment %q; sentinel must use -e flag", last)
+		}
 	}
 }

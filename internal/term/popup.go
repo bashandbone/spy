@@ -37,9 +37,8 @@ func displayPopupAvailable() bool {
 // display-popup overlay that floats over all panes at full terminal size.
 // It blocks until the user dismisses the popup.
 //
-// originalArgs is argv[1:] from the calling process. LaunchTmuxPopup
-// prepends the PopupSentinelEnv assignment to the shell command so the
-// inner process skips re-launch.
+// originalArgs is argv[1:] from the calling process. LaunchTmuxPopup passes
+// PopupSentinelEnv via tmux's -e flag so the inner process skips re-launch.
 //
 // Returns (exitCode, nil) when the popup ran to completion — including
 // non-zero inner exits such as Ctrl-C (130) or signal-driven exits. The
@@ -58,14 +57,10 @@ func LaunchTmuxPopup(originalArgs []string) (int, error) {
 		return 0, fmt.Errorf("popup: resolve executable: %w", err)
 	}
 
-	// Build a POSIX shell command string:
-	//   _SPY_POPUP_ACTIVE=1 '/path/to/spy' 'arg1' 'arg2' ...
-	// The leading assignment sets the sentinel for the re-exec'd process
-	// without requiring tmux's -e flag (which was added in tmux 3.2 for
-	// display-popup but is not universally available in older 3.2 point
-	// releases). Shell variable assignment before a command is POSIX.
-	parts := make([]string, 0, len(originalArgs)+2)
-	parts = append(parts, PopupSentinelEnv+"=1")
+	// Build the shell command string: just the quoted exe and args.
+	// The sentinel is passed via tmux -e (available since tmux 3.2, the
+	// same version that introduced display-popup itself).
+	parts := make([]string, 0, len(originalArgs)+1)
 	parts = append(parts, shellQuote(exe))
 	for _, a := range originalArgs {
 		parts = append(parts, shellQuote(a))
@@ -73,7 +68,8 @@ func LaunchTmuxPopup(originalArgs []string) (int, error) {
 
 	cmd := exec.Command("tmux",
 		"display-popup",
-		"-E", // close popup when the command exits
+		"-E",                        // close popup when the command exits
+		"-e", PopupSentinelEnv+"=1", // sentinel: inner spy skips re-launch
 		"-w", "100%",
 		"-h", "100%",
 		strings.Join(parts, " "),
