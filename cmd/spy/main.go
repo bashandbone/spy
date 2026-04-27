@@ -261,11 +261,23 @@ func run(args []string, stdin *os.File) int {
 	// US1 enables MouseCellMotion so future search-prompt UI can react to
 	// click-to-scroll. Bubble Tea handles SIGWINCH internally via its
 	// terminal-renderer goroutine, so no extra option is required.
-	prog := tea.NewProgram(model,
+	//
+	// In popup context, WithInputTTY opens a fresh /dev/tty for input.
+	// Bubble Tea's package init() calls lipgloss.HasDarkBackground() which
+	// sends an OSC 11 query on os.Stdout and reads the response from
+	// os.Stdin; if the tmux popup PTY's response arrives after termenv's
+	// timeout, the leftover \x1b sits on os.Stdin. Bubble Tea then reads
+	// it as KeyEsc → ActionQuit → immediate exit. A fresh /dev/tty fd
+	// bypasses any such residue on the original stdin.
+	teaOpts := []tea.ProgramOption{
 		tea.WithAltScreen(),
 		tea.WithMouseCellMotion(),
 		tea.WithoutSignalHandler(),
-	)
+	}
+	if os.Getenv(term.PopupSentinelEnv) != "" {
+		teaOpts = append(teaOpts, tea.WithInputTTY())
+	}
+	prog := tea.NewProgram(model, teaOpts...)
 
 	// Goroutine: when a signal arrives, translate it to tea.Quit so
 	// the alt-screen exit and graphics cleanup escapes still fire via
