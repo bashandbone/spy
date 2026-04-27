@@ -83,6 +83,86 @@ update the overlay automatically.
 The full key contract lives in
 [specs/001-popup-reader/contracts/keys.md](specs/001-popup-reader/contracts/keys.md).
 
+## Multiplexer integration
+
+### tmux (automatic)
+
+When spy is run inside a tmux session it automatically re-launches itself
+via `tmux display-popup`, creating a full-screen floating overlay that covers
+all panes. When you quit (`q`), the popup closes and you are returned to your
+exact prior state. Requires **tmux 3.2 or later** (2020).
+
+```bash
+spy README.md      # inside tmux: opens a full-screen popup automatically
+```
+
+Pass `--no-popup` to skip this and run spy in the current pane instead:
+
+```bash
+spy --no-popup README.md
+```
+
+To disable it permanently, add an alias to your shell config:
+
+```bash
+alias spy='spy --no-popup'
+```
+
+### WezTerm
+
+WezTerm does not have a `display-popup` equivalent, but you can get a similar
+experience with a shell function that spawns spy in a new tab and switches
+back when it exits:
+
+```bash
+# Add to ~/.bashrc / ~/.zshrc
+spypop() {
+  wezterm cli spawn --new-window -- spy "$@"
+}
+```
+
+For a tighter integration, add a WezTerm key binding that opens the current
+selection in spy:
+
+```lua
+-- wezterm.lua
+local wezterm = require 'wezterm'
+local act = wezterm.action
+
+config.keys = {
+  {
+    key = 'o',
+    mods = 'CTRL|SHIFT',
+    action = act.SpawnCommandInNewTab {
+      args = { 'spy', wezterm.UNKNOWN_FILENAME }, -- replace with selection logic
+    },
+  },
+}
+```
+
+### Kitty
+
+Kitty's remote-control API supports true overlay windows. Enable it in
+`kitty.conf`:
+
+```ini
+# kitty.conf
+allow_remote_control yes
+listen_on unix:/tmp/kitty
+```
+
+Then define a shell function or alias:
+
+```bash
+# Add to ~/.bashrc / ~/.zshrc
+spypop() {
+  kitty @ launch --type=overlay --copy-env spy "$@"
+}
+```
+
+`--type=overlay` creates a floating window over the active window — the
+closest Kitty analogue to tmux's `display-popup`.
+
 ## Configuration
 
 Drop a TOML file at `$XDG_CONFIG_HOME/spy/config.toml` (falling back to

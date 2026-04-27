@@ -30,6 +30,7 @@ type ParsedFlags struct {
 	Graphics      string
 	NoLineNumbers bool
 	NoWrap        bool
+	NoPopup       bool
 	HighlightCap  *int64 // nil when --highlight-cap was not passed
 	ConfigPath    string
 	NoConfig      bool
@@ -129,6 +130,7 @@ func buildFlagSet(pf *ParsedFlags) *flag.FlagSet {
 	fs.StringVar(&pf.Graphics, "graphics", "", `graphics: "auto"|"none"|"kitty"|"iterm2"|"sixel"`)
 	fs.BoolVar(&pf.NoLineNumbers, "no-line-numbers", false, "hide line numbers")
 	fs.BoolVar(&pf.NoWrap, "no-wrap", false, "disable soft-wrap")
+	fs.BoolVar(&pf.NoPopup, "no-popup", false, "disable automatic tmux popup re-launch")
 	fs.Func("highlight-cap", "disable syntax highlighting above this many bytes (set to 0 to disable entirely)", func(s string) error {
 		n, err := strconv.ParseInt(s, 10, 64)
 		if err != nil {
