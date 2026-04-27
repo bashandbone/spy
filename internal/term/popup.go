@@ -5,6 +5,7 @@
 package term
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
 	"os"
@@ -18,6 +19,20 @@ import (
 // keeps the flag surface clean.
 const PopupSentinelEnv = "_SPY_POPUP_ACTIVE"
 
+// displayPopupAvailable reports true if the tmux binary found on PATH exposes
+// the display-popup subcommand (requires tmux ≥ 3.2). It runs
+// "tmux list-commands" to confirm capability before LaunchTmuxPopup
+// attempts to open the popup, which lets callers reliably distinguish
+// "tmux not capable" (fall through to pager) from "popup ran but inner
+// spy exited non-zero" (propagate exit code).
+func displayPopupAvailable() bool {
+	out, err := exec.Command("tmux", "list-commands").Output()
+	if err != nil {
+		return false
+	}
+	return bytes.Contains(out, []byte("display-popup"))
+}
+
 // LaunchTmuxPopup re-execs the current spy binary inside a tmux
 // display-popup overlay that floats over all panes at full terminal size.
 // It blocks until the user dismisses the popup.
@@ -30,10 +45,14 @@ const PopupSentinelEnv = "_SPY_POPUP_ACTIVE"
 // non-zero inner exits such as Ctrl-C (130) or signal-driven exits. The
 // caller should propagate exitCode directly.
 //
-// Returns (0, err) only when tmux itself could not be found or the
-// subprocess failed to start; the caller should fall through to normal
-// pager mode.
+// Returns (0, err) only when tmux itself could not be found, does not
+// support display-popup, or the subprocess failed to start; the caller
+// should fall through to normal pager mode.
 func LaunchTmuxPopup(originalArgs []string) (int, error) {
+	if !displayPopupAvailable() {
+		return 0, fmt.Errorf("popup: display-popup not available")
+	}
+
 	exe, err := os.Executable()
 	if err != nil {
 		return 0, fmt.Errorf("popup: resolve executable: %w", err)
@@ -79,7 +98,7 @@ func LaunchTmuxPopup(originalArgs []string) (int, error) {
 }
 
 // shellQuote wraps s in single quotes with interior single-quote characters
-// replaced by the POSIX '\” escape sequence. Safe for any string value.
+// replaced by the POSIX `'\”` escape sequence. Safe for any string value.
 func shellQuote(s string) string {
 	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
 }

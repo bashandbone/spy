@@ -9,7 +9,6 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
-	"unicode"
 )
 
 func TestShellQuote(t *testing.T) {
@@ -61,28 +60,41 @@ func TestPopupSentinelEnv(t *testing.T) {
 	if PopupSentinelEnv == "" {
 		t.Fatal("PopupSentinelEnv must not be empty")
 	}
+	// POSIX shell variable names are [A-Za-z_][A-Za-z0-9_]* — ASCII only.
+	// Non-ASCII letters accepted by unicode.IsLetter would break the shell
+	// assignment prefix used in LaunchTmuxPopup.
 	for i, c := range PopupSentinelEnv {
-		valid := unicode.IsLetter(c) || c == '_' || (i > 0 && unicode.IsDigit(c))
+		isASCIILetter := (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z')
+		isASCIIDigit := c >= '0' && c <= '9'
+		valid := isASCIILetter || c == '_' || (i > 0 && isASCIIDigit)
 		if !valid {
 			t.Errorf("PopupSentinelEnv %q: character %q at position %d is not a valid POSIX identifier character",
 				PopupSentinelEnv, c, i)
 		}
 	}
-	// First character must be letter or underscore (not digit).
+	// First character must be an ASCII letter or underscore (not a digit).
 	first := rune(PopupSentinelEnv[0])
-	if !unicode.IsLetter(first) && first != '_' {
-		t.Errorf("PopupSentinelEnv %q must start with a letter or underscore", PopupSentinelEnv)
+	isASCIILetter := (first >= 'A' && first <= 'Z') || (first >= 'a' && first <= 'z')
+	if !isASCIILetter && first != '_' {
+		t.Errorf("PopupSentinelEnv %q must start with an ASCII letter or underscore", PopupSentinelEnv)
 	}
 }
 
-// fakeTmux writes a minimal shell script to dir/tmux that exits with the
-// given code and returns the directory prepended PATH.
+// fakeTmux writes a shell script to dir/tmux that:
+//   - responds to "list-commands" by printing "display-popup" and exiting 0
+//   - responds to any other subcommand by exiting with exitCode
+//
+// It returns the directory prepended to PATH so exec.LookPath finds it first.
 func fakeTmux(t *testing.T, exitCode int) string {
 	t.Helper()
 	dir := t.TempDir()
-	script := []byte("#!/bin/sh\nexit " + itoa(exitCode) + "\n")
+	script := "#!/bin/sh\n" +
+		"case \"$1\" in\n" +
+		"  list-commands) printf 'display-popup\\n'; exit 0 ;;\n" +
+		"  *) exit " + itoa(exitCode) + " ;;\n" +
+		"esac\n"
 	path := filepath.Join(dir, "tmux")
-	if err := os.WriteFile(path, script, 0o755); err != nil {
+	if err := os.WriteFile(path, []byte(script), 0o755); err != nil {
 		t.Fatalf("fakeTmux: write script: %v", err)
 	}
 	return dir + string(filepath.ListSeparator) + os.Getenv("PATH")
@@ -117,6 +129,22 @@ func TestLaunchTmuxPopup_NoTmux(t *testing.T) {
 	code, err := LaunchTmuxPopup([]string{"test-arg"})
 	if err == nil {
 		t.Errorf("expected error when tmux is not on PATH, got nil (code %d)", code)
+	}
+}
+
+func TestLaunchTmuxPopup_NoDisplayPopup(t *testing.T) {
+	// A fake tmux that is present but does not advertise display-popup in
+	// list-commands output (simulates tmux < 3.2). LaunchTmuxPopup should
+	// return a non-nil error so the caller falls through to pager mode.
+	dir := t.TempDir()
+	script := []byte("#!/bin/sh\ncase \"$1\" in\n  list-commands) exit 0 ;;\n  *) exit 0 ;;\nesac\n")
+	if err := os.WriteFile(filepath.Join(dir, "tmux"), script, 0o755); err != nil {
+		t.Fatalf("write script: %v", err)
+	}
+	t.Setenv("PATH", dir+string(filepath.ListSeparator)+os.Getenv("PATH"))
+	code, err := LaunchTmuxPopup([]string{})
+	if err == nil {
+		t.Errorf("expected error when display-popup not available, got nil (code %d)", code)
 	}
 }
 

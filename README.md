@@ -111,8 +111,7 @@ alias spy='spy --no-popup'
 ### WezTerm
 
 WezTerm does not have a `display-popup` equivalent, but you can get a similar
-experience with a shell function that spawns spy in a new tab and switches
-back when it exits:
+experience with a shell function that opens spy in a new window:
 
 ```bash
 # Add to ~/.bashrc / ~/.zshrc
