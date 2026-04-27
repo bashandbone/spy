@@ -10,7 +10,7 @@ import (
 	"strings"
 
 	"github.com/charmbracelet/bubbles/viewport"
-	"github.com/charmbracelet/lipgloss"
+	"charm.land/lipgloss/v2"
 
 	"github.com/knitli/spy/internal/source"
 )

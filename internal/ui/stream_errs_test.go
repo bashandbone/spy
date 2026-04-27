@@ -11,7 +11,7 @@ import (
 	"strings"
 	"testing"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 
 	"github.com/knitli/spy/internal/loader"
 	"github.com/knitli/spy/internal/source"

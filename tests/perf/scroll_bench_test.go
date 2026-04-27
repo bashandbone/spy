@@ -13,7 +13,7 @@ import (
 	"testing"
 	"time"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 
 	"github.com/knitli/spy/internal/config"
 	"github.com/knitli/spy/internal/highlight"
@@ -69,7 +69,7 @@ func TestScroll_60fps(t *testing.T) {
 	dropped := 0
 	for i := 0; i < scrolls; i++ {
 		start := time.Now()
-		nm, _ := mod.Update(tea.KeyMsg{Type: tea.KeyDown})
+		nm, _ := mod.Update(tea.KeyPressMsg{Code: tea.KeyDown})
 		_ = nm.(ui.Model).View()
 		elapsed := time.Since(start)
 		durations = append(durations, elapsed)

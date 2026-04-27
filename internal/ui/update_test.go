@@ -15,7 +15,7 @@ import (
 	"testing"
 
 	"github.com/alecthomas/chroma/v2/styles"
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 
 	"github.com/knitli/spy/internal/config"
 	"github.com/knitli/spy/internal/highlight"
@@ -107,7 +107,7 @@ func TestUpdate_OnChunkRunsHighlighter(t *testing.T) {
 	}
 	updated, _ := m.Update(chunkLoadedMsg{chunk: c})
 	mm := updated.(Model)
-	view := mm.View()
+	view := mm.View().Content
 	if !strings.Contains(view, "\x1b[") {
 		t.Errorf("expected ANSI escapes in highlighted code view; got: %q", view)
 	}
@@ -211,7 +211,7 @@ func TestUpdate_ScrollHighlightsNewlyVisibleLines(t *testing.T) {
 	// screen and only lines that were originally outside the viewport
 	// are visible.
 	for i := 0; i < viewHeight+5; i++ {
-		updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyDown})
+		updated, _ := m.Update(tea.KeyPressMsg{Code: tea.KeyDown})
 		m = updated.(Model)
 	}
 	if m.viewport.YOffset == 0 {
@@ -394,7 +394,7 @@ func TestUpdate_ReloadOnReloadKey(t *testing.T) {
 	// that ultimately yields a reloadMsg.
 	m := newTestModel(t, "x\n")
 	m, _ = applyResize(m, 80, 24)
-	_, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
+	_, cmd := m.Update(tea.KeyPressMsg{Code: 'r', Text: "r"})
 	if cmd == nil {
 		t.Fatal("'r' should produce a reload command")
 	}
@@ -733,7 +733,7 @@ func TestUpdate_ToggleLineNumbersFlipsConfigAndRerenders(t *testing.T) {
 	}
 	before := m.cfg.LineNumbers
 	beforeView := m.viewport.View()
-	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyCtrlL})
+	updated, _ := m.Update(tea.KeyPressMsg{Code: 'l', Mod: tea.ModCtrl})
 	mm := updated.(Model)
 	if mm.cfg.LineNumbers == before {
 		t.Errorf("ActionToggleLineNumbers did not flip cfg.LineNumbers (still %v)", before)
@@ -758,7 +758,7 @@ func TestUpdate_ToggleWordWrapFlipsConfigAndRerenders(t *testing.T) {
 	m, _ = applyResize(m, 40, 24)
 	before := m.cfg.WordWrap
 	beforeView := m.viewport.View()
-	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyCtrlW})
+	updated, _ := m.Update(tea.KeyPressMsg{Code: 'w', Mod: tea.ModCtrl})
 	mm := updated.(Model)
 	if mm.cfg.WordWrap == before {
 		t.Errorf("ActionToggleWordWrap did not flip cfg.WordWrap (still %v)", before)
@@ -771,7 +771,7 @@ func TestUpdate_ToggleWordWrapFlipsConfigAndRerenders(t *testing.T) {
 func TestUpdate_ActionOpenFileOpensCommandPromptPreFilled(t *testing.T) {
 	m := newTestModel(t, "x\n")
 	m, _ = applyResize(m, 80, 24)
-	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'o'}})
+	updated, _ := m.Update(tea.KeyPressMsg{Code: 'o', Text: "o"})
 	mm := updated.(Model)
 	if !mm.commandLine.Active {
 		t.Fatal("ActionOpenFile should activate the command-line prompt")
@@ -787,9 +787,9 @@ func TestUpdate_ActionOpenFileOpensCommandPromptPreFilled(t *testing.T) {
 func TestUpdate_ActionOpenFileEscClosesPromptWithoutLoad(t *testing.T) {
 	m := newTestModel(t, "x\n")
 	m, _ = applyResize(m, 80, 24)
-	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'o'}})
+	updated, _ := m.Update(tea.KeyPressMsg{Code: 'o', Text: "o"})
 	mm := updated.(Model)
-	updated2, _ := mm.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	updated2, _ := mm.Update(tea.KeyPressMsg{Code: tea.KeyEsc})
 	mm2 := updated2.(Model)
 	if mm2.commandLine.Active {
 		t.Errorf("Esc should close the open-file prompt")

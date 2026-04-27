@@ -27,7 +27,7 @@ import (
 	"github.com/knitli/spy/internal/ui"
 	"github.com/knitli/spy/tests/integration"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 )
 
 // TestFirstFrame_Under150ms enforces SC-001: opening a 100-line text
@@ -153,7 +153,7 @@ func TestFirstFrame_RendererSlice(t *testing.T) {
 			Highlighter:  hl,
 		})
 		mu, _ := m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
-		view := mu.(ui.Model).View()
+		view := mu.(ui.Model).View().Content
 		if !strings.Contains(view, "package main") {
 			t.Fatalf("first frame missing 'package main'; got len=%d", len(view))
 		}

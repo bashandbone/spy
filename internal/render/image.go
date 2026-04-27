@@ -28,6 +28,14 @@ import (
 // Per research R2 the source bytes are re-read at render time rather
 // than caching the decoded [image.Image] across frames — large GIFs
 // would otherwise blow the SC-005 500 MB ceiling.
+//
+// Bubble Tea v2's cell-based diff renderer (ultraviolet) strips APC
+// escape sequences (Kitty, iTerm2 inline images) when it parses View
+// content into cells — APC sequences have zero display width and their
+// bytes are never written to the PTY. To work around this, Render()
+// returns blank viewport content when a graphics protocol is active;
+// the actual APC escape sequence is exposed via GraphicsRaw() so the
+// caller can emit it via tea.Raw(), which bypasses the cell renderer.
 type imageRenderer struct {
 	deps Dependencies
 	src  source.Source
@@ -40,10 +48,15 @@ type imageRenderer struct {
 	// re-stat'ing the source for the metadata block (Copilot review
 	// PR#11 round-3).
 	cachedFrame string
-	cachedProto term.Graphics
-	cachedCols  int
-	cachedRows  int
-	cacheValid  bool
+	// cachedPayload holds the raw APC / graphics-protocol escape
+	// sequence for the last successful non-None render. It is set by
+	// Render() and read by GraphicsRaw(). Empty when proto is None or
+	// when encoding failed (fallback to metadata block fires instead).
+	cachedPayload string
+	cachedProto   term.Graphics
+	cachedCols    int
+	cachedRows    int
+	cacheValid    bool
 }
 
 // newImageRenderer wires the per-source state. Returning a fresh
@@ -72,8 +85,9 @@ func (r *imageRenderer) Render(ctx RenderContext) string {
 		return r.cachedFrame
 	}
 
-	out := r.renderFresh(ctx, proto, cols, rows)
+	out, payload := r.renderFresh(ctx, proto, cols, rows)
 	r.cachedFrame = out
+	r.cachedPayload = payload
 	r.cachedProto = proto
 	r.cachedCols = cols
 	r.cachedRows = rows
@@ -81,27 +95,47 @@ func (r *imageRenderer) Render(ctx RenderContext) string {
 	return out
 }
 
-// renderFresh produces the frame for the given key without touching the
-// cache. The graphics path is short-circuited on GraphicsNone so the
-// fallback fires before the renderer pays the open / decode cost.
-func (r *imageRenderer) renderFresh(ctx RenderContext, proto term.Graphics, cols, rows int) string {
+// GraphicsRaw returns the raw APC / graphics-protocol escape sequence
+// for the last successful Render call. Empty when the active protocol
+// is None (or when encoding failed and the metadata-block fallback
+// fired instead). The caller is responsible for emitting this via
+// tea.Raw() so it bypasses Bubble Tea v2's cell renderer.
+func (r *imageRenderer) GraphicsRaw(_ RenderContext) string {
+	return r.cachedPayload
+}
+
+// renderFresh produces the viewport content and raw protocol payload for
+// the given key without touching the cache. The graphics path is
+// short-circuited on GraphicsNone so the fallback fires before the
+// renderer pays the open / decode cost.
+//
+// Return values: (viewportContent, rawPayload). For GraphicsNone and
+// error paths, rawPayload is empty and viewportContent is the metadata
+// block. For active graphics protocols, viewportContent is an empty
+// string (the viewport stays blank; the image is displayed by the
+// terminal via the APC escape) and rawPayload holds the protocol bytes
+// to emit via tea.Raw().
+func (r *imageRenderer) renderFresh(ctx RenderContext, proto term.Graphics, cols, rows int) (string, string) {
 	if proto == term.GraphicsNone {
-		return r.metadataBlock(ctx, "")
+		return r.metadataBlock(ctx, ""), ""
 	}
 	img, err := r.decode()
 	if err != nil {
-		return r.metadataBlock(ctx, fmt.Sprintf("decode failed: %v", err))
+		return r.metadataBlock(ctx, fmt.Sprintf("decode failed: %v", err)), ""
 	}
 	out, err := graphics.Render(proto, img, cols, rows)
 	if err != nil {
-		return r.metadataBlock(ctx, fmt.Sprintf("encode failed: %v", err))
+		return r.metadataBlock(ctx, fmt.Sprintf("encode failed: %v", err)), ""
 	}
 	if out == "" {
 		// graphics.Render returns empty for unknown protocols; treat the
 		// same as the GraphicsNone branch so we still show metadata.
-		return r.metadataBlock(ctx, "")
+		return r.metadataBlock(ctx, ""), ""
 	}
-	return out
+	// The raw APC sequence is returned as the payload for tea.Raw();
+	// the viewport content is left blank so the terminal renders the
+	// image overlay without interference from cell content.
+	return "", out
 }
 
 func (r *imageRenderer) RowToLine(_ RenderContext, _ int) int64 { return 0 }

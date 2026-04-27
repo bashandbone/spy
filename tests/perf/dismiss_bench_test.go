@@ -77,14 +77,19 @@ func measureDismiss(t *testing.T, iterations int, limit time.Duration, failOnBud
 			closeOnce()
 			t.Fatalf("iteration %d: bracketed-paste setup not observed", i)
 		}
-		// Wait for the streaming-complete footer ("N lines" with no
-		// trailing ellipsis) so the loader pipeline has settled and
-		// the input loop is unambiguously live. The rendered content
-		// can only appear after Bubble Tea's event loop has processed
-		// the WindowSizeMsg that follows initCancelReader, so this
-		// wait is the reliable input-ready barrier. The wait is not
-		// part of the SC-007 measurement — the timer starts after it.
-		if !p.WaitFor("10000 lines", 5*time.Second) {
+		// Wait for the footer to show the file's line count. BT v2's
+		// cell-diff renderer means "10000 lines" (without the streaming
+		// ellipsis) is never written as a contiguous substring — only
+		// the changed digit cells are emitted when the "…" clears.
+		// "10000" IS written contiguously: it appears in the first full
+		// frame as part of "10000… lines" (streaming in progress) or
+		// "10000 lines" (streaming already done), and also in any diff
+		// frame where the count ticks up to 10000 (5 consecutive digit
+		// cells all change → written in one run). Either way its
+		// presence proves the model has rendered at least once, which is
+		// the reliable input-ready barrier. The wait is not part of the
+		// SC-007 measurement — the timer starts after it.
+		if !p.WaitFor("10000", 5*time.Second) {
 			closeOnce()
 			t.Fatalf("iteration %d: streaming-complete footer never painted", i)
 		}

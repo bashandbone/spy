@@ -14,7 +14,7 @@ import (
 	"testing"
 	"time"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 
 	"github.com/knitli/spy/internal/config"
 	"github.com/knitli/spy/internal/highlight"
@@ -143,11 +143,11 @@ func applyKeystrokes(t *testing.T, m ui.Model, s string) ui.Model {
 		var msg tea.Msg
 		switch r {
 		case '\r':
-			msg = tea.KeyMsg{Type: tea.KeyEnter}
+			msg = tea.KeyPressMsg{Code: tea.KeyEnter}
 		case '\x1b':
-			msg = tea.KeyMsg{Type: tea.KeyEsc}
+			msg = tea.KeyPressMsg{Code: tea.KeyEsc}
 		default:
-			msg = tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}}
+			msg = tea.KeyPressMsg{Code: r, Text: string(r)}
 		}
 		mm, _ := m.Update(msg)
 		var ok bool

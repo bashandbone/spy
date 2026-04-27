@@ -9,7 +9,7 @@ import (
 	"strings"
 
 	"github.com/alecthomas/chroma/v2/styles"
-	"github.com/charmbracelet/lipgloss"
+	"charm.land/lipgloss/v2"
 
 	"github.com/knitli/spy/internal/term"
 )

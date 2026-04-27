@@ -7,7 +7,8 @@ package ui
 import (
 	"path/filepath"
 
-	"github.com/charmbracelet/lipgloss"
+	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 
 	"github.com/knitli/spy/internal/render"
 	"github.com/knitli/spy/internal/source"
@@ -22,17 +23,21 @@ import (
 // In very tight terminals (height <= 1) onResize sets m.showFooter =
 // false and we drop the footer/prompt rather than overflow the row
 // budget (Copilot review PR#7 #23).
-func (m Model) View() string {
-	if m.width == 0 || m.height == 0 {
-		return ""
+func (m Model) View() tea.View {
+	var content string
+	if m.width != 0 && m.height != 0 {
+		if !m.showFooter {
+			content = m.viewport.View()
+		} else if m.commandLine.Active {
+			content = m.viewport.View() + "\n" + m.promptLine()
+		} else {
+			content = m.viewport.View() + "\n" + m.footerLine()
+		}
 	}
-	if !m.showFooter {
-		return m.viewport.View()
-	}
-	if m.commandLine.Active {
-		return m.viewport.View() + "\n" + m.promptLine()
-	}
-	return m.viewport.View() + "\n" + m.footerLine()
+	v := tea.NewView(content)
+	v.AltScreen = true
+	v.MouseMode = tea.MouseModeCellMotion
+	return v
 }
 
 // promptLine renders the active `:` / `/` / `?` prompt buffer with the

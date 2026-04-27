@@ -11,9 +11,8 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/charmbracelet/bubbles/key"
 	"github.com/charmbracelet/bubbles/viewport"
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 
 	"github.com/knitli/spy/internal/config"
 	"github.com/knitli/spy/internal/highlight"
@@ -49,7 +48,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		return m.onResize(msg)
-	case tea.KeyMsg:
+	case tea.KeyPressMsg:
 		return m.onKey(msg)
 	case chunkLoadedMsg:
 		// Drop stale chunks from a stream that ActionReload swapped
@@ -233,14 +232,14 @@ func (m Model) onResize(msg tea.WindowSizeMsg) (tea.Model, tea.Cmd) {
 	if !first {
 		m.viewport.SetYOffset(prevYOffset)
 	}
-	return m, nil
+	return m, m.graphicsCmd()
 }
 
 // onKey runs the active keymap and translates the matched [Action]
 // into a tea.Cmd. The prompt state machine takes precedence: when a `:`
 // / `/` / `?` prompt is open, every key is captured by the prompt
 // editor until Enter (submit) or Esc (cancel) closes it.
-func (m Model) onKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+func (m Model) onKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	if m.commandLine.Active {
 		return m.onPromptKey(msg)
 	}
@@ -388,31 +387,32 @@ func (m *Model) openPrompt(prefix rune) {
 // onPromptKey edits the active command-line buffer. Enter submits, Esc
 // cancels, Up/Down recall history, Backspace deletes a rune, and any
 // runeable key gets appended to the buffer.
-func (m Model) onPromptKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	switch msg.Type {
-	case tea.KeyEnter:
+func (m Model) onPromptKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
+	switch msg.String() {
+	case "enter":
 		return m.submitPrompt()
-	case tea.KeyEsc, tea.KeyCtrlC:
+	case "esc", "ctrl+c":
 		m.commandLine.reset()
 		return m, nil
-	case tea.KeyBackspace, tea.KeyCtrlH:
+	case "backspace", "ctrl+h":
 		if m.commandLine.Buffer != "" {
 			r := []rune(m.commandLine.Buffer)
 			m.commandLine.Buffer = string(r[:len(r)-1])
 		}
 		return m, nil
-	case tea.KeyUp:
+	case "up":
 		m.recallHistory(-1)
 		return m, nil
-	case tea.KeyDown:
+	case "down":
 		m.recallHistory(+1)
 		return m, nil
-	case tea.KeyRunes:
-		m.commandLine.Buffer += string(msg.Runes)
-		return m, nil
-	case tea.KeySpace:
+	case "space":
 		m.commandLine.Buffer += " "
 		return m, nil
+	default:
+		if msg.Text != "" {
+			m.commandLine.Buffer += msg.Text
+		}
 	}
 	return m, nil
 }
@@ -1403,18 +1403,42 @@ func (m Model) renderContext() render.RenderContext {
 	return ctx
 }
 
+// graphicsCmd returns a tea.Raw command that emits the active
+// renderer's inline-graphics payload (Kitty, iTerm2, sixel APC
+// sequence) directly to the PTY, bypassing Bubble Tea v2's cell
+// renderer which strips zero-width APC sequences. Returns nil when
+// the active renderer is not an inline-graphics renderer or when no
+// payload is cached (e.g. graphics proto is None or encoding failed).
+func (m Model) graphicsCmd() tea.Cmd {
+	type rawGraphicsProvider interface {
+		GraphicsRaw(ctx render.RenderContext) string
+	}
+	rg, ok := m.renderer.(rawGraphicsProvider)
+	if !ok {
+		return nil
+	}
+	payload := rg.GraphicsRaw(m.renderContext())
+	if payload == "" {
+		return nil
+	}
+	return tea.Raw(payload)
+}
+
 // matchAction reports whether the supplied key event matches any
-// binding for `action` in the provided keymap. The bubble-tea key
-// package's Matches helper is used so multi-key bindings (eg.
-// Ctrl-C composed of "ctrl+c") work without manual parsing.
-func matchAction(km keys.KeyMap, action keys.Action, msg tea.KeyMsg) bool {
+// binding for `action` in the provided keymap. Uses msg.String()
+// which returns the canonical key name ("q", "ctrl+c", "esc", etc.)
+// for comparison against the binding's registered key strings.
+func matchAction(km keys.KeyMap, action keys.Action, msg tea.KeyPressMsg) bool {
 	bindings, ok := km[action]
 	if !ok {
 		return false
 	}
+	s := msg.String()
 	for _, b := range bindings {
-		if key.Matches(msg, b) {
-			return true
+		for _, k := range b.Keys() {
+			if s == k {
+				return true
+			}
 		}
 	}
 	return false

@@ -90,6 +90,14 @@ func TestPDF_MultiPage_PageNavigation(t *testing.T) {
 	for i := 0; i < 5; i++ {
 		p.Send("]")
 		time.Sleep(150 * time.Millisecond)
+		// Force BT v2 to do a full repaint by changing the terminal
+		// height. Resizing to the same (80×24) dimensions is a no-op
+		// for the cell-diff engine (no cells are dirty). A genuine row
+		// change creates a fresh 25-row cellbuf where all cells are new,
+		// so the entire frame — including the contiguous "Page 2" footer
+		// — is written to the PTY in one shot.
+		p.Resize(80, 25)
+		time.Sleep(100 * time.Millisecond)
 		frame := stripANSI(string(p.Snapshot()))
 		if regexp.MustCompile(`Page\s*2\b`).MatchString(frame) {
 			pageAdvanced = true

@@ -20,7 +20,7 @@ import (
 	"testing"
 	"time"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 
 	"github.com/knitli/spy/internal/config"
 	"github.com/knitli/spy/internal/highlight"
@@ -82,17 +82,17 @@ func TestResize_PreservesViewportAnchor(t *testing.T) {
 	// matches.
 	const scrollDown = 50
 	for i := 0; i < scrollDown; i++ {
-		mm, _ := m.Update(tea.KeyMsg{Type: tea.KeyDown})
+		mm, _ := m.Update(tea.KeyPressMsg{Code: tea.KeyDown})
 		m = mm.(ui.Model)
 	}
-	topBefore := firstVisibleSourceLine(m.View())
+	topBefore := firstVisibleSourceLine(m.View().Content)
 	if topBefore == "" {
 		t.Fatalf("could not determine top line before resize; view tail=%q",
-			lastNonEmptyLine(m.View()))
+			lastNonEmptyLine(m.View().Content))
 	}
 	mu2, _ := m.Update(tea.WindowSizeMsg{Width: 120, Height: 24})
 	m = mu2.(ui.Model)
-	topAfter := firstVisibleSourceLine(m.View())
+	topAfter := firstVisibleSourceLine(m.View().Content)
 	if topAfter != topBefore {
 		t.Errorf("SC-008(a): viewport row-0 line changed across resize\n  before: %q\n   after: %q",
 			topBefore, topAfter)
@@ -101,10 +101,10 @@ func TestResize_PreservesViewportAnchor(t *testing.T) {
 	// (b) Wrap cache reflow. A 58-char fixture line fits on one row
 	// at width 80 but must wrap into ≥2 rows at width 30. Count the
 	// rendered visual rows that map to source line 1 to confirm.
-	rowsAt80 := visualRowsForFirstLine(m.View())
+	rowsAt80 := visualRowsForFirstLine(m.View().Content)
 	mu3, _ := m.Update(tea.WindowSizeMsg{Width: 30, Height: 24})
 	m = mu3.(ui.Model)
-	rowsAt30 := visualRowsForFirstLine(m.View())
+	rowsAt30 := visualRowsForFirstLine(m.View().Content)
 	if rowsAt30 <= rowsAt80 {
 		t.Errorf("SC-008(b): wrap cache did not reflow on width 80 → 30; rows: %d → %d (expected growth)",
 			rowsAt80, rowsAt30)

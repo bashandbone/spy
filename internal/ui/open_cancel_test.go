@@ -10,7 +10,7 @@ import (
 	"sync/atomic"
 	"testing"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 )
 
 // The tests below pin acceptance review M6: a `:open <path>` command
@@ -88,7 +88,7 @@ func TestM6_QuitCancelsInFlightOpen(t *testing.T) {
 	}
 
 	// Send 'q' — ActionQuit handler must invoke openCancel.
-	_, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'q'}})
+	_, cmd := m.Update(tea.KeyPressMsg{Code: 'q', Text: "q"})
 	if cmd == nil {
 		t.Fatal("q should produce a tea.Cmd (tea.Quit)")
 	}

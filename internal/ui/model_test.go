@@ -10,7 +10,7 @@ import (
 	"strings"
 	"testing"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 
 	"github.com/knitli/spy/internal/config"
 	"github.com/knitli/spy/internal/keys"
@@ -58,7 +58,7 @@ func newTestModel(t *testing.T, body string) Model {
 func TestNewModel_FirstFramePaintsAfterResize(t *testing.T) {
 	m := newTestModel(t, "alpha\nbeta\ngamma\n")
 	updated, _ := m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
-	view := updated.(Model).View()
+	view := updated.(Model).View().Content
 	if !strings.Contains(view, "alpha") {
 		t.Errorf("first frame missing content: %q", view)
 	}
@@ -67,7 +67,7 @@ func TestNewModel_FirstFramePaintsAfterResize(t *testing.T) {
 func TestUpdate_QuitOnQ(t *testing.T) {
 	m := newTestModel(t, "x\n")
 	m, _ = applyResize(m, 80, 24)
-	_, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'q'}})
+	_, cmd := m.Update(tea.KeyPressMsg{Code: 'q', Text: "q"})
 	if cmd == nil {
 		t.Fatal("q should produce a tea.Cmd (Quit)")
 	}
@@ -80,7 +80,7 @@ func TestUpdate_QuitOnQ(t *testing.T) {
 func TestUpdate_QuitOnEsc(t *testing.T) {
 	m := newTestModel(t, "x\n")
 	m, _ = applyResize(m, 80, 24)
-	_, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	_, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeyEsc})
 	if cmd == nil {
 		t.Fatal("esc should produce a tea.Cmd (Quit)")
 	}
@@ -89,7 +89,7 @@ func TestUpdate_QuitOnEsc(t *testing.T) {
 func TestUpdate_QuitOnCtrlC(t *testing.T) {
 	m := newTestModel(t, "x\n")
 	m, _ = applyResize(m, 80, 24)
-	_, cmd := m.Update(tea.KeyMsg{Type: tea.KeyCtrlC})
+	_, cmd := m.Update(tea.KeyPressMsg{Code: 'c', Mod: tea.ModCtrl})
 	if cmd == nil {
 		t.Fatal("ctrl+c should produce a tea.Cmd (Quit)")
 	}
@@ -100,7 +100,7 @@ func TestUpdate_ScrollDownOnArrow(t *testing.T) {
 	m := newTestModel(t, body)
 	m, _ = applyResize(m, 80, 10)
 	before := m.viewport.YOffset
-	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyDown})
+	updated, _ := m.Update(tea.KeyPressMsg{Code: tea.KeyDown})
 	after := updated.(Model).viewport.YOffset
 	if after <= before {
 		t.Errorf("ScrollDown should advance viewport YOffset: before=%d after=%d", before, after)
@@ -113,11 +113,11 @@ func TestUpdate_ScrollUpOnArrow(t *testing.T) {
 	m, _ = applyResize(m, 80, 10)
 	// Scroll down a bit then back up.
 	for i := 0; i < 5; i++ {
-		mm, _ := m.Update(tea.KeyMsg{Type: tea.KeyDown})
+		mm, _ := m.Update(tea.KeyPressMsg{Code: tea.KeyDown})
 		m = mm.(Model)
 	}
 	before := m.viewport.YOffset
-	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyUp})
+	updated, _ := m.Update(tea.KeyPressMsg{Code: tea.KeyUp})
 	after := updated.(Model).viewport.YOffset
 	if after >= before {
 		t.Errorf("ScrollUp should reduce viewport YOffset: before=%d after=%d", before, after)
@@ -137,7 +137,7 @@ func TestUpdate_ResizeReflowsViewport(t *testing.T) {
 func TestView_FooterMentionsSource(t *testing.T) {
 	m := newTestModel(t, "x\n")
 	m, _ = applyResize(m, 80, 24)
-	view := m.View()
+	view := m.View().Content
 	if !strings.Contains(view, "fake.txt") {
 		t.Errorf("footer should mention source name; view=%q", view)
 	}
@@ -145,7 +145,7 @@ func TestView_FooterMentionsSource(t *testing.T) {
 
 func TestView_EmptyBeforeResize(t *testing.T) {
 	m := newTestModel(t, "x\n")
-	if v := m.View(); v != "" {
+	if v := m.View().Content; v != "" {
 		t.Errorf("View before resize should be empty, got %q", v)
 	}
 }
@@ -154,12 +154,12 @@ func TestUpdate_PageUpAndPageDown(t *testing.T) {
 	body := strings.Repeat("line\n", 200)
 	m := newTestModel(t, body)
 	m, _ = applyResize(m, 80, 20)
-	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyPgDown})
+	updated, _ := m.Update(tea.KeyPressMsg{Code: tea.KeyPgDown})
 	mDown := updated.(Model)
 	if mDown.viewport.YOffset == 0 {
 		t.Errorf("PageDown should advance viewport")
 	}
-	updated, _ = mDown.Update(tea.KeyMsg{Type: tea.KeyPgUp})
+	updated, _ = mDown.Update(tea.KeyPressMsg{Code: tea.KeyPgUp})
 	mUp := updated.(Model)
 	if mUp.viewport.YOffset >= mDown.viewport.YOffset {
 		t.Errorf("PageUp should reduce viewport YOffset")
@@ -170,12 +170,12 @@ func TestUpdate_GoToTopAndBottom(t *testing.T) {
 	body := strings.Repeat("line\n", 200)
 	m := newTestModel(t, body)
 	m, _ = applyResize(m, 80, 20)
-	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnd})
+	updated, _ := m.Update(tea.KeyPressMsg{Code: tea.KeyEnd})
 	mEnd := updated.(Model)
 	if mEnd.viewport.YOffset == 0 {
 		t.Errorf("GoToBottom should advance viewport from 0")
 	}
-	updated, _ = mEnd.Update(tea.KeyMsg{Type: tea.KeyHome})
+	updated, _ = mEnd.Update(tea.KeyPressMsg{Code: tea.KeyHome})
 	mTop := updated.(Model)
 	if mTop.viewport.YOffset != 0 {
 		t.Errorf("GoToTop should reset YOffset to 0, got %d", mTop.viewport.YOffset)
@@ -185,7 +185,7 @@ func TestUpdate_GoToTopAndBottom(t *testing.T) {
 func TestUpdate_UnboundKeyIsNoOp(t *testing.T) {
 	m := newTestModel(t, "x\n")
 	m, _ = applyResize(m, 80, 24)
-	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'z'}})
+	updated, cmd := m.Update(tea.KeyPressMsg{Code: 'z', Text: "z"})
 	if cmd != nil {
 		t.Errorf("unbound key produced a command")
 	}
@@ -252,7 +252,7 @@ func TestModel_InitReturnsCmd(t *testing.T) {
 func TestView_FooterDroppedInOneRowTerminal(t *testing.T) {
 	m := newTestModel(t, "alpha\nbeta\n")
 	m, _ = applyResize(m, 80, 1)
-	view := m.View()
+	view := m.View().Content
 	if strings.Contains(view, "Line ") {
 		t.Errorf("1-row terminal should not render footer; got %q", view)
 	}
@@ -269,7 +269,7 @@ func TestUpdate_ResizePreservesYOffset(t *testing.T) {
 	}
 	// Scroll down a few rows.
 	for i := 0; i < 10; i++ {
-		updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyDown})
+		updated, _ := m.Update(tea.KeyPressMsg{Code: tea.KeyDown})
 		m = updated.(Model)
 	}
 	beforeOff := m.viewport.YOffset
@@ -291,7 +291,7 @@ func TestUpdate_ResizePreservesYOffset(t *testing.T) {
 func TestView_EmptyInputShowsLineZero(t *testing.T) {
 	m := newTestModel(t, "")
 	m, _ = applyResize(m, 80, 24)
-	view := m.View()
+	view := m.View().Content
 	if !strings.Contains(view, "Line 0") {
 		t.Errorf("empty input footer should show Line 0, got %q", view)
 	}
@@ -307,7 +307,7 @@ func TestUpdate_HalfPageDownDistinctFromPageDown(t *testing.T) {
 		updated, _ := m.Update(chunkLoadedMsg{chunk: c})
 		m = updated.(Model)
 	}
-	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyPgDown})
+	updated, _ := m.Update(tea.KeyPressMsg{Code: tea.KeyPgDown})
 	pageDown := updated.(Model).viewport.YOffset
 
 	m2 := newTestModel(t, body)

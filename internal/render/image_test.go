@@ -69,14 +69,31 @@ func TestImageRenderer_GraphicsCapableEmitsProtocolBytes(t *testing.T) {
 	src := newFakeImageSource(t, "demo.png")
 	deps := Dependencies{Theme: ThemeDark(), Source: src}
 	r := ForKind(source.KindImage, deps)
-	out := r.Render(RenderContext{
+	ctx := RenderContext{
 		Capabilities: term.Capabilities{Cols: 80, Rows: 24, Graphics: term.GraphicsKitty},
-	})
-	if !strings.HasPrefix(out, "\x1b_G") {
-		t.Errorf("Kitty path should emit graphics protocol bytes, got %q", out[:min(40, len(out))])
 	}
-	if !strings.HasSuffix(out, "\x1b\\") {
-		t.Errorf("Kitty path missing terminator")
+	// BT v2's cell renderer strips APC sequences, so the viewport
+	// content is left blank and the raw APC bytes are exposed via
+	// GraphicsRaw() for the caller to emit with tea.Raw().
+	viewContent := r.Render(ctx)
+	if viewContent != "" {
+		t.Errorf("Kitty path: Render() should return empty viewport content, got %q",
+			viewContent[:min(40, len(viewContent))])
+	}
+	type rawGraphicsProvider interface {
+		GraphicsRaw(RenderContext) string
+	}
+	rg, ok := r.(rawGraphicsProvider)
+	if !ok {
+		t.Fatal("renderer does not implement rawGraphicsProvider")
+	}
+	raw := rg.GraphicsRaw(ctx)
+	if !strings.HasPrefix(raw, "\x1b_G") {
+		t.Errorf("Kitty path: GraphicsRaw() should start with APC prefix, got %q",
+			raw[:min(40, len(raw))])
+	}
+	if !strings.HasSuffix(raw, "\x1b\\") {
+		t.Errorf("Kitty path: GraphicsRaw() missing APC terminator")
 	}
 }
 

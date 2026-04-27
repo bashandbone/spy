@@ -50,8 +50,12 @@ func TestSearch_NavigatesAndJumps(t *testing.T) {
 		t.Fatalf("search /9999 did not surface match; snapshot tail=%q", truncTail(p.Snapshot(), 600))
 	}
 
-	// 2. :1<Enter> jumps back to top.
-	if !sendUntil(p, ":1\r", " Line 1 ", 3*time.Second) {
+	// 2. :1<Enter> jumps back to top. The `:1\r` command goes through
+	//    the prompt, so dismissing the prompt rewrites the ENTIRE footer
+	//    row (prompt style → normal footer), making "Line 1" a
+	//    contiguous string in the diff output. Drop the trailing space:
+	//    the footer ends with \x1b[K (erase-to-EOL), not a space.
+	if !sendUntil(p, ":1\r", "Line 1", 3*time.Second) {
 		t.Fatalf(":1 jump did not return to top; snapshot tail=%q", truncTail(p.Snapshot(), 600))
 	}
 
@@ -119,7 +123,12 @@ func TestSearch_VimMode_GG_G(t *testing.T) {
 	// gg → jump back to top. Two-keystroke vim sequence; bundle as a
 	// single Send so the keymap state machine sees both presses
 	// without intervening time-debounced inputs from the harness.
-	if !sendUntil(p, "gg", " Line 1 ", 3*time.Second) {
+	// BT v2's cell diff only writes the changed footer digit ("1"),
+	// not "Line 1" as a contiguous string. Use viewport content
+	// instead: line 1 of the 10000-line file renders as "    1  1"
+	// (5-wide gutter + 2-space separator + content "1"), which IS
+	// fully written because all viewport cells change on gg-scroll.
+	if !sendUntil(p, "gg", "    1  1", 3*time.Second) {
 		t.Fatalf("gg did not return to top; snapshot tail=%q", truncTail(p.Snapshot(), 600))
 	}
 

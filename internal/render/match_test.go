@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/charmbracelet/lipgloss"
+	"charm.land/lipgloss/v2"
 
 	"github.com/knitli/spy/internal/loader"
 	"github.com/knitli/spy/internal/search"

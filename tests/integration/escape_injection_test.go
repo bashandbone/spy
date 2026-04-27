@@ -10,7 +10,7 @@ import (
 	"strings"
 	"testing"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 
 	"github.com/knitli/spy/internal/config"
 	"github.com/knitli/spy/internal/highlight"
@@ -57,7 +57,7 @@ func TestEscapeInjection_OSCSequenceNeutralized(t *testing.T) {
 		Highlighter:  hl,
 	})
 	mu, _ := m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
-	view := mu.(ui.Model).View()
+	view := mu.(ui.Model).View().Content
 
 	// The rendered frame must NOT contain the OSC payload bytes
 	// (`\x1b]` followed by `2;`). The benign suffix "hijacked title"
