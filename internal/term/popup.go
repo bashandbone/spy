@@ -49,7 +49,7 @@ func LaunchTmuxPopup(originalArgs []string) error {
 
 	cmd := exec.Command("tmux",
 		"display-popup",
-		"-E",        // close popup when the command exits
+		"-E", // close popup when the command exits
 		"-w", "100%",
 		"-h", "100%",
 		strings.Join(parts, " "),
@@ -61,7 +61,7 @@ func LaunchTmuxPopup(originalArgs []string) error {
 }
 
 // shellQuote wraps s in single quotes with interior single-quote characters
-// replaced by the POSIX '\'' escape sequence. Safe for any string value.
+// replaced by the POSIX '\” escape sequence. Safe for any string value.
 func shellQuote(s string) string {
 	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
 }
