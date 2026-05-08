@@ -4,6 +4,10 @@ SPDX-FileCopyrightText: 2026 Adam Poulemanos
 SPDX-License-Identifier: MIT OR Apache-2.0
 -->
 
+> [!WARNING]
+> This project mostly exists to have a reason to work with Go on occasion.
+> It may or may not work for you. 
+
 # spy
 
 A keyboard-driven popup reader for the terminal — `bat` with a real
